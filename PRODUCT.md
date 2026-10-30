@@ -37,12 +37,19 @@ bash scripts/build.sh [check|desktop|web|server|all]     # bash / Git Bash / CI
 
 Run the desktop client directly with `go run ./cmd/orbitrix`.
 
+The AI tournament plays every pair of AI strategies and prints win rates and move times:
+
+```sh
+go run ./cmd/aitourney -games 20 -size 9x9      # -seed, -workers also available
+```
+
 ## Layout
 
 | Path | Contents |
 |---|---|
 | `core/` | Pure game rules (board, moves, wave resolution, win/turn order, seeded RNG). No Ebitengine, net or OS imports. |
 | `core/ai/` | The eight AI personalities. |
+| `cmd/aitourney/` | Headless AI-vs-AI tournament. |
 | `proto/` | Binary wire protocol. |
 | `client/` | Ebitengine game: scenes, rendering, input, audio, settings. |
 | `cmd/orbitrix/` | Desktop and web entry point. |

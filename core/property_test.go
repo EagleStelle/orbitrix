@@ -27,6 +27,9 @@ func playRandom(t testing.TB, g *Game, seed uint64, maxMoves int) []uint64 {
 		}
 		checkTallies(t, g)
 		checkAfterMove(t, g, mover, len(waves))
+		if exploded := len(slices.Concat(waves...)); g.Exploded != exploded {
+			t.Fatalf("move %d: Exploded = %d, waves hold %d cells", move, g.Exploded, exploded)
+		}
 		hashes = append(hashes, g.Hash())
 	}
 	return hashes

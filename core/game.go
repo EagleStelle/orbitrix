@@ -27,6 +27,10 @@ type Game struct {
 	Winner  int8              // NoOwner until someone wins
 	Orbs    [MaxPlayers]int32 // orbs on the board per player
 
+	// Exploded counts the cell explosions in the last move: a deterministic measure of its cost, which the AI's
+	// budget charges for. It isn't part of the game state (not hashed or snapshotted).
+	Exploded int
+
 	// unstable is set when a chain hit MaxWaves and left cells at or over capacity. The next move resolves them
 	// together with its own explosions.
 	unstable bool
@@ -78,7 +82,7 @@ func (g *Game) CopyFrom(src *Game) {
 	copy(g.Count, src.Count)
 	copy(g.Owner, src.Owner)
 	g.Players, g.Turn, g.Played, g.Moves, g.Winner = src.Players, src.Turn, src.Played, src.Moves, src.Winner
-	g.Orbs, g.unstable = src.Orbs, src.unstable
+	g.Orbs, g.Exploded, g.unstable = src.Orbs, src.Exploded, src.unstable
 }
 
 // Clone returns an independent copy of g.
@@ -173,7 +177,7 @@ var waveLimit = MaxWaves
 
 // resolve explodes g.cur wave by wave until the board is stable, a player wins or the wave limit is reached.
 func (g *Game) resolve(record bool) {
-	g.unstable = false
+	g.unstable, g.Exploded = false, 0
 	for wave := 0; ; wave++ {
 		if g.checkWin() || len(g.cur) == 0 {
 			return
@@ -186,6 +190,7 @@ func (g *Game) resolve(record bool) {
 			g.waveCells = append(g.waveCells, g.cur...)
 			g.waveEnds = append(g.waveEnds, int32(len(g.waveCells)))
 		}
+		g.Exploded += len(g.cur)
 		g.explode()
 		g.cur, g.next = g.next, g.cur
 	}

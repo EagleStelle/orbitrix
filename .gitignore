@@ -1,5 +1,8 @@
 CLAUDE.md
 
+# Python prototype: local reference only, never pushed
+/prototype/
+
 # Build output
 /dist/
 *.exe
