@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Ebitengine desktop builds are pure Go; keep cgo off so CI matches the Windows and Docker builds.
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # Call through bash: scripts committed from Windows lack the executable bit.
+      - name: gofmt, vet, test
+        run: bash scripts/build.sh check
+      - name: build desktop (windows)
+        run: GOOS=windows bash scripts/build.sh desktop
+      - name: build desktop (linux)
+        run: bash scripts/build.sh desktop
+      - name: build web (wasm)
+        run: bash scripts/build.sh web
+      - name: build server
+        run: bash scripts/build.sh server

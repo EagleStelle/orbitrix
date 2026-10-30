@@ -1,0 +1,2 @@
+# LF everywhere: bash rejects CRLF scripts and gofmt flags CRLF Go files.
+* text=auto eol=lf

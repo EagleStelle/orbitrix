@@ -1,0 +1,18 @@
+CLAUDE.md
+
+# Build output
+/dist/
+*.exe
+*.wasm
+*.aar
+*.apk
+
+# SQLite data
+*.db
+*.db-wal
+*.db-shm
+
+# Android / Gradle
+.gradle/
+build/
+local.properties
