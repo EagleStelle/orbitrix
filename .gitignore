@@ -1,5 +1,9 @@
 CLAUDE.md
 
+# Local agent/tool state
+/.claude/
+/.impeccable/
+
 # Python prototype: local reference only, never pushed
 /prototype/
 
