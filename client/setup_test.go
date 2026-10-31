@@ -106,7 +106,7 @@ func TestSetupLayout(t *testing.T) {
 					}
 					for i := range players {
 						for _, label := range seatLabels {
-							if s.seatTag[i].right()+8*u+textWidth(label, a.f.labelBold) > s.seatTy[i].right()-40*u {
+							if s.seatTy[i].x+seatChoiceX*u+textWidth(label, a.f.labelBold) > s.seatTy[i].right()-40*u {
 								t.Fatalf("seat %d cannot fit %s beside its chevron", i, label)
 							}
 						}

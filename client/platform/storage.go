@@ -6,11 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 )
 
-// CanExit reports whether the app may quit itself. A browser tab can't.
-const CanExit = runtime.GOOS != "js"
+// CanExit reports whether the app may quit itself; storage_js.go says a browser tab can't.
+const CanExit = true
 
 // dataDir replaces the user config folder where the OS has none for apps (Android); see SetDataDir.
 var dataDir string

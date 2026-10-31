@@ -6,6 +6,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.DisplayCutout;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -61,6 +62,31 @@ public final class MainActivity extends Activity implements Host {
             return true;
         }
         return super.dispatchKeyEvent(e);
+    }
+
+    // The game reads touches once a frame, so a finger that lifts within a frame of landing would never be seen. Such
+    // a lift is held back until the touch has lasted MIN_TAP_MILLIS (a frame at 20 FPS).
+    private static final long MIN_TAP_MILLIS = 50;
+    private Runnable pendingUp;
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent e) {
+        if (pendingUp != null) { // the next touch comes after the held lift
+            view.removeCallbacks(pendingUp);
+            pendingUp.run();
+        }
+        long held = e.getEventTime() - e.getDownTime();
+        if (e.getActionMasked() == MotionEvent.ACTION_UP && held < MIN_TAP_MILLIS) {
+            MotionEvent up = MotionEvent.obtain(e);
+            pendingUp = () -> {
+                pendingUp = null;
+                super.dispatchTouchEvent(up);
+                up.recycle();
+            };
+            view.postDelayed(pendingUp, MIN_TAP_MILLIS - held);
+            return true;
+        }
+        return super.dispatchTouchEvent(e);
     }
 
     // Immersive: the bars stay hidden, and a swipe from the edge shows them for a moment.

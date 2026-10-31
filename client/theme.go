@@ -120,8 +120,8 @@ func newFace(src *text.GoTextFaceSource, size float64, weight float32) *text.GoT
 
 // fonts is the type scale, rebuilt when the UI scale changes. Sizes are logical px.
 type fonts struct {
-	logo, title, heading, callout, calloutCompact, number *text.GoTextFace // Unbounded
-	body, bodyBold, label, labelBold, small, smallBold    *text.GoTextFace // Archivo
+	logo, title, heading, callout, calloutCompact, calloutTight, number *text.GoTextFace // Unbounded
+	body, bodyBold, label, labelBold, small, smallBold                  *text.GoTextFace // Archivo
 }
 
 func newFonts(u float64) fonts {
@@ -131,6 +131,7 @@ func newFonts(u float64) fonts {
 		heading:        newFace(srcDisplay, 17*u, 700),
 		callout:        newFace(srcDisplay, 20*u, 800),
 		calloutCompact: newFace(srcDisplay, 15*u, 800),
+		calloutTight:   newFace(srcDisplay, 13*u, 800),
 		number:         newFace(srcDisplay, 20*u, 700),
 		body:           newFace(srcUI, 18*u, 500),
 		bodyBold:       newFace(srcUI, 18*u, 700),
@@ -145,14 +146,6 @@ func newFonts(u float64) fonts {
 var numbers = func() (s [core.MaxSize + 1]string) {
 	for i := range s {
 		s[i] = strconv.Itoa(i)
-	}
-	return s
-}()
-
-// seatNames are "P1".."P12".
-var seatNames = func() (s [core.MaxPlayers]string) {
-	for i := range s {
-		s[i] = "P" + numbers[i+1]
 	}
 	return s
 }()

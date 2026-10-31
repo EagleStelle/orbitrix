@@ -1,6 +1,7 @@
 package client
 
 import (
+	"image"
 	"image/color"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -22,12 +23,74 @@ const (
 const quietButtonHeight, quietButtonMaxWidth = 52, 240
 
 // Compact controls match Back visually while keeping a full touch target.
-const compactButtonHeight, compactButtonTarget = 40, 44
+const compactButtonHeight, compactButtonTightHeight, compactButtonTarget = 40, 28, 44
 
 // compactHit is r's touch target: r itself, grown to the compact target height when its face is shorter.
 func compactHit(r rect, u float64) rect {
 	h := max(r.h, compactButtonTarget*u)
 	return rect{r.x, r.cy() - h/2, r.w, h}
+}
+
+// scrollView clips overflowing content and owns a touch drag from its starting viewport.
+type scrollView struct {
+	viewport       rect
+	height, offset float64
+	dragging       bool
+	content, of    *ebiten.Image
+	clipped        rect
+}
+
+func (s *scrollView) maxScroll() float64 { return max(0, s.height-s.viewport.h) }
+
+func (s *scrollView) set(v rect, height float64) {
+	s.viewport, s.height = v, height
+	s.offset = max(0, min(s.maxScroll(), s.offset))
+}
+
+func (s *scrollView) update(a *app) bool {
+	in := &a.in
+	if in.pressed {
+		s.dragging = in.finger && s.viewport.contains(in.x, in.y)
+	}
+	if !in.down {
+		s.dragging = false
+	}
+	before := s.offset
+	if s.viewport.contains(in.x, in.y) {
+		s.offset -= in.wheel * (compactButtonTarget + 8) * a.u
+	}
+	if s.dragging {
+		s.offset -= in.dragY
+	}
+	s.offset = max(0, min(s.maxScroll(), s.offset))
+	return s.offset != before
+}
+
+func (s *scrollView) reveal(r rect) {
+	if r.y < s.viewport.y {
+		s.offset -= s.viewport.y - r.y
+	} else if r.bottom() > s.viewport.bottom() {
+		s.offset += r.bottom() - s.viewport.bottom()
+	}
+	s.offset = max(0, min(s.maxScroll(), s.offset))
+}
+
+func (s *scrollView) clip(dst *ebiten.Image) *ebiten.Image {
+	if s.of != dst || s.clipped != s.viewport {
+		s.of, s.clipped = dst, s.viewport
+		v := s.viewport
+		s.content = dst.SubImage(image.Rect(int(v.x), int(v.y), int(v.right()), int(v.bottom()))).(*ebiten.Image)
+	}
+	return s.content
+}
+
+func (s *scrollView) drawScrollbar(dst *ebiten.Image, a *app) {
+	if s.maxScroll() == 0 {
+		return
+	}
+	v, u := s.viewport, a.u
+	h := min(v.h, max(24*u, v.h*v.h/s.height))
+	fillRound(dst, rect{v.right() + 5*u, v.y + (v.h-h)*s.offset/s.maxScroll(), 3 * u, h}, 1.5*u, a.sc.dim)
 }
 
 // backButton is the compact Back pill with its top left at (x, y); on pages narrower than 540 px it shows the arrow

@@ -227,9 +227,10 @@ Choices made where the brief or the prototype left room. Newest last.
   2.6× phone or a hi-DPI browser every click landed far off.
 - **Touch:** the first finger is the pointer. It clicks on release and only if it moved less than 10 px; a longer
   drag scrolls Setup. The volume slider starts dragging on press. A lifted finger moves the pointer off screen so no
-  hover sticks; the mouse takes over again as soon as it moves. A tap shorter than one 60 Hz tick is never seen
-  (Ebitengine polls touches each tick); real taps last longer, but `adb shell input tap` doesn't, so automated tests
-  use a 90 ms `input swipe` at one point.
+  hover sticks; the mouse takes over again as soon as it moves. Ebitengine polls touches once a frame, so a tap
+  shorter than a frame was never seen (`adb shell input tap` always, and quick taps on a slow phone). The Android
+  activity now holds back a lift that comes less than 50 ms after the press (a frame at 20 FPS) until the touch has
+  lasted 50 ms, so `input tap` and quick taps work.
 - **Android:** `ebitenmobile bind` (pinned as a Go tool in `go.mod`) builds `dist/orbitrix.aar` for arm64 (phones)
   and x86_64 (emulators, Chromebooks); 32-bit ARM is left out. A plain Gradle project (AGP 9.4.1, Gradle 9.8.2,
   compileSdk/targetSdk 37, minSdk 24, no AndroidX) wraps it with one Java activity: immersive full screen (user
@@ -337,13 +338,29 @@ Choices made where the brief or the prototype left room. Newest last.
   fewer columns. A second column of names uses spare rail width without taking more room from the board.
 - **Keep the original row appearance** (user correction). Desktop rows keep 18 px body text, a 40 px pitch with
   36 px pill faces, and the same dots, padding and spacing in both column layouts. Column selection alone gives
-  the wheel more space; neither text nor pills shrink to enlarge it. Phone layouts keep their existing sizing and
-  column rules, including two columns for more than six portrait players. Seat numbers and orb counts always show.
-  Chain ×N always matches the wheel's width and centre.
+  the wheel more space; neither text nor pills shrink to enlarge it. Phones on their side keep their existing sizing
+  and column rules (the upright bar follows below). Seat numbers and orb counts always show. Chain ×N always matches
+  the wheel's width and centre.
 - Regression coverage includes eight and twelve players at 1919×1004, UI scales 1 and 2.625, and resizing the same
   scene to 1340 px wide and back. For a 9×9 board the wide view uses two named columns and wheels 632 and 552 logical
   px wide respectively; the board stays 940 px wide. The narrower view uses one named column and a 304 px wheel.
   Layout checks enforce the original desktop text and pill sizes for every player count from two to twelve.
+
+## Portrait bar fills the height (2026-11-01)
+
+- **The rail's rule, upright** (user request: square and turned boards left 70–250 px of empty height on phones,
+  split above and below the board, beside a wheel stuck at 116 px). The bar under the board starts at its old least
+  height, so no board shrinks; the board keeps the top margin and the bar takes every px of height it cannot use.
+  The table then picks, among the rail's four set-outs, the one that leaves the largest wheel beside it (`pickWheel`,
+  shared with the desktop rail). One column keeps 36 px rows at the label size and two keep 32 px rows at the small
+  size, so text never shrinks to grow the wheel; seven or more seats return to one column when it fits.
+- **Largest wheel over type names** (user choice). Names cost wheel width beside the table, so on phones they show
+  only when the bar's height, not its width, limits the wheel. On a 390×844 phone with a 9×9 board the wheel grows
+  from 116 to 236 px for four or eight players (163 px for twelve).
+- **Spare height centres the bar** (user choice). When the wheel reaches the width first, the spinner column and the
+  table stay centred between the board and Menu, splitting what is left evenly.
+- A tall board on a tablet held upright still leaves width beside it: the bar sits under the board, so it can only
+  use spare height.
 
 ## UI drawn from sprites (2026-10-31)
 

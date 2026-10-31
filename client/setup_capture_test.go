@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -21,7 +22,10 @@ type setupCaptureCase struct {
 	menu, small bool
 	play        bool
 	hover       string
-	progress    float64 // fraction of page scroll for intermediate preview captures
+	progress    float64 // fraction of page or player-list scroll
+	count       int     // synthetic indicator stress count; 0 keeps the actual empty-board values
+	marks       bool
+	turn        int
 }
 
 type setupCaptureGame struct {
@@ -51,6 +55,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 	if c.dark {
 		a.sc, a.set.Marks = &schemes[themeDark], true
 	}
+	a.set.Marks = a.set.Marks || c.marks
 	a.set.seats[1], _ = parseSeat("conqueror")
 	if c.cols > 0 {
 		a.set.Cols, a.set.Rows = c.cols, c.rows
@@ -88,7 +93,19 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 			return
 		}
 		p.tickRail()
+		if c.count > 0 {
+			for i := range p.seats {
+				p.orbs[i], p.orbS[i] = c.count-i, strconv.Itoa(c.count-i)
+			}
+		}
+		p.shown, p.spin = c.turn, p.wedgeAngle(c.turn)
 		p.chain, p.chainHold, p.chainText = 88, calloutHold, "Chain ×88"
+		p.layout(a)
+		p.seatView.offset = c.progress * p.seatView.maxScroll()
+		if c.tail {
+			p.seatView.offset = p.seatView.maxScroll()
+		}
+		p.layoutScrolled(a)
 		p.draw(out, a)
 	} else {
 		s.draw(out, a)
@@ -151,7 +168,28 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "play-responsive-narrow", w: 1340, h: 1004, players: 12, play: true},
 		{name: "play-mobile", w: 390, h: 844, players: 2, play: true},
 		{name: "play-mobile-12p", w: 360, h: 740, players: 12, play: true, dark: true},
+		{name: "play-mobile-8p", w: 390, h: 844, players: 8, play: true},
+		{name: "play-mobile-placemat", w: 390, h: 844, players: 4, cols: 6, rows: 9, play: true},
+		{name: "play-mobile-portrait-6p", w: 390, h: 844, players: 6, cols: 13, rows: 18, play: true},
+		{name: "play-mobile-portrait-12p", w: 412, h: 915, players: 12, cols: 13, rows: 18, play: true, dark: true},
+		{name: "play-mobile-portrait-limited", w: 360, h: 740, players: 12, cols: 13, rows: 18, play: true},
+		{name: "play-mobile-portrait-scrolled", w: 360, h: 740, players: 12, cols: 13, rows: 18, play: true, tail: true},
+		{name: "play-mobile-tall-board", w: 360, h: 740, players: 12, cols: 3, rows: 40, play: true, dark: true},
+		{name: "play-mobile-tall-board-players-scrolled", w: 360, h: 740, players: 12, cols: 3, rows: 40, play: true, dark: true, tail: true},
+		{name: "play-tablet-turned", w: 768, h: 1024, players: 6, cols: 30, rows: 18, play: true, dark: true},
+		{name: "play-tablet-turned-short", w: 768, h: 800, players: 12, cols: 30, rows: 18, play: true},
 		{name: "play-landscape", w: 844, h: 390, players: 12, cols: 30, rows: 18, play: true},
+		{name: "play-landscape-short", w: 780, h: 360, players: 12, cols: 30, rows: 18, play: true, dark: true},
+		{name: "play-landscape-scrolled", w: 780, h: 360, players: 12, cols: 30, rows: 18, play: true, dark: true, tail: true},
+		{name: "counts-landscape-3", w: 844, h: 390, players: 12, cols: 30, rows: 18, play: true, count: 999},
+		{name: "counts-landscape-5", w: 780, h: 360, players: 12, cols: 30, rows: 18, play: true, count: 99999, dark: true},
+		{name: "counts-landscape-small-5", w: 640, h: 320, players: 12, cols: 30, rows: 18, play: true, count: 99999, marks: true},
+		{name: "counts-desktop-5", w: 1440, h: 900, players: 12, play: true, count: 99999},
+		{name: "counts-portrait-3", w: 360, h: 740, players: 12, cols: 13, rows: 18, play: true, count: 999},
+		{name: "counts-portrait-4", w: 360, h: 740, players: 12, cols: 13, rows: 18, play: true, count: 9999, marks: true},
+		{name: "counts-portrait-5", w: 320, h: 640, players: 12, cols: 13, rows: 18, play: true, count: 99999},
+		{name: "counts-portrait-dark-5", w: 360, h: 740, players: 12, cols: 13, rows: 18, play: true, count: 99999, dark: true},
+		{name: "counts-portrait-blue-5", w: 360, h: 740, players: 12, cols: 13, rows: 18, play: true, count: 99999, marks: true, turn: 1},
 	}}
 	ebiten.SetWindowSize(160, 100)
 	ebiten.SetWindowDecorated(false)

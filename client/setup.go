@@ -19,6 +19,9 @@ const (
 
 var shapeNames = [...]string{"Portrait", "Balanced", "Landscape"}
 
+// seatChoiceX is where a seat pill's choice starts, in logical px from its left edge: after its 16 px dot.
+const seatChoiceX = 44
+
 // boardSizes are the preset tiers, smallest first, as short × long sides; every shape offers every tier (Balanced
 // uses the short side twice). Floor is the largest board whose cells stay at least 24 px, the prototype's smallest
 // cell and WCAG's smallest touch target, on a 360×780 phone: 13 across its 328 px wide board, 18 down the ~430 px the
@@ -92,27 +95,27 @@ type setupScene struct {
 	menu int // seat whose type menu is open, or -1
 
 	// Layout in device px, recomputed when the screen size changes.
-	lv                       rect
-	lu, lscroll              float64
-	lp                       int
-	viewport                 rect
-	scroll, maxScroll        float64
-	blockPad                 float64
-	back                     rect
-	titleX, titleY           float64
-	players, boardB          rect
-	headY                    float64
-	minusP, plusP            rect
-	seatDot, seatTag, seatTy [core.MaxPlayers]rect
-	seatHit                  [core.MaxPlayers]rect
-	preview, previewPanel    rect
-	showPreview              bool
-	shapeLabels              [len(shapeNames)]rect
-	presetPills              [len(shapeNames)][len(boardSizes)]rect
-	colsCtl, rowsCtl         rect
-	minusCol, plusCol        rect
-	minusRow, plusRow        rect
-	start                    rect
+	lv                    rect
+	lu, lscroll           float64
+	lp                    int
+	viewport              rect
+	scroll, maxScroll     float64
+	blockPad              float64
+	back                  rect
+	titleX, titleY        float64
+	players, boardB       rect
+	headY                 float64
+	minusP, plusP         rect
+	seatDot, seatTy       [core.MaxPlayers]rect
+	seatHit               [core.MaxPlayers]rect
+	preview, previewPanel rect
+	showPreview           bool
+	shapeLabels           [len(shapeNames)]rect
+	presetPills           [len(shapeNames)][len(boardSizes)]rect
+	colsCtl, rowsCtl      rect
+	minusCol, plusCol     rect
+	minusRow, plusRow     rect
+	start                 rect
 
 	// The screen clipped to the viewport, kept until either changes.
 	content, contentOf *ebiten.Image
@@ -165,11 +168,9 @@ func (s *setupScene) layout(a *app) {
 	if stackDimensions {
 		dimensionsH = 2*targetH + gap
 	}
-	tagW := max(30*u, textWidth("P12", a.f.labelBold))
-	choiceInset := 44*u + tagW + 8*u
 	minSeatW := 220 * u
 	for _, label := range seatLabels {
-		minSeatW = max(minSeatW, choiceInset+textWidth(label, a.f.labelBold)+40*u)
+		minSeatW = max(minSeatW, seatChoiceX*u+textWidth(label, a.f.labelBold)+40*u)
 	}
 	cols := max(1, min(4, a.set.Players, int((inner+gap)/(minSeatW+gap))))
 	rows := (a.set.Players + cols - 1) / cols
@@ -198,7 +199,6 @@ func (s *setupScene) layout(a *app) {
 		r := rect{x, cy - buttonH/2, colW, buttonH}
 		s.seatTy[i], s.seatHit[i] = r, compactHit(r, u)
 		s.seatDot[i] = rect{x + 16*u, cy - 8*u, 16 * u, 16 * u}
-		s.seatTag[i] = rect{x + 44*u, r.y, tagW, r.h}
 	}
 
 	// Size controls reflow as groups; their labels and hit areas never shrink with the viewport.
@@ -430,7 +430,7 @@ func (s *setupScene) drawPlayers(dst *ebiten.Image, a *app) {
 	stepper(dst, a, set.Players, core.MinPlayers, core.MaxPlayers, s.minusP, s.plusP)
 
 	for i := range set.Players {
-		d, tag, t := s.seatDot[i], s.seatTag[i], s.seatTy[i]
+		d, t := s.seatDot[i], s.seatTy[i]
 		hot := s.menu < 0 && a.over(s.seatHit[i]) || s.menu == i
 		style := btnGround
 		if set.seats[i] == seatHuman || s.menu == i {
@@ -438,12 +438,7 @@ func (s *setupScene) drawPlayers(dst *ebiten.Image, a *app) {
 		}
 		ink := drawButtonSurface(dst, a, t, style, true, hot)
 		seatDot(dst, sc, i, d.cx(), d.cy(), d.w/2, false, set.Marks)
-		tagInk := sc.dim
-		if hot {
-			tagInk = ink
-		}
-		drawText(dst, seatNames[i], f.labelBold, tag.x, tag.cy(), text.AlignStart, tagInk)
-		drawText(dst, seatLabels[set.seats[i]], f.labelBold, tag.right()+8*u, t.cy(), text.AlignStart, ink)
+		drawText(dst, seatLabels[set.seats[i]], f.labelBold, t.x+seatChoiceX*u, t.cy(), text.AlignStart, ink)
 		tip := 2.5 * u // the chevron points down, or up while its menu is open
 		if s.menu == i {
 			tip = -tip

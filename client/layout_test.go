@@ -42,10 +42,10 @@ func checkParts(t *testing.T, v rect, parts map[string]rect) {
 }
 
 func TestPlayLayout(t *testing.T) {
-	for _, size := range layoutSizes {
+	for _, size := range append(layoutSizes, [2]float64{320, 640}, [2]float64{640, 320}, [2]float64{540, 600}, [2]float64{768, 800}) {
 		for _, u := range []float64{1, 2.625} {
 			for players := core.MinPlayers; players <= core.MaxPlayers; players++ {
-				for _, board := range [][2]int{{9, 9}, {30, 18}} {
+				for _, board := range [][2]int{{9, 9}, {30, 18}, {5, 7}, {6, 9}, {13, 18}, {3, 40}, {40, 3}} {
 					t.Run(fmt.Sprintf("%.0fx%.0f/u%g/%dp/%dx%d", size[0], size[1], u, players, board[0], board[1]), func(t *testing.T) {
 						a := withCutout(setupTestApp(size[0], size[1], u, players))
 						p, err := newPlay(a, board[0], board[1], a.set.seats)
@@ -54,69 +54,70 @@ func TestPlayLayout(t *testing.T) {
 						}
 						p.layout(a)
 						v := a.safe()
-						spinner := rect{p.spinX - p.spinR, p.spinY - p.spinR, 2 * p.spinR, 2 * p.spinR}
-						parts := map[string]rect{"menu": compactHit(p.menu, u), "board": p.b.bounds(), "spinner": spinner}
-						overlay := !a.portrait() && p.compact // a phone on its side floats the callout over the spinner
-						if overlay {
-							if !containsRect(spinner, p.callout) {
-								t.Fatalf("callout %+v must float inside the spinner %+v", p.callout, spinner)
+						wantHeight := float64(compactButtonHeight) * u
+						if p.compact && !a.portrait() {
+							wantHeight = compactButtonTightHeight * u
+						}
+						if math.Abs(p.callout.h-p.menu.h) > 0.01 || math.Abs(p.callout.h-wantHeight) > 0.01 || p.menu.w < menuWidth(a)-0.01 {
+							t.Fatalf("chip %+v and Menu %+v must share the control height and fit their text", p.callout, p.menu)
+						}
+						parts := map[string]rect{"menu": compactHit(p.menu, u), "board viewport": p.boardView.viewport,
+							"players viewport": p.seatView.viewport, "callout": p.callout}
+						face, _ := p.calloutStyle(a)
+						if p.callout.w < textWidth("Chain ×88", face)+16*u-0.01 {
+							t.Fatal("chain chip must fit its label")
+						}
+						if a.portrait() {
+							parts["mover dot"] = rect{p.tokX - p.tokR, p.tokY - p.tokR, 2 * p.tokR, 2 * p.tokR}
+							if p.spinR != 0 || p.tokR <= 0 || math.Abs(p.tokX-v.cx()) > 0.01 ||
+								math.Abs(p.tokY-p.menu.cy()) > 0.01 || p.tokX+p.tokR >= p.menu.x || math.Abs(p.callout.w-p.menu.w) > 0.01 {
+								t.Fatal("portrait must show only the turn dot beside Menu")
+							}
+							b := p.b.bounds()
+							cols, rows := p.b.screenSize()
+							maxHeight := p.menu.y - (v.y + 16*u) - 32*u - p.seatRowPitch(a)
+							wantWidth := min(v.w-32*u, maxHeight*(float64(cols)-2*tileGutter)/(float64(rows)-2*tileGutter))
+							if math.Abs(b.w-wantWidth) > 0.01 || math.Abs(b.cx()-v.cx()) > 1 {
+								t.Fatalf("portrait board %+v must fill the available width unless constrained by screen height", b)
+							}
+							if !containsRect(v, b) || !containsRect(p.boardView.viewport.inset(-1), b) || p.boardView.maxScroll() != 0 {
+								t.Fatalf("the entire portrait board %+v must fit on screen without scrolling or clipping", b)
+							}
+							if math.Abs(b.h/b.w-(float64(rows)-2*tileGutter)/(float64(cols)-2*tileGutter)) > 0.001 {
+								t.Fatal("portrait boards must retain square cells")
+							}
+							if board[0] > board[1] && !p.b.turned {
+								t.Fatal("wide boards must turn on upright browser screens")
+							}
+							if math.Abs(p.menu.bottom()-(v.bottom()-16*u)) > 0.01 || math.Abs(p.menu.cy()-p.callout.cy()) > 0.01 {
+								t.Fatal("portrait controls must share the bottom row")
+							}
+							boardView, seats := p.boardView.viewport, p.seatView.viewport
+							if math.Abs(boardView.bottom()+16*u-seats.y) > 0.01 || math.Abs(seats.bottom()+16*u-p.menu.y) > 0.01 ||
+								seats.h > p.seatTableHeight(a)+0.01 {
+								t.Fatal("portrait board and players must anchor above the bottom controls without spare space below the list")
 							}
 						} else {
-							parts["callout"] = p.callout
-						}
-						for i := range players {
-							parts[seatNames[i]] = p.rowRect[i]
+							d := 2 * p.spinR
+							spinner := rect{p.spinX - p.spinR, p.spinY - p.spinR, d, d}
+							parts["spinner"] = spinner
+							if p.tokR != 0 || math.Abs(d-p.menu.w) > 0.01 || math.Abs(d-p.callout.w) > 0.01 ||
+								math.Abs(d-p.seatView.viewport.w) > 0.01 || math.Abs(p.spinX-p.menu.cx()) > 0.01 ||
+								p.callout.y < spinner.bottom()+12*u-0.01 || p.seatView.viewport.y < p.callout.bottom()+12*u-0.01 {
+								t.Fatal("landscape must keep a full-width wheel, chip, then scrolling players")
+							}
 						}
 						checkParts(t, v, parts)
-						if size == [2]float64{390, 844} && board[0] > board[1] && !p.b.turned {
-							t.Fatal("a wide board must turn on an upright phone")
-						}
-
-						// The spinner sets the width: the callout everywhere, and Menu and the seat table on the rail.
-						d := 2 * p.spinR
-						if math.Abs(p.callout.w-d) > 0.01 || math.Abs(p.callout.cx()-p.spinX) > 0.01 {
-							t.Fatalf("callout %+v must be the spinner's width (%.1f) and centre", p.callout, d)
-						}
-						table, cols := p.rowRect[0], float64(p.table.cols)
+						cols := float64(p.tableCols)
 						need := (p.seatTableWidth(a) - (cols-1)*8*u) / cols
 						for _, r := range p.rowRect[:players] {
-							table.w = max(table.w, r.right()-table.x)
-							if r.w < need-0.01 {
-								t.Fatalf("seat row %+v is narrower than its content (%.1f)", r, need)
-							}
-							if !p.compact && math.Abs(r.h-36*u) > 0.01 {
-								t.Fatalf("desktop seat pill height %.1f must stay 36 logical px", r.h/u)
+							if r.w < need-0.01 || math.Abs(r.h-(p.seatRowPitch(a)-4*u)) > 0.01 {
+								t.Fatalf("seat row %+v must fit its text without compressing its height", r)
 							}
 						}
-						if name, bold := p.seatFaces(a); !p.compact && (name != a.f.body || bold != a.f.bodyBold) {
-							t.Fatal("desktop seat text must stay at body size in both column layouts")
+						if p.seatView.offset < 0 || p.seatView.offset > p.seatView.maxScroll()+0.01 {
+							t.Fatal("player scroll must stay in bounds")
 						}
-						if !p.table.tags {
-							t.Fatal("the seat numbers must always show")
-						}
-						// On the rail the spinner is only ever narrower than Menu and the table when the column fills the
-						// height.
-						pad := 32 * u
-						if p.compact {
-							pad = 16 * u
-						}
-						bottom := 0.0
-						for _, r := range p.rowRect[:players] {
-							bottom = max(bottom, r.bottom()+4*u)
-						}
-						full := math.Abs(bottom-(v.bottom()-pad)) < 0.01
-						if !a.portrait() && (math.Abs(p.menu.w-table.w) > 0.01 || table.x != p.menu.x ||
-							math.Abs(p.menu.cx()-p.spinX) > 0.01 || d > p.menu.w+0.01 ||
-							d < p.menu.w-0.01 && !full) {
-							t.Fatalf("rail: Menu %+v and seat table %+v must be the spinner's width (%.1f) and column",
-								p.menu, table, d)
-						}
-						// The rail takes the width the board leaves: the board spans the left margin to the rail's gap.
-						if b := p.b.bounds(); !a.portrait() && (math.Abs(b.x-(v.x+pad)) > 1 ||
-							math.Abs(b.right()-(p.menu.x-pad)) > 1) {
-							t.Fatalf("rail: board %+v must run from the margin to the rail at %.1f", b, p.menu.x)
-						}
-
 						if !containsRect(v, p.pausePanel) {
 							t.Fatalf("pause panel %+v leaves the screen", p.pausePanel)
 						}
@@ -125,12 +126,13 @@ func TestPlayLayout(t *testing.T) {
 							pause[pauseItems[i]] = r
 						}
 						checkParts(t, p.pausePanel, pause)
-
 						results := map[string]rect{"again": p.again, "home": p.toHome, "exit": p.exit,
 							"dot": {p.winX - p.winDotR, p.winDotY - p.winDotR, 2 * p.winDotR, 2 * p.winDotR}}
 						checkParts(t, v, results)
-						if w := textWidth(winTitles[players-1], p.winFace); w > v.w {
-							t.Fatalf("title %.0f px wide on a %.0f px screen", w, v.w)
+						for _, s := range p.seats {
+							if textWidth(winTitles[s], p.winFace) > v.w {
+								t.Fatal("result title must fit the screen")
+							}
 						}
 					})
 				}
@@ -139,33 +141,102 @@ func TestPlayLayout(t *testing.T) {
 	}
 }
 
-func TestRailColumnsGrowSpinner(t *testing.T) {
-	for _, players := range []int{8, 12} {
+func TestPlayerOverflowAndTurnReveal(t *testing.T) {
+	for _, size := range [][2]float64{{780, 360}, {360, 740}} {
 		for _, u := range []float64{1, 2.625} {
-			a := setupTestApp(1919, 1004, u, players)
-			p, err := newPlay(a, 9, 9, a.set.seats)
+			a := withCutout(setupTestApp(size[0], size[1], u, 12))
+			p, err := newPlay(a, 13, 18, a.set.seats)
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Reuse the scene through resizes: a narrow rail should return to one column when it fits equally well.
-			for _, width := range []float64{1919, 1340, 1919} {
-				a.w = width * u
+			p.layout(a)
+			if p.seatView.maxScroll() <= 0 {
+				t.Fatal("tight player lists must overflow instead of squeezing the wheel or board")
+			}
+			diameter, boardWidth := 2*p.spinR, p.b.bounds().w
+			v := p.seatView.viewport
+			a.in = input{x: v.cx(), y: v.cy(), wheel: -10000}
+			p.updateScroll(a)
+			if p.seatView.offset != p.seatView.maxScroll() || !overlaps(p.rowRect[11], v) {
+				t.Fatal("wheel scrolling must reach the final player and clamp at the end")
+			}
+			a.in = input{x: p.menu.cx(), y: p.menu.cy(), wheel: 10000}
+			p.updateScroll(a)
+			if p.seatView.offset != p.seatView.maxScroll() {
+				t.Fatal("scrolling outside the player viewport must not move it")
+			}
+			a.in = input{x: v.cx(), y: v.cy(), wheel: 10000}
+			p.updateScroll(a)
+			p.shown = 11
+			p.layout(a)
+			if !containsRect(v, p.rowRect[11]) {
+				t.Fatal("a turn change must reveal the active player's complete row")
+			}
+			p.updateScroll(a)
+			p.layout(a)
+			if p.seatView.offset != 0 {
+				t.Fatal("manual scrolling must remain possible after revealing the turn")
+			}
+			if diameter != 2*p.spinR || boardWidth != p.b.bounds().w {
+				t.Fatal("scrolling must not resize the board or wheel")
+			}
+			for _, height := range []float64{1440, size[1]} {
+				a.h = height * u
 				p.layout(a)
-				wantCols, wantDiameter := 2, 632.0
-				if players == 12 {
-					wantDiameter = 552
+				if p.seatView.offset > p.seatView.maxScroll() {
+					t.Fatal("resizing must clamp the scroll offset")
 				}
-				if width == 1340 {
-					wantCols, wantDiameter = 1, 304
-				}
-				if p.table.cols != wantCols || !p.table.names || math.Abs(2*p.spinR-wantDiameter*u) > 0.01 {
-					t.Fatalf("%dp / width %.0f / u%g: table %+v, wheel %.1f; want %d columns with names and wheel %.1f",
-						players, width, u, p.table, 2*p.spinR/u, wantCols, wantDiameter)
-				}
-				if math.Abs(p.b.bounds().w-940*u) > 0.01 {
-					t.Fatal("reflow must use the spare rail width without shrinking the board")
+				if a.portrait() && (p.spinR != 0 || p.tokR <= 0) || !a.portrait() && (p.tokR != 0 || math.Abs(2*p.spinR-p.menu.w) > 0.01) {
+					t.Fatal("rotating must switch between the full-width wheel and portrait dot")
 				}
 			}
+		}
+	}
+}
+
+func TestPortraitBoardFitAndDragOwnership(t *testing.T) {
+	for _, u := range []float64{1, 2.625} {
+		a := withCutout(setupTestApp(360, 740, u, 12))
+		p, err := newPlay(a, 3, 40, a.set.seats)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.layout(a)
+		if p.boardView.maxScroll() != 0 || p.seatView.maxScroll() <= 0 {
+			t.Fatal("an extreme board must fit entirely while the player list can scroll")
+		}
+		b, s := p.boardView.viewport, p.seatView.viewport
+		tiles, orbs := p.b.tileImg, p.b.orbImg
+		a.in = input{x: b.cx(), y: b.cy(), finger: true, down: true, pressed: true}
+		p.updateScroll(a)
+		a.in = input{x: s.cx(), y: s.cy(), finger: true, down: true, dragY: -60 * u}
+		p.updateScroll(a)
+		if p.boardView.offset != 0 || p.seatView.offset != 0 {
+			t.Fatal("a drag that starts on the fitted board must not move it or the players")
+		}
+		if p.cellAt(s.cx(), s.cy()) != -1 || p.cellAt(p.menu.cx(), p.menu.cy()) != -1 {
+			t.Fatal("board cells must not respond through the player list or Menu")
+		}
+		a.in = input{x: s.cx(), y: s.cy(), finger: true, down: true, pressed: true}
+		p.updateScroll(a)
+		a.in = input{x: b.cx(), y: b.cy(), finger: true, down: true, dragY: -40 * u}
+		p.updateScroll(a)
+		if p.boardView.offset != 0 || p.seatView.offset != 40*u {
+			t.Fatal("a drag that starts on the players must not scroll the board")
+		}
+		a.in = input{x: b.cx(), y: b.cy(), wheel: -10000}
+		p.updateScroll(a)
+		if p.boardView.offset != 0 {
+			t.Fatal("wheel scrolling must not move the fitted board")
+		}
+		for cell := range p.game.Geo.Cells() {
+			x, y := p.b.centre(cell)
+			if !b.contains(x, y) || p.cellAt(x, y) != cell {
+				t.Fatalf("fitted board cell %d must remain visible and tappable", cell)
+			}
+		}
+		if p.b.tileImg != tiles || p.b.orbImg != orbs {
+			t.Fatal("scrolling must reuse the board images")
 		}
 	}
 }
@@ -185,7 +256,6 @@ func TestOrbAtlasFitsGPUWithoutShrinkingOrbs(t *testing.T) {
 		t.Fatal("a bounded atlas must preserve the orb's physical size while sampling the smaller source")
 	}
 }
-
 func TestHomeLayout(t *testing.T) {
 	for _, size := range layoutSizes {
 		for _, u := range []float64{1, 2.625} {

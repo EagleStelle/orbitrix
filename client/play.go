@@ -12,6 +12,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
+	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"orbitrix/client/platform"
 	"orbitrix/core"
@@ -27,10 +28,11 @@ const (
 	wipeTicks   = 40 // the winner's ink flooding the screen
 )
 
-// winTitles are "P1 wins!" for each seat.
-var winTitles = func() (w [core.MaxPlayers]string) {
-	for i := range w {
-		w[i] = seatNames[i] + " wins!"
+// winTitles are "Human wins!", "Jester wins!", ... for each seat type.
+var winTitles = func() []string {
+	w := make([]string, len(seatLabels))
+	for i, label := range seatLabels {
+		w[i] = label + " wins!"
 	}
 	return w
 }()
@@ -45,8 +47,8 @@ const (
 	pauseMainMenu
 )
 
-// playScene is a local game: the mat on the left, the rail on the right (Menu, turn spinner, chain callout, seat
-// table), a pause menu over it, and the results flood at the end.
+// playScene is a local game with a landscape turn wheel or a portrait turn dot, a scrolling seat table,
+// a pause menu and the results flood.
 type playScene struct {
 	cols, rows int
 	seats      []int
@@ -60,11 +62,12 @@ type playScene struct {
 	aiBusy  bool
 	aiDelay int
 
-	shown int // player whose turn is shown: the mover until their chain has played out
-	alive [core.MaxPlayers]bool
-	orbs  [core.MaxPlayers]int
-	orbS  [core.MaxPlayers]string
-	spin  float64 // spinner pointer angle, chasing the shown player's wedge
+	shown     int // player whose turn is shown: the mover until their chain has played out
+	alive     [core.MaxPlayers]bool
+	orbs      [core.MaxPlayers]int
+	orbS      [core.MaxPlayers]string
+	orbLabels [core.MaxPlayers]orbCounter
+	spin      float64 // spinner pointer angle, chasing the shown player's wedge
 
 	chain, chainHold int // waves shown in the current or last chain, and ticks left to show it
 	chainOwner       int
@@ -79,16 +82,19 @@ type playScene struct {
 
 	// Layout in device px, recomputed when the screen size changes.
 	lv                          rect
+	lu                          float64
 	menu                        rect
 	spinX, spinY, spinR         float64
 	callout                     rect
 	rowRect                     [core.MaxPlayers]rect
-	table                       seatStyle
+	tableCols                   int // the seat table's columns
+	boardView, seatView         scrollView
+	listShown                   int
+	tokX, tokY, tokR            float64       // upright: the mover's dot beside Menu; tokR 0 elsewhere
 	orbsMax                     string        // as many 8s as the most orbs this board holds at rest has digits
 	compact                     bool          // a phone: label-size seat rows and the small callout
-	typeDX                      float64       // seat type name's offset from the player tag
 	wheel, pointer              *ebiten.Image // the spinner, drawn by renderSpinner
-	wheelX, wheelY              float64
+	wheelX, wheelY              float64       // the wheel image's top left
 	spinKey                     spinnerKey
 	pausePanel                  rect
 	pauseBtn                    [len(pauseItems)]rect
@@ -128,8 +134,7 @@ func (p *playScene) settle() {
 	}
 	if p.game.Over() && !p.over {
 		p.over, p.shown, p.paused = true, int(p.game.Winner), false
-		p.results = seatLabels[p.seats[p.shown]] + "  ·  " + strconv.Itoa(p.game.Moves) + " moves  ·  biggest chain ×" +
-			strconv.Itoa(p.biggest)
+		p.results = strconv.Itoa(p.game.Moves) + " moves  ·  biggest chain ×" + strconv.Itoa(p.biggest)
 	}
 }
 
@@ -170,6 +175,7 @@ func (p *playScene) update(a *app) error {
 		}
 		return nil
 	}
+	p.updateScroll(a)
 	if inpututil.IsKeyJustPressed(ebiten.KeySpace) {
 		p.b.fastForward()
 	}
@@ -200,13 +206,13 @@ func (p *playScene) update(a *app) error {
 		return nil
 	}
 	if p.b.playing {
-		if a.in.clicked && p.b.area.contains(a.in.x, a.in.y) {
+		if a.in.clicked && p.boardView.viewport.contains(a.in.x, a.in.y) {
 			p.b.fastForward()
 		}
 		return nil
 	}
 	if p.seats[p.game.Turn] == seatHuman {
-		if cell := p.b.cellAt(a.in.x, a.in.y); cell >= 0 && p.game.Legal(cell) {
+		if cell := p.cellAt(a.in.x, a.in.y); cell >= 0 && p.game.Legal(cell) {
 			a.pointer = true
 			if a.in.clicked {
 				p.move(a, cell)
@@ -325,120 +331,77 @@ func aiBudget(cells int) int {
 
 func (p *playScene) layout(a *app) {
 	v := a.safe()
-	if v == p.lv {
+	if v == p.lv && a.u == p.lu {
+		if p.listShown != p.shown {
+			p.revealSeat(a)
+		}
 		return
 	}
-	p.lv = v
+	p.lv, p.lu = v, a.u
 	// Phones (upright, or short on their side) set the seat rows at the button label size; the desktop rail keeps body
 	// size for couch distance.
 	p.compact = a.portrait() || v.h < 640*a.u
-	p.typeDX = 44 * a.u
-	if p.compact {
-		p.typeDX = max(30*a.u, textWidth("P12", a.f.labelBold)) + 8*a.u // as on the Setup seat pill
-	}
+	p.tokR, p.spinR = 0, 0
 	if a.portrait() {
-		p.layoutBars(a, v)
+		p.layoutDock(a, v)
 	} else {
 		p.layoutRail(a, v)
 	}
+	p.layoutScrolled(a)
+	p.revealSeat(a)
 	p.layoutPause(a, v)
 	p.layoutResults(a, v)
 }
 
-// seatStyle is how the seat table sets out its rows: which parts each row shows, and in how many columns.
-type seatStyle struct {
-	names bool // the seat's type (Human, Gambler, ...)
-	tags  bool // the seat's number (P1, P2, ...)
-	cols  int
-}
+// tableRows is how many rows the seats take in p.tableCols columns.
+func (p *playScene) tableRows() int { return (len(p.seats) + p.tableCols - 1) / p.tableCols }
 
-// railStyles prefer type names, then fewer columns when the wheel fits equally well. Every style shows seat numbers.
-var railStyles = [...]seatStyle{
-	{names: true, tags: true, cols: 1}, {names: true, tags: true, cols: 2},
-	{tags: true, cols: 1}, {tags: true, cols: 2},
-}
+// menuWidth is the narrowest Menu pill, as drawMenuButton sets it out.
+func menuWidth(a *app) float64 { return 42*a.u + textWidth("Menu", a.f.labelBold) + 18*a.u }
 
-// layoutRail puts the board on the left and a rail on the right: Menu, the spinner, the chain callout and the seat
-// table. The rail starts at the minimum width its controls need, then takes any width the board cannot use, keeping
-// the board at the left margin. Menu and the table fill the rail; the callout matches the wheel. Phones skip type
-// names and float the callout over the spinner instead of giving it a slot.
-//
-// After the board is fitted, the table chooses one or two columns to maximise the wheel in the actual rail width.
-// Row sizes stay fixed during this choice; the wheel takes the space they leave, centred in the rail.
+// layoutRail keeps Menu, wheel, chip and scrolling seats in that order. The rail's width is bounded by its height
+// so the wheel always fills its width while leaving a visible strip of the player list below.
 func (p *playScene) layoutRail(a *app, v rect) {
 	u := a.u
-	pad, menuGap, calloutGap, listGap, rowMin, rowMax := 32*u, 24*u, 20*u, 24*u, 40*u, 40*u
-	styles := railStyles[:]
+	pad, menuGap, calloutGap, listGap := 32*u, 24*u, 20*u, 24*u
 	if p.compact {
 		// 12 px gaps keep the pointer's tip, which reaches 12 px past the spinner, clear of Menu and the seats.
-		pad, menuGap, listGap, rowMin, rowMax = 16*u, 12*u, 12*u, 20*u, 32*u
-		styles = styles[2:]
+		pad, menuGap, calloutGap, listGap = 16*u, 12*u, 12*u, 12*u
 	}
 	h := v.h - 2*pad
 	cw, ch := p.calloutSize(a)
-	fixed := compactButtonHeight*u + menuGap + listGap // the height besides the spinner and the rows
-	if !p.compact {
-		fixed += calloutGap + ch
-	}
-	menuW := 42*u + textWidth("Menu", a.f.labelBold) + 18*u // as drawMenuButton sets it out
-	n := len(p.seats)
-	var w float64
-	var rows int
-	for _, st := range styles {
-		// Two columns of names use spare rail width rather than taking room from the board.
-		if st.names && st.cols == 2 {
-			continue
-		}
-		p.table = st
-		rows = (n + st.cols - 1) / st.cols
-		w = max(menuW, cw, p.seatTableWidth(a))
-		if fixed+w+float64(rows)*rowMin <= h {
-			break
-		}
-	}
-	rowH := max(rowMin, min(rowMax, (h-fixed-w)/float64(rows)))
-	// The board keeps the left margin and the rail takes every px of width the board can't use.
-	x, y := v.right()-pad-w, v.y+pad
-	area := rect{v.x + pad, y, x - v.x - 2*pad, h}
+	fixed := 2*ch + menuGap + calloutGap + listGap
+	p.tableCols = 1
+	minW := max(menuWidth(a), cw, p.seatTableWidth(a))
+	visible := p.seatRowPitch(a) - 4*u
+	maxW := max(minW, h-fixed-visible)
+	w := minW
+	area := rect{v.x + pad, v.y + pad, v.w - 3*pad - w, h}
 	if bw, _ := p.b.size(area); bw < area.w {
-		w += area.w - bw
-		x -= area.w - bw
-		area.w = bw
+		w = min(maxW, w+area.w-bw)
+		area.w = v.w - 3*pad - w
 	}
-	p.b.layout(area, u)
-	chosen, d := p.table, min(w, h-fixed-float64(rows)*rowH)
-	if !p.compact {
-		d = 0
-		for _, st := range styles {
-			p.table = st
-			if p.seatTableWidth(a) > w {
-				continue
-			}
-			count := (n + st.cols - 1) / st.cols
-			if diameter := min(w, h-fixed-float64(count)*rowH); diameter > d {
-				chosen, d = st, diameter
-			}
+	x, y := v.right()-pad-w, v.y+pad
+	if len(p.seats) > 6 {
+		p.tableCols = 2
+		if p.seatTableWidth(a) > w {
+			p.tableCols = 1
 		}
 	}
-	p.table = chosen
-	rows = (n + chosen.cols - 1) / chosen.cols
-	p.menu = rect{x, y, w, compactButtonHeight * u}
-	p.spinR = d / 2
+	p.boardView.set(area, area.h)
+	p.menu = rect{x, y, w, ch}
+	p.spinR = w / 2
 	p.spinX, p.spinY = x+w/2, p.menu.bottom()+menuGap+p.spinR
 	below := p.spinY + p.spinR
-	if p.compact {
-		p.callout = rect{p.spinX - p.spinR, p.spinY - ch/2, d, ch}
-	} else {
-		p.callout = rect{p.spinX - p.spinR, below + calloutGap, d, ch}
-		below = p.callout.bottom()
-	}
-	p.layoutSeats(a, rect{x, below + listGap, w, float64(rows) * rowH}, rows)
+	p.callout = rect{x, below + calloutGap, w, ch}
+	below = p.callout.bottom()
+	p.seatView.set(rect{x, below + listGap, w, v.bottom() - pad - below - listGap}, p.seatTableHeight(a))
 }
 
 // seatFaces keep desktop text at body size in either column layout; phones retain their compact sizes.
 func (p *playScene) seatFaces(a *app) (name, bold *text.GoTextFace) {
 	switch {
-	case p.compact && p.table.cols == 2:
+	case p.compact && p.tableCols > 1:
 		return a.f.small, a.f.smallBold
 	case p.compact:
 		return a.f.label, a.f.labelBold
@@ -455,7 +418,7 @@ func (p *playScene) seatInsets(a *app) (in, sp, gap, dot float64) {
 		dot = 10 * u
 	}
 	switch {
-	case p.compact && p.table.cols == 2:
+	case p.compact && p.tableCols > 1:
 		return 6 * u, 4 * u, 6 * u, dot - 2*u
 	case p.compact:
 		return 10 * u, 8 * u, 12 * u, dot
@@ -463,85 +426,121 @@ func (p *playScene) seatInsets(a *app) (in, sp, gap, dot float64) {
 	return 14 * u, 12 * u, 12 * u, dot
 }
 
-// seatTableWidth is the narrowest table whose rows fit the parts p.table shows, set out as drawRail draws them:
-// inset, dot, space, number, type, gap, orbs (or "out"), inset, and 8 px between columns.
+// seatTableWidth is the narrowest table whose rows fit in p.tableCols columns, set out as drawRail draws them:
+// inset, dot, space, type, gap, orbs (or "out"), inset, and 8 px between columns.
 func (p *playScene) seatTableWidth(a *app) float64 {
 	name, bold := p.seatFaces(a)
 	in, sp, gap, dot := p.seatInsets(a)
-	row := 2*in + 2*dot + sp + gap + max(textWidth(p.orbsMax, bold), textWidth("out", name))
-	switch {
-	case p.table.names:
-		label := 0.0
-		for _, s := range p.seats {
-			label = max(label, textWidth(seatLabels[s], name))
-		}
-		row += p.typeDX + label
-	case p.table.tags:
-		tag := 0.0
-		for i := range p.seats {
-			tag = max(tag, textWidth(seatNames[i], bold))
-		}
-		row += tag
-	}
-	return float64(p.table.cols)*row + float64(p.table.cols-1)*8*a.u
+	row := 2*in + 2*dot + sp + widestLabel(p.seats, name) + gap + max(textWidth(p.orbsMax, bold), textWidth("out", name))
+	cols := float64(p.tableCols)
+	return cols*row + (cols-1)*8*a.u
 }
 
-// calloutSize is the chain callout pill: 180×40 on the desktop rail; on a phone a 32 px pill sized for "Chain ×88",
-// which a three-digit chain still fits inside.
+// widestLabel is the width of the widest type among seats, set in face.
+func widestLabel(seats []int, face *text.GoTextFace) float64 {
+	w := 0.0
+	for _, s := range seats {
+		w = max(w, textWidth(seatLabels[s], face))
+	}
+	return w
+}
+
+// calloutStyle keeps text and shared Menu/chip height together; only short landscape rails tighten them.
+func (p *playScene) calloutStyle(a *app) (*text.GoTextFace, float64) {
+	if !p.compact {
+		return a.f.callout, compactButtonHeight * a.u
+	}
+	if a.portrait() {
+		return a.f.calloutCompact, compactButtonHeight * a.u
+	}
+	return a.f.calloutTight, compactButtonTightHeight * a.u
+}
+
+// calloutSize keeps the chain pill at Menu's height, with compact text sized for "Chain ×88" (also fitting three digits).
 func (p *playScene) calloutSize(a *app) (w, h float64) {
+	face, h := p.calloutStyle(a)
 	if p.compact {
-		return textWidth("Chain ×88", a.f.calloutCompact) + 20*a.u, 32 * a.u
+		return textWidth("Chain ×88", face) + 20*a.u, h
 	}
-	return 180 * a.u, 40 * a.u
+	return 180 * a.u, h
 }
 
-// layoutBars is the upright layout, built from the rail's parts: the board at the top, then a bar with the spinner
-// and the chain callout under it on the left and the seat table beside them, and Menu across the bottom in thumb
-// reach.
-func (p *playScene) layoutBars(a *app, v rect) {
+// seatRowPitch preserves readable rows; overflow belongs to the viewport instead of the type or wheel.
+func (p *playScene) seatRowPitch(a *app) float64 {
+	pitch := 40 * a.u
+	if p.compact {
+		pitch = 32 * a.u
+		if a.portrait() && p.tableCols == 1 {
+			pitch = 36 * a.u
+		}
+	}
+	return pitch
+}
+
+func (p *playScene) seatTableHeight(a *app) float64 {
+	return float64(p.tableRows()) * p.seatRowPitch(a)
+}
+
+// layoutDock anchors the portrait board and players above the fixed bottom controls. The board fills the width
+// unless screen height constrains it; only the players scroll.
+func (p *playScene) layoutDock(a *app, v rect) {
 	u := a.u
 	pad, gap := 16*u, 16*u
-	x, w := v.x+pad, v.w-2*pad
-	p.menu = rect{x, v.bottom() - pad - compactButtonHeight*u, w, compactButtonHeight * u}
-
-	// More than six seats go into two columns. Each row shows as much as the table's width allows.
-	n := len(p.seats)
-	styles := []seatStyle{{names: true, tags: true, cols: 1}, {tags: true, cols: 1}}
-	rows, rowH := n, 36*u
-	if n > 6 {
-		styles = []seatStyle{{tags: true, cols: 2}}
-		rows, rowH = (n+1)/2, 32*u
-	}
-	tableH := float64(rows) * rowH
-	// The spinner over the callout, as wide as the spinner and 12 px under it so the pointer's tip clears it,
-	// centred against the table.
-	cw, ch := p.calloutSize(a)
-	d := max(cw, 88*u, min(140*u, tableH, w*0.32))
-	colH := d + 12*u + ch
-	barH := max(colH, tableH)
-	barY := p.menu.y - gap - barH
-	p.spinR = d / 2
-	p.spinX, p.spinY = x+p.spinR, barY+(barH-colH)/2+p.spinR
-	p.callout = rect{x, p.spinY + p.spinR + 12*u, d, ch}
-	tx := x + d + gap
-	for _, p.table = range styles {
-		if p.seatTableWidth(a) <= x+w-tx {
-			break
+	x, w, top, bottom := v.x+pad, v.w-2*pad, v.y+pad, v.bottom()-pad
+	p.tableCols = 1
+	if len(p.seats) > 6 {
+		p.tableCols = 2
+		if p.seatTableWidth(a) > w {
+			p.tableCols = 1
 		}
 	}
-	// Twelve seats on a narrow phone take the few px they lack from the gap, down to 8 px.
-	tx -= min(gap-8*u, max(0, p.seatTableWidth(a)-(x+w-tx)))
-	p.layoutSeats(a, rect{tx, barY + (barH-tableH)/2, x + w - tx, tableH}, rows)
-
-	top := v.y + pad
-	p.b.layout(rect{x, top, w, barY - gap - top}, u)
+	_, ch := p.calloutStyle(a)
+	side := (w - ch - 16*u) / 2
+	p.callout = rect{x, bottom - ch, side, ch}
+	p.tokR, p.tokX, p.tokY = ch/2, v.cx(), p.callout.cy()
+	menuX := p.tokX + p.tokR + 8*u
+	p.menu = rect{menuX, p.callout.y, side, ch}
+	boardW, boardH := p.b.size(rect{w: w, h: math.Inf(1)})
+	viewH := min(boardH, p.menu.y-gap-top-gap-p.seatRowPitch(a))
+	boardW *= viewH / boardH
+	tableH := min(p.seatTableHeight(a), p.menu.y-gap-top-gap-viewH)
+	tableY := p.menu.y - gap - tableH
+	p.boardView.set(rect{x + (w-boardW)/2, tableY - gap - viewH, boardW, viewH}, viewH)
+	p.seatView.set(rect{x, tableY, w, tableH}, p.seatTableHeight(a))
 }
 
-// layoutSeats fills table with the seat rows in p.table's columns, rows to a column, 8 px apart.
+func (p *playScene) layoutScrolled(a *app) {
+	v := p.boardView.viewport
+	p.b.layout(rect{v.x, v.y - p.boardView.offset, v.w, p.boardView.height}, a.u)
+	v = p.seatView.viewport
+	p.layoutSeats(a, rect{v.x, v.y - p.seatView.offset, v.w, p.seatView.height}, p.tableRows())
+}
+
+func (p *playScene) revealSeat(a *app) {
+	p.seatView.reveal(p.rowRect[p.shown])
+	p.listShown = p.shown
+	p.layoutScrolled(a)
+}
+
+func (p *playScene) updateScroll(a *app) {
+	seats, board := p.seatView.update(a), p.boardView.update(a)
+	if seats || board {
+		p.layoutScrolled(a)
+	}
+}
+
+func (p *playScene) cellAt(x, y float64) int {
+	if !p.boardView.viewport.contains(x, y) {
+		return -1
+	}
+	return p.b.cellAt(x, y)
+}
+
+// layoutSeats fills table with the seat rows in p.tableCols columns, rows to a column, 8 px apart.
 func (p *playScene) layoutSeats(a *app, table rect, rows int) {
 	u := a.u
 	rowH := table.h / float64(rows)
-	cols := float64(p.table.cols)
+	cols := float64(p.tableCols)
 	w := (table.w - (cols-1)*8*u) / cols
 	for i := range p.seats {
 		p.rowRect[i] = rect{table.x + float64(i/rows)*(w+8*u), table.y + float64(i%rows)*rowH, w, rowH - 4*u}
@@ -558,6 +557,7 @@ func (p *playScene) layoutPause(a *app, v rect) {
 	ph := func() float64 { return 28*u + 40*u + 24*u + rows()*bh + (rows()-1)*gap + 28*u }
 	if ph() > v.h-32*u {
 		cols = 2
+		bw = min(bw, (v.w-32*u-56*u-gap)/2)
 	}
 	pw := float64(cols)*bw + float64(cols-1)*gap + 56*u
 	p.pausePanel = rect{v.x + (v.w-pw)/2, v.y + (v.h-ph())/2, pw, ph()}
@@ -573,8 +573,12 @@ func (p *playScene) layoutResults(a *app, v rect) {
 	u := a.u
 	bw, bh, gap := 220*u, quietButtonHeight*u, 12*u // the pause menu's button height and gap
 	size := max(56*u, min(120*u, v.w*0.075, v.h*0.13))
-	// "P12 wins!" is the widest title; it still fits across the screen.
-	if tw := textWidth(winTitles[len(p.seats)-1], newFace(srcDisplay, size, 800)); tw > v.w-32*u {
+	// Whoever wins, the title fits across the screen.
+	face, tw := newFace(srcDisplay, size, 800), 0.0
+	for _, s := range p.seats {
+		tw = max(tw, textWidth(winTitles[s], face))
+	}
+	if tw > v.w-32*u {
 		size *= (v.w - 32*u) / tw
 	}
 	p.winFace = newFace(srcDisplay, size, 800)
@@ -582,6 +586,9 @@ func (p *playScene) layoutResults(a *app, v rect) {
 	n := 2
 	if platform.CanExit {
 		n = 3
+	}
+	if v.w >= v.h {
+		bw = min(bw, (v.w-32*u-float64(n-1)*gap)/float64(n))
 	}
 	p.winDotR = max(44*u, min(80*u, v.h*0.08))
 	above := func() float64 { return 2*p.winDotR + 28*u + size*0.6 } // dot top to title centre
@@ -621,13 +628,15 @@ func (p *playScene) draw(dst *ebiten.Image, a *app) {
 	if p.over && !p.b.playing {
 		turn = -1
 	}
+	boardDst := p.boardView.clip(dst)
 	// The board's tick clock stops during pause and resumes without jumping ahead.
-	p.b.draw(dst, sc, p.b.clock*(1000.0/60), turn, a.set.Marks)
+	p.b.draw(boardDst, sc, p.b.clock*(1000.0/60), turn, a.set.Marks)
 	if !p.b.playing && !p.over && !p.paused && p.seats[p.game.Turn] == seatHuman {
-		if cell := p.b.cellAt(a.in.x, a.in.y); cell >= 0 && p.game.Legal(cell) {
-			p.b.drawHover(dst, cell, sc.players[p.game.Turn], u)
+		if cell := p.cellAt(a.in.x, a.in.y); cell >= 0 && p.game.Legal(cell) {
+			p.b.drawHover(boardDst, cell, sc.players[p.game.Turn], u)
 		}
 	}
+	p.boardView.drawScrollbar(dst, a)
 	p.drawRail(dst, a)
 	switch {
 	case p.over && !p.b.playing:
@@ -646,50 +655,51 @@ func (p *playScene) drawMenuButton(dst *ebiten.Image, a *app) {
 }
 
 func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
-	sc, f := a.sc, &a.f
+	sc := a.sc
 	p.drawMenuButton(dst, a)
-
-	p.drawSpinner(dst, a)
+	if p.spinR > 0 {
+		p.drawSpinner(dst, a)
+	}
 
 	// The chain callout, in the mover's ink.
 	if p.chainHold > 0 && p.chain >= 2 {
 		c := sc.players[p.chainOwner]
 		alpha := min(1, float64(p.chainHold)/20)
 		fillPill(dst, p.callout, withAlpha(c, alpha))
-		face := f.callout
-		if p.compact {
-			face = f.calloutCompact
-		}
+		face, _ := p.calloutStyle(a)
 		drawText(dst, p.chainText, face, p.callout.cx(), p.callout.cy(), text.AlignCenter, withAlpha(inkOn(c), alpha))
 	}
 
 	// The seat rows, set out as seatTableWidth measures them.
 	name, bold := p.seatFaces(a)
-	in, sp, _, dot := p.seatInsets(a)
+	in, sp, gap, dot := p.seatInsets(a)
+	seatsDst := p.seatView.clip(dst)
 	for i, seat := range p.seats {
 		r := p.rowRect[i]
 		alive, current := p.alive[i], i == p.shown && !p.over
 		if current {
-			fillPill(dst, r, sc.tile)
+			fillPill(seatsDst, r, sc.tile)
 		}
 		dr := min(dot, r.h*0.34)
-		seatDot(dst, sc, i, r.x+in+dr, r.cy(), dr, !alive, a.set.Marks)
+		seatDot(seatsDst, sc, i, r.x+in+dr, r.cy(), dr, !alive, a.set.Marks)
 		ink := sc.ink
 		if !alive {
 			ink = sc.dim
 		}
-		x := r.x + in + 2*dr + sp
-		if p.table.tags {
-			drawText(dst, seatNames[i], bold, x, r.cy(), text.AlignStart, ink)
-		}
-		if p.table.names {
-			drawText(dst, seatLabels[seat], name, x+p.typeDX, r.cy(), text.AlignStart, ink)
-		}
+		drawText(seatsDst, seatLabels[seat], name, r.x+in+2*dr+sp, r.cy(), text.AlignStart, ink)
 		if alive {
-			drawText(dst, p.orbS[i], bold, r.right()-in, r.cy(), text.AlignEnd, ink)
+			room := r.w - 2*in - 2*dr - sp - textWidth(seatLabels[seat], name) - gap
+			scale := min(1, room/max(1, textWidth(p.orbS[i], bold)))
+			drawScaledText(seatsDst, p.orbS[i], bold, r.right()-in, r.cy(), text.AlignEnd, scale, ink)
 		} else {
-			drawText(dst, "out", name, r.right()-in, r.cy(), text.AlignEnd, sc.dim)
+			drawText(seatsDst, "out", name, r.right()-in, r.cy(), text.AlignEnd, sc.dim)
 		}
+	}
+
+	p.seatView.drawScrollbar(dst, a)
+	// Upright, the centered turn dot also shows the mover's orb count.
+	if p.tokR > 0 {
+		p.drawTurnCount(dst, a)
 	}
 }
 
@@ -698,13 +708,12 @@ type spinnerKey struct {
 	x, y, r, u float64
 	alive      [core.MaxPlayers]bool
 	sc         *scheme
-	marks      bool
 }
 
 // drawSpinner draws the turn spinner: a wedge per seat in its ink (out seats printed blank) and the pointer on the
 // player to move. Both are images redrawn only when what they show changes; the pointer turns as it is drawn.
 func (p *playScene) drawSpinner(dst *ebiten.Image, a *app) {
-	if k := (spinnerKey{p.spinX, p.spinY, p.spinR, a.u, p.alive, a.sc, a.set.Marks}); p.wheel == nil || k != p.spinKey {
+	if k := (spinnerKey{p.spinX, p.spinY, p.spinR, a.u, p.alive, a.sc}); p.wheel == nil || k != p.spinKey {
 		p.spinKey = k
 		p.renderSpinner(a)
 	}
@@ -717,6 +726,7 @@ func (p *playScene) drawSpinner(dst *ebiten.Image, a *app) {
 	imageOp.GeoM.Rotate(p.spin)
 	imageOp.GeoM.Translate(p.spinX, p.spinY)
 	dst.DrawImage(p.pointer, &imageOp)
+	p.drawWheelCounts(dst, a)
 }
 
 // renderSpinner caches the wheel at whole-pixel alignment and the rim pointer pointing right around its hub.
@@ -745,25 +755,20 @@ func (p *playScene) renderSpinner(a *app) {
 		an := -math.Pi/2 + float64(i)*2*math.Pi/float64(n)
 		line(p.wheel, x, y, x+r*math.Cos(an), y+r*math.Sin(an), 3*u, sc.ground)
 	}
-	if a.set.Marks {
-		rm := r * 0.66
-		mr := min(r*0.17, math.Pi*rm/float64(n)*0.62)
-		for i := range n {
-			if p.alive[i] {
-				an := p.wedgeAngle(i)
-				drawMark(p.wheel, i, x+rm*math.Cos(an), y+rm*math.Sin(an), mr, sc.players[i])
-			}
-		}
-	}
 	fillCircle(p.wheel, x, y, r*0.2, sc.ground)
 
-	tip, w, h := r+12*u, r*0.09, math.Ceil(r*0.1)+spritePad
+	rim := 2 * u
+	tip, w, h := r+12*u-rim, r*0.09, math.Ceil(r*0.1+rim)+spritePad
 	p.pointer = ebiten.NewImage(int(math.Ceil(h+tip))+spritePad, int(2*h))
 	scratchPath.Reset()
 	scratchPath.MoveTo(float32(h+tip), float32(h))
-	scratchPath.LineTo(float32(h), float32(h+w))
-	scratchPath.LineTo(float32(h), float32(h-w))
+	scratchPath.LineTo(float32(h+r-4*u), float32(h+w))
+	scratchPath.LineTo(float32(h+r-4*u), float32(h-w))
 	scratchPath.Close()
+	pathOp = vector.DrawPathOptions{AntiAlias: true}
+	tint(&pathOp.ColorScale, sc.ground)
+	strokeOp.Width = float32(2 * rim)
+	vector.StrokePath(p.pointer, &scratchPath, &strokeOp, &pathOp)
 	fillPath(p.pointer, &scratchPath, sc.ink)
 	fillCircle(p.pointer, h, h, r*0.1, sc.ink)
 }
@@ -790,13 +795,11 @@ func (p *playScene) drawResults(dst *ebiten.Image, a *app) {
 	ink := inkOn(w)
 	t := min(1, float64(p.overT)/wipeTicks)
 	e := 1 - math.Pow(1-t, 3)
-	bb := p.b.bounds()
-	cx, cy := bb.cx(), bb.cy()
-	reach := math.Hypot(max(cx, a.w-cx), max(cy, a.h-cy))
+	cx, cy := p.boardView.viewport.cx(), p.boardView.viewport.cy()
 	if t < 1 {
-		fillCircle(dst, cx, cy, e*reach, w)
+		fillCircle(dst, cx, cy, e*math.Hypot(max(cx, a.w-cx), max(cy, a.h-cy)), w)
 	} else {
-		dst.Fill(&sc.players[p.shown]) // avoid boxing the colour each frame
+		dst.Fill(&sc.players[p.shown]) // a pointer, so the colour isn't boxed into a new interface value every frame
 	}
 	alpha := p.resultsAlpha()
 	if alpha == 0 {
@@ -811,7 +814,7 @@ func (p *playScene) drawResults(dst *ebiten.Image, a *app) {
 			drawMark(dst, p.shown, x, p.winDotY, p.winDotR-8*u, w)
 		}
 	}
-	drawText(dst, winTitles[p.shown], p.winFace, x, p.winTitleY, text.AlignCenter, withAlpha(ink, alpha))
+	drawText(dst, winTitles[p.seats[p.shown]], p.winFace, x, p.winTitleY, text.AlignCenter, withAlpha(ink, alpha))
 	face := f.body
 	if textWidth(p.results, face) > p.lv.w-32*u { // a phone held upright
 		face = f.label
