@@ -19,7 +19,9 @@ type setupCaptureCase struct {
 	cols, rows  int
 	dark, tail  bool
 	menu, small bool
+	play        bool
 	hover       string
+	progress    float64 // fraction of page scroll for intermediate preview captures
 }
 
 type setupCaptureGame struct {
@@ -54,6 +56,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		a.set.Cols, a.set.Rows = c.cols, c.rows
 	}
 	s.layout(a)
+	s.scroll = c.progress * s.maxScroll
 	if c.tail {
 		s.scroll = s.maxScroll
 	}
@@ -68,7 +71,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 	case "player":
 		hover = s.seatTy[1]
 	case "preset":
-		hover = s.presetPills[0]
+		hover = s.presetPills[shapePortrait][0]
 	case "stepper":
 		hover = s.plusP
 	}
@@ -78,7 +81,18 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 	out := ebiten.NewImage(int(c.w), int(c.h))
 	defer out.Deallocate()
 	out.Fill(a.sc.ground)
-	s.draw(out, a)
+	if c.play {
+		p, err := newPlay(a, a.set.Cols, a.set.Rows, a.set.seats)
+		if err != nil {
+			g.err = err
+			return
+		}
+		p.tickRail()
+		p.chain, p.chainHold, p.chainText = 88, calloutHold, "Chain ×88"
+		p.draw(out, a)
+	} else {
+		s.draw(out, a)
+	}
 	pixels := image.NewRGBA(image.Rect(0, 0, int(c.w), int(c.h)))
 	out.ReadPixels(pixels.Pix)
 	f, err := os.Create(filepath.Join(g.dir, c.name+".png"))
@@ -102,7 +116,13 @@ func TestCaptureSetup(t *testing.T) {
 	}
 	g := &setupCaptureGame{dir: dir, cases: []setupCaptureCase{
 		{name: "desktop", w: 1440, h: 900, players: 2},
+		{name: "setup-all-shapes", w: 1440, h: 1080, players: 2},
 		{name: "setup-desktop-12p", w: 1440, h: 900, players: 12},
+		{name: "setup-preview-background", w: 1881, h: 851, players: 12, dark: true},
+		{name: "setup-preview-quarter", w: 1881, h: 851, players: 12, dark: true, progress: 0.25},
+		{name: "setup-preview-mid", w: 1881, h: 851, players: 12, dark: true, progress: 0.5},
+		{name: "setup-preview-three-quarters", w: 1881, h: 851, players: 12, dark: true, progress: 0.75},
+		{name: "setup-preview-background-bottom", w: 1881, h: 851, players: 12, dark: true, tail: true},
 		{name: "setup-1146-12p", w: 1146, h: 640, players: 12},
 		{name: "setup-tablet-12p", w: 760, h: 844, players: 12},
 		{name: "user-1040", w: 1040, h: 640, players: 2},
@@ -115,6 +135,7 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "setup-mobile-12p", w: 390, h: 844, players: 12, dark: true},
 		{name: "setup-mobile-12p-bottom", w: 390, h: 844, players: 12, dark: true, tail: true},
 		{name: "setup-landscape", w: 844, h: 390, players: 12},
+		{name: "setup-landscape-mid", w: 844, h: 390, players: 12, progress: 0.5},
 		{name: "setup-menu", w: 1040, h: 640, players: 2, menu: true},
 		{name: "setup-board-too-small", w: 1040, h: 640, players: 12, small: true, tail: true},
 		{name: "setup-player-hover", w: 1040, h: 640, players: 2, hover: "player"},
@@ -122,6 +143,15 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "setup-stepper-hover", w: 1040, h: 640, players: 2, hover: "stepper"},
 		{name: "setup-dark-player-hover", w: 1040, h: 640, players: 4, dark: true, hover: "player"},
 		{name: "setup-dark-preset-hover", w: 1040, h: 640, players: 4, dark: true, hover: "preset"},
+		{name: "play-desktop", w: 1440, h: 900, players: 2, play: true},
+		{name: "play-desktop-12p", w: 1040, h: 640, players: 12, play: true},
+		{name: "play-wide-12p", w: 1920, h: 1080, players: 12, play: true, dark: true},
+		{name: "play-responsive-8p", w: 1919, h: 1004, players: 8, play: true},
+		{name: "play-responsive-12p", w: 1919, h: 1004, players: 12, play: true, dark: true},
+		{name: "play-responsive-narrow", w: 1340, h: 1004, players: 12, play: true},
+		{name: "play-mobile", w: 390, h: 844, players: 2, play: true},
+		{name: "play-mobile-12p", w: 360, h: 740, players: 12, play: true, dark: true},
+		{name: "play-landscape", w: 844, h: 390, players: 12, cols: 30, rows: 18, play: true},
 	}}
 	ebiten.SetWindowSize(160, 100)
 	ebiten.SetWindowDecorated(false)

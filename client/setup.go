@@ -10,25 +10,81 @@ import (
 	"orbitrix/core"
 )
 
-// Board presets, as columns × rows.
-var presets = [...]struct {
-	name, dims string
-	cols, rows int
+// Board shapes, in the order their preset groups appear.
+const (
+	shapePortrait = iota
+	shapeBalanced
+	shapeLandscape
+)
+
+var shapeNames = [...]string{"Portrait", "Balanced", "Landscape"}
+
+// boardSizes are the preset tiers, smallest first, as short × long sides; every shape offers every tier (Balanced
+// uses the short side twice). Floor is the largest board whose cells stay at least 24 px, the prototype's smallest
+// cell and WCAG's smallest touch target, on a 360×780 phone: 13 across its 328 px wide board, 18 down the ~430 px the
+// seat bar leaves it. A landscape board turned upright in a phone browser has the same room. Short sides grow about
+// 1.2× a tier (about 1.45× the cells); long sides are about 1.4× the short, and 6 × 9 is the classic board.
+var boardSizes = [...]struct {
+	name        string
+	short, long int
 }{
-	{"Small", "9 × 5", 9, 5},
-	{"Compact", "14 × 8", 14, 8},
-	{"Medium", "17 × 10", 17, 10},
-	{"Broad", "21 × 12", 21, 12},
-	{"Large", "25 × 15", 25, 15},
-	{"Giant", "30 × 18", 30, 18},
+	{"Coaster", 5, 7},
+	{"Placemat", 6, 9},
+	{"Doormat", 7, 10},
+	{"Rug", 9, 13},
+	{"Carpet", 11, 15},
+	{"Floor", 13, 18},
 }
 
-// The board preview frame spans at least the Giant preset; bigger boards shrink to fit it.
-const previewCols, previewRows = 30, 18
+// presetSize is tier t's board in shape g, as columns × rows.
+func presetSize(g, t int) (cols, rows int) {
+	z := boardSizes[t]
+	switch g {
+	case shapePortrait:
+		return z.short, z.long
+	case shapeBalanced:
+		return z.short, z.short
+	}
+	return z.long, z.short
+}
 
-// previewScale is the preview's px per cell for the chosen board.
-func (s *setupScene) previewScale(a *app) float64 {
-	return min(s.preview.w/float64(max(a.set.Cols, previewCols)), s.preview.h/float64(max(a.set.Rows, previewRows)))
+// presetDims are the presets' "cols × rows" notes, by shape and tier.
+var presetDims = func() (d [len(shapeNames)][len(boardSizes)]string) {
+	for g := range d {
+		for t := range d[g] {
+			c, r := presetSize(g, t)
+			d[g][t] = numbers[c] + " × " + numbers[r]
+		}
+	}
+	return d
+}()
+
+// shapeOf is the shape of a cols × rows board.
+func shapeOf(cols, rows int) int {
+	switch {
+	case cols < rows:
+		return shapePortrait
+	case cols == rows:
+		return shapeBalanced
+	}
+	return shapeLandscape
+}
+
+// presetOf is the tier of a cols × rows board, or -1 for a custom size.
+func presetOf(cols, rows int) int {
+	g := shapeOf(cols, rows)
+	for t := range boardSizes {
+		if c, r := presetSize(g, t); c == cols && r == rows {
+			return t
+		}
+	}
+	return -1
+}
+
+// previewFrame is the preview's frame in cells: the shape's largest preset, or the chosen board when it is bigger.
+func (s *setupScene) previewFrame(a *app) (cols, rows int) {
+	c, r := presetSize(shapeOf(a.set.Cols, a.set.Rows), len(boardSizes)-1)
+	return max(a.set.Cols, c), max(a.set.Rows, r)
 }
 
 // setupScene keeps Players above Board and Start outside the scrollable content.
@@ -51,7 +107,8 @@ type setupScene struct {
 	seatHit                  [core.MaxPlayers]rect
 	preview, previewPanel    rect
 	showPreview              bool
-	presetPills              [len(presets)]rect
+	shapeLabels              [len(shapeNames)]rect
+	presetPills              [len(shapeNames)][len(boardSizes)]rect
 	colsCtl, rowsCtl         rect
 	minusCol, plusCol        rect
 	minusRow, plusRow        rect
@@ -61,7 +118,7 @@ type setupScene struct {
 	mini                *ebiten.Image
 	miniC, miniR, miniS int
 	miniSc              *scheme
-	dims                string
+	dims, sizeName      string // the Board heading: "cols × rows", and the preset's name or Custom
 	dimC, dimR          int
 }
 
@@ -117,7 +174,8 @@ func (s *setupScene) layout(a *app) {
 	cols := max(1, min(4, a.set.Players, int((inner+gap)/(minSeatW+gap))))
 	rows := (a.set.Players + cols - 1) / cols
 	playerH := 2*bp + 44*u + float64(rows)*rowPitch
-	presetH := 3*targetH + 16*u
+	groupH := 32*u + 3*targetH + 16*u // a heading, then three rows of two presets
+	presetH := float64(len(shapeNames))*groupH + float64(len(shapeNames)-1)*24*u
 	controlsH := presetH + gap + dimensionsH
 	boardMin := 2*bp + 32*u + controlsH
 	if !sideBySide {
@@ -153,7 +211,9 @@ func (s *setupScene) layout(a *app) {
 	body := rect{b.x + bp, b.y + bp + 32*u, inner, b.h - 2*bp - 32*u}
 	controls := rect{body.right() - controlsW, body.cy() - controlsH/2, controlsW, controlsH}
 	if sideBySide {
-		s.previewPanel = rect{body.x, body.y, controls.x - gap - body.x, body.h}
+		// Follow the visible Board area without changing the page's scroll range or moving its controls.
+		top, bottom := max(body.y, s.viewport.y), min(body.bottom(), s.viewport.bottom())
+		s.previewPanel = rect{body.x, top, controls.x - gap - body.x, max(0, bottom-top)}
 	} else {
 		s.previewPanel = rect{body.x, body.y, body.w, max(128*u, body.h-controlsH-gap)}
 		controls.x, controls.y = body.x, s.previewPanel.bottom()+gap
@@ -168,12 +228,17 @@ func (s *setupScene) layout(a *app) {
 	}
 	s.minusCol, s.plusCol = step(s.colsCtl.right(), s.colsCtl.cy())
 	s.minusRow, s.plusRow = step(s.rowsCtl.right(), s.rowsCtl.cy())
+	inset := (targetH - buttonH) / 2
 	pw := (presetArea.w - 8*u) / 2
-	for i := range s.presetPills {
-		s.presetPills[i] = rect{presetArea.x + float64(i%2)*(pw+8*u), presetArea.y + float64(i/2)*rowPitch + (targetH-buttonH)/2, pw, buttonH}
+	for g := range s.presetPills {
+		y := presetArea.y + float64(g)*(groupH+24*u)
+		s.shapeLabels[g] = rect{presetArea.x, y, presetArea.w, 24 * u}
+		for t := range s.presetPills[g] {
+			s.presetPills[g][t] = rect{presetArea.x + float64(t%2)*(pw+8*u), y + 32*u + float64(t/2)*rowPitch + inset, pw, buttonH}
+		}
 	}
-	s.showPreview = true
 	s.preview = s.previewPanel.inset(12 * u)
+	s.showPreview = s.preview.w > 0 && s.preview.h > 0
 }
 
 func setupStepHit(r rect, u float64) rect {
@@ -304,10 +369,12 @@ func (s *setupScene) update(a *app) error {
 			s.menu = i
 		}
 	}
-	for i, r := range s.presetPills {
-		if a.clicked(compactHit(r, u)) {
-			set.Cols, set.Rows = presets[i].cols, presets[i].rows
-			set.save()
+	for g, group := range s.presetPills {
+		for t, r := range group {
+			if a.clicked(compactHit(r, u)) {
+				set.Cols, set.Rows = presetSize(g, t)
+				set.save()
+			}
 		}
 	}
 	return nil
@@ -393,40 +460,54 @@ func (s *setupScene) drawBoard(dst *ebiten.Image, a *app) {
 	fillRound(dst, b, 24*u, sc.tile)
 	y := b.y + s.blockPad + 14*u
 	drawText(dst, "Board", a.f.heading, b.x+s.blockPad, y, text.AlignStart, sc.ink)
+	g, tier := shapeOf(set.Cols, set.Rows), presetOf(set.Cols, set.Rows)
 	if s.dimC != set.Cols || s.dimR != set.Rows {
 		s.dimC, s.dimR, s.dims = set.Cols, set.Rows, numbers[set.Cols]+" × "+numbers[set.Rows]
+		s.sizeName = "Custom"
+		if tier >= 0 {
+			s.sizeName = boardSizes[tier].name
+		}
 	}
-	drawText(dst, s.dims, a.f.number, b.right()-s.blockPad, y, text.AlignEnd, sc.ink)
+	right := b.right() - s.blockPad
+	drawText(dst, s.dims, a.f.number, right, y, text.AlignEnd, sc.ink)
+	drawText(dst, s.sizeName, a.f.labelBold, right-textWidth(s.dims, a.f.number)-10*u, y, text.AlignEnd, sc.ink)
 
-	// The chosen board as a mini mat, with every preset as a dashed outline from the same corner: graded sizes,
+	// The chosen board as a mini mat, with its shape's presets as dashed outlines from the same corner: graded sizes,
 	// like the nested lines of a sewing pattern.
-	if s.showPreview {
+	if s.previewPanel.h > 0 {
 		fillRound(dst, s.previewPanel, 16*u, sc.ground)
-		// Centre the diagram (the chosen board and the largest preset) in its frame. Preset outlines too small to
-		// read at this scale are left out.
+	}
+	if s.showPreview {
+		// Centre the diagram (the chosen board and the shape's largest preset) in its frame. Preset outlines too small
+		// to read at this scale are left out.
 		pv := s.preview
-		k := s.previewScale(a)
-		ox := math.Round(pv.x + (pv.w-float64(max(set.Cols, previewCols))*k)/2)
-		oy := math.Round(pv.y + (pv.h-float64(max(set.Rows, previewRows))*k)/2)
+		fc, fr := s.previewFrame(a)
+		k := min(pv.w/float64(fc), pv.h/float64(fr))
+		ox := math.Round(pv.x + (pv.w-float64(fc)*k)/2)
+		oy := math.Round(pv.y + (pv.h-float64(fr)*k)/2)
 		s.drawMini(dst, a, k, ox, oy)
-		for _, p := range presets {
+		for t := range boardSizes {
+			c, r := presetSize(g, t)
 			// At small scales an outline inside the chosen board only adds scribble, so it is dropped.
-			inside := p.cols <= set.Cols && p.rows <= set.Rows
-			if float64(min(p.cols, p.rows))*k >= 12*u && !(inside && k < 6*u) {
-				dashedRect(dst, rect{ox, oy, float64(p.cols) * k, float64(p.rows) * k}, 4*u, 1.5*u, sc.dim)
+			inside := c <= set.Cols && r <= set.Rows
+			if float64(min(c, r))*k >= 12*u && !(inside && k < 6*u) {
+				dashedRect(dst, rect{ox, oy, float64(c) * k, float64(r) * k}, 4*u, 1.5*u, sc.dim)
 			}
 		}
 		strokeRound(dst, rect{ox - 3*u, oy - 3*u, float64(set.Cols)*k + 6*u, float64(set.Rows)*k + 6*u}, 6*u,
 			2.5*u, sc.ink)
 	}
 
-	for i, r := range s.presetPills {
-		p := presets[i]
-		style := btnGround
-		if set.Cols == p.cols && set.Rows == p.rows {
-			style = btnChosen
+	for shape, group := range s.presetPills {
+		label := s.shapeLabels[shape]
+		drawText(dst, shapeNames[shape], a.f.labelBold, label.x, label.cy(), text.AlignStart, sc.ink)
+		for t, r := range group {
+			style := btnGround
+			if shape == g && t == tier {
+				style = btnChosen
+			}
+			drawButton(dst, a, r, boardSizes[t].name, presetDims[shape][t], style, true)
 		}
-		drawButton(dst, a, r, p.name, p.dims, style, true)
 	}
 	drawText(dst, "Columns", a.f.labelBold, s.colsCtl.x, s.colsCtl.cy(), text.AlignStart, sc.ink)
 	stepper(dst, a, set.Cols, core.MinSize, core.MaxSize, s.minusCol, s.plusCol)
@@ -440,11 +521,12 @@ func (s *setupScene) drawMini(dst *ebiten.Image, a *app, k, ox, oy float64) {
 	w, h := int(math.Ceil(s.preview.w)), int(math.Ceil(s.preview.h))
 	size := w<<16 | h // cache key: both sides
 	if s.mini == nil || s.miniC != set.Cols || s.miniR != set.Rows || s.miniS != size || s.miniSc != sc {
-		if s.mini == nil || s.miniS != size {
+		if s.mini == nil || s.mini.Bounds().Dx() != w || s.mini.Bounds().Dy() < h {
 			if s.mini != nil {
 				s.mini.Deallocate()
 			}
-			s.mini = ebiten.NewImage(w, h)
+			// Reserve the visible height once so scrolling can resize the preview without replacing its image.
+			s.mini = ebiten.NewImage(w, max(h, int(math.Ceil(s.viewport.h))))
 		}
 		s.miniC, s.miniR, s.miniS, s.miniSc = set.Cols, set.Rows, size, sc
 		s.mini.Clear()

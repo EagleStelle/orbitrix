@@ -111,10 +111,7 @@ func (b *board) layout(area rect, u float64) {
 		return
 	}
 	b.area = area
-	// A wide board in a tall area (an upright phone browser) turns so its long side runs down the screen and its tiles
-	// stay big enough to tap. Only the drawing turns; the game is the same. Where the app can rotate the screen itself
-	// (Android), the game goes landscape instead (wantsLandscape).
-	b.turned = area.h > area.w && b.geo.Cols > b.geo.Rows && platform.Rotate == nil
+	b.turned = b.turns(area)
 	cols, rows := b.screenSize()
 	b.base = cellSize(cols, rows, area.w/u, area.h/u)
 	// The outer tiles' edges, not the cells around them, meet the area's edges, so the board shares the screen margin.
@@ -146,6 +143,25 @@ func (b *board) layout(area rect, u float64) {
 		markShape(b.orbImg, p, float64(2+p)*s+s/2, s/2, fr, pureWhite)
 	}
 	b.badge = newFace(srcUI, max(9, 0.17*cell), 700)
+}
+
+// turns reports whether the board turns a quarter in area: a wide board in a tall area (an upright phone browser)
+// turns so its long side runs down the screen and its tiles stay big enough to tap. Only the drawing turns; the game
+// is the same. Where the app can rotate the screen itself (Android), the game goes landscape instead
+// (wantsLandscape).
+func (b *board) turns(area rect) bool {
+	return area.h > area.w && b.geo.Cols > b.geo.Rows && platform.Rotate == nil
+}
+
+// size is the board's width and height, outer tile edge to outer tile edge, as layout would fit it into area.
+func (b *board) size(area rect) (w, h float64) {
+	cols, rows := float64(b.geo.Cols), float64(b.geo.Rows)
+	if b.turns(area) {
+		cols, rows = rows, cols
+	}
+	cols, rows = cols-2*tileGutter, rows-2*tileGutter
+	k := min(area.w/cols, area.h/rows)
+	return cols * k, rows * k
 }
 
 // screenSize is the board's columns and rows as drawn.

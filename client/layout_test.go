@@ -84,18 +84,37 @@ func TestPlayLayout(t *testing.T) {
 							if r.w < need-0.01 {
 								t.Fatalf("seat row %+v is narrower than its content (%.1f)", r, need)
 							}
+							if !p.compact && math.Abs(r.h-36*u) > 0.01 {
+								t.Fatalf("desktop seat pill height %.1f must stay 36 logical px", r.h/u)
+							}
+						}
+						if name, bold := p.seatFaces(a); !p.compact && (name != a.f.body || bold != a.f.bodyBold) {
+							t.Fatal("desktop seat text must stay at body size in both column layouts")
 						}
 						if !p.table.tags {
 							t.Fatal("the seat numbers must always show")
 						}
-						// On the rail the spinner is only ever narrower than Menu and the table when the table is at its
-						// last style and its least row height.
-						squeezed := p.table == railStyles[len(railStyles)-1] && p.rowRect[0].h+4*u <= 24*u
+						// On the rail the spinner is only ever narrower than Menu and the table when the column fills the
+						// height.
+						pad := 32 * u
+						if p.compact {
+							pad = 16 * u
+						}
+						bottom := 0.0
+						for _, r := range p.rowRect[:players] {
+							bottom = max(bottom, r.bottom()+4*u)
+						}
+						full := math.Abs(bottom-(v.bottom()-pad)) < 0.01
 						if !a.portrait() && (math.Abs(p.menu.w-table.w) > 0.01 || table.x != p.menu.x ||
 							math.Abs(p.menu.cx()-p.spinX) > 0.01 || d > p.menu.w+0.01 ||
-							d < p.menu.w-0.01 && !squeezed) {
+							d < p.menu.w-0.01 && !full) {
 							t.Fatalf("rail: Menu %+v and seat table %+v must be the spinner's width (%.1f) and column",
 								p.menu, table, d)
+						}
+						// The rail takes the width the board leaves: the board spans the left margin to the rail's gap.
+						if b := p.b.bounds(); !a.portrait() && (math.Abs(b.x-(v.x+pad)) > 1 ||
+							math.Abs(b.right()-(p.menu.x-pad)) > 1) {
+							t.Fatalf("rail: board %+v must run from the margin to the rail at %.1f", b, p.menu.x)
 						}
 
 						if !containsRect(v, p.pausePanel) {
@@ -114,6 +133,37 @@ func TestPlayLayout(t *testing.T) {
 							t.Fatalf("title %.0f px wide on a %.0f px screen", w, v.w)
 						}
 					})
+				}
+			}
+		}
+	}
+}
+
+func TestRailColumnsGrowSpinner(t *testing.T) {
+	for _, players := range []int{8, 12} {
+		for _, u := range []float64{1, 2.625} {
+			a := setupTestApp(1919, 1004, u, players)
+			p, err := newPlay(a, 9, 9, a.set.seats)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Reuse the scene through resizes: a narrow rail should return to one column when it fits equally well.
+			for _, width := range []float64{1919, 1340, 1919} {
+				a.w = width * u
+				p.layout(a)
+				wantCols, wantDiameter := 2, 632.0
+				if players == 12 {
+					wantDiameter = 552
+				}
+				if width == 1340 {
+					wantCols, wantDiameter = 1, 304
+				}
+				if p.table.cols != wantCols || !p.table.names || math.Abs(2*p.spinR-wantDiameter*u) > 0.01 {
+					t.Fatalf("%dp / width %.0f / u%g: table %+v, wheel %.1f; want %d columns with names and wheel %.1f",
+						players, width, u, p.table, 2*p.spinR/u, wantCols, wantDiameter)
+				}
+				if math.Abs(p.b.bounds().w-940*u) > 0.01 {
+					t.Fatal("reflow must use the spare rail width without shrinking the board")
 				}
 			}
 		}
@@ -157,6 +207,30 @@ func TestWantsLandscape(t *testing.T) {
 	}
 	if wantsLandscape(newHome()) || wantsLandscape(newSetup()) || wantsLandscape(newSettingsMenu(newHome())) {
 		t.Error("only a game rotates the screen")
+	}
+}
+
+// TestScreenFit checks that a screen too big for the GPU shrinks until twice its width, rounded up to vector's 16 px,
+// and its height fit the largest image, while screens that already fit keep full resolution.
+func TestScreenFit(t *testing.T) {
+	for _, tc := range []struct {
+		w, h   float64
+		m      int
+		shrink bool
+	}{
+		{2560, 1600, 4096, true}, {1600, 2560, 4096, false}, {2420, 1288, 4096, true}, {1080, 2400, 4096, false},
+		{3840, 2160, 16384, false}, {2560, 1600, 8192, false}, {9000, 1000, 16384, true}, {1000, 5000, 4096, true},
+		{2560, 1600, 0, true},
+	} {
+		k := screenFit(tc.w, tc.h, tc.m)
+		m := tc.m
+		if m == 0 {
+			m = 4096
+		}
+		w, h := int(math.Ceil(tc.w*k)), int(math.Ceil(tc.h*k))
+		if (k < 1) != tc.shrink || 2*((w+15)&^15) > m-3 || h > m-3 {
+			t.Errorf("%gx%g on a %d px GPU: scale %.3f gives %dx%d", tc.w, tc.h, tc.m, k, w, h)
+		}
 	}
 }
 

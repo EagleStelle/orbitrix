@@ -336,25 +336,27 @@ type seatStyle struct {
 	cols  int
 }
 
-// railStyles are the rail's seat tables, richest first; the rail takes the first that fits its height. Every style
-// shows the seat numbers.
-var railStyles = [...]seatStyle{{names: true, tags: true, cols: 1}, {tags: true, cols: 1}, {tags: true, cols: 2}}
+// railStyles prefer type names, then fewer columns when the wheel fits equally well. Every style shows seat numbers.
+var railStyles = [...]seatStyle{
+	{names: true, tags: true, cols: 1}, {names: true, tags: true, cols: 2},
+	{tags: true, cols: 1}, {tags: true, cols: 2},
+}
 
-// layoutRail puts the board on the left and a rail on the right, every part of it the spinner's width: Menu, then the
-// spinner, the chain callout and the seat table. The table takes the first of railStyles that fits the height, and the
-// rail is only as wide as that table, Menu and the callout need, so the spinner stays small and the board gets the
-// room. Phones skip the type names and float the callout over the spinner instead of giving it a slot.
+// layoutRail puts the board on the left and a rail on the right: Menu, the spinner, the chain callout and the seat
+// table. The rail starts at the minimum width its controls need, then takes any width the board cannot use, keeping
+// the board at the left margin. Menu and the table fill the rail; the callout matches the wheel. Phones skip type
+// names and float the callout over the spinner instead of giving it a slot.
 //
-// Only when even two columns of rows at their least height leave too little height for a spinner that wide (many
-// players on a short phone held sideways) does the spinner shrink below the rail's width, centred in it.
+// After the board is fitted, the table chooses one or two columns to maximise the wheel in the actual rail width.
+// Row sizes stay fixed during this choice; the wheel takes the space they leave, centred in the rail.
 func (p *playScene) layoutRail(a *app, v rect) {
 	u := a.u
-	pad, menuGap, calloutGap, listGap, rowMin, rowMax := 32*u, 24*u, 20*u, 24*u, 24*u, 40*u
+	pad, menuGap, calloutGap, listGap, rowMin, rowMax := 32*u, 24*u, 20*u, 24*u, 40*u, 40*u
 	styles := railStyles[:]
 	if p.compact {
 		// 12 px gaps keep the pointer's tip, which reaches 12 px past the spinner, clear of Menu and the seats.
 		pad, menuGap, listGap, rowMin, rowMax = 16*u, 12*u, 12*u, 20*u, 32*u
-		styles = styles[1:]
+		styles = styles[2:]
 	}
 	h := v.h - 2*pad
 	cw, ch := p.calloutSize(a)
@@ -367,6 +369,10 @@ func (p *playScene) layoutRail(a *app, v rect) {
 	var w float64
 	var rows int
 	for _, st := range styles {
+		// Two columns of names use spare rail width rather than taking room from the board.
+		if st.names && st.cols == 2 {
+			continue
+		}
 		p.table = st
 		rows = (n + st.cols - 1) / st.cols
 		w = max(menuW, cw, p.seatTableWidth(a))
@@ -375,10 +381,31 @@ func (p *playScene) layoutRail(a *app, v rect) {
 		}
 	}
 	rowH := max(rowMin, min(rowMax, (h-fixed-w)/float64(rows)))
-	d := min(w, h-fixed-float64(rows)*rowH)
-
+	// The board keeps the left margin and the rail takes every px of width the board can't use.
 	x, y := v.right()-pad-w, v.y+pad
-	p.b.layout(rect{v.x + pad, y, x - v.x - 2*pad, h}, u)
+	area := rect{v.x + pad, y, x - v.x - 2*pad, h}
+	if bw, _ := p.b.size(area); bw < area.w {
+		w += area.w - bw
+		x -= area.w - bw
+		area.w = bw
+	}
+	p.b.layout(area, u)
+	chosen, d := p.table, min(w, h-fixed-float64(rows)*rowH)
+	if !p.compact {
+		d = 0
+		for _, st := range styles {
+			p.table = st
+			if p.seatTableWidth(a) > w {
+				continue
+			}
+			count := (n + st.cols - 1) / st.cols
+			if diameter := min(w, h-fixed-float64(count)*rowH); diameter > d {
+				chosen, d = st, diameter
+			}
+		}
+	}
+	p.table = chosen
+	rows = (n + chosen.cols - 1) / chosen.cols
 	p.menu = rect{x, y, w, compactButtonHeight * u}
 	p.spinR = d / 2
 	p.spinX, p.spinY = x+w/2, p.menu.bottom()+menuGap+p.spinR
@@ -392,20 +419,19 @@ func (p *playScene) layoutRail(a *app, v rect) {
 	p.layoutSeats(a, rect{x, below + listGap, w, float64(rows) * rowH}, rows)
 }
 
-// seatFaces are the seat rows' regular and bold faces: body on the desktop rail, a step down on a phone or in two
-// columns, and two steps down for two columns on a phone.
+// seatFaces keep desktop text at body size in either column layout; phones retain their compact sizes.
 func (p *playScene) seatFaces(a *app) (name, bold *text.GoTextFace) {
 	switch {
 	case p.compact && p.table.cols == 2:
 		return a.f.small, a.f.smallBold
-	case p.compact || p.table.cols == 2:
+	case p.compact:
 		return a.f.label, a.f.labelBold
 	}
 	return a.f.body, a.f.bodyBold
 }
 
 // seatInsets are a seat row's inset at each end, the space after its dot, the least space before its orbs, and the
-// dot's largest radius. Two columns pack tighter.
+// dot's largest radius. Desktop rows keep the same spacing in either column layout.
 func (p *playScene) seatInsets(a *app) (in, sp, gap, dot float64) {
 	u := a.u
 	dot = 12 * u
@@ -413,7 +439,7 @@ func (p *playScene) seatInsets(a *app) (in, sp, gap, dot float64) {
 		dot = 10 * u
 	}
 	switch {
-	case p.table.cols == 2:
+	case p.compact && p.table.cols == 2:
 		return 6 * u, 4 * u, 6 * u, dot - 2*u
 	case p.compact:
 		return 10 * u, 8 * u, 12 * u, dot

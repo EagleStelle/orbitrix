@@ -266,17 +266,34 @@ func (g *Game) drawFPS(dst *ebiten.Image) {
 	drawText(dst, g.fpsText, g.a.f.small, r.x+10*u, r.cy(), text.AlignStart, sc.ground)
 }
 
-// Layout draws at the display's full resolution; the UI scales by the device scale factor.
+// Layout draws at the display's full resolution, or as near as the GPU allows (screenFit); the UI scales by the
+// device scale factor.
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	u := 1.0
 	if m := ebiten.Monitor(); m != nil {
 		u = m.DeviceScaleFactor()
 	}
+	k := screenFit(float64(outsideWidth)*u, float64(outsideHeight)*u, ebiten.MaxImageSize())
+	u *= k
 	if u != g.a.u {
 		g.a.u, g.a.f = u, newFonts(u)
 	}
 	w, h := int(math.Ceil(float64(outsideWidth)*u)), int(math.Ceil(float64(outsideHeight)*u))
 	g.a.w, g.a.h = float64(w), float64(h)
-	g.a.ins[0], g.a.ins[1], g.a.ins[2], g.a.ins[3] = platform.SafeArea()
+	l, t, r, b := platform.SafeArea()
+	g.a.ins = [4]float64{l * k, t * k, r * k, b * k}
 	return w, h
+}
+
+// screenFit is the scale, at most 1, that keeps a w × h px screen drawable on a GPU whose largest image is m px.
+// vector's anti-aliased fills pack into an atlas twice the screen's width, which Ebitengine does not cap at the GPU's
+// limit: a tablet browser 2560 px wide with a 4096 px WebGL limit panics on the first wide fill. A smaller screen
+// keeps every logical size; the browser or OS scales it up.
+func screenFit(w, h float64, m int) float64 {
+	if m == 0 {
+		m = 4096 // before the graphics driver reports its limit; the common floor on phones
+	}
+	// Fills round up to 16 px and atlas images are padded; the margin keeps twice the rounded-up width inside m.
+	lim := float64(m - 34)
+	return min(1, lim/2/w, lim/h)
 }

@@ -35,19 +35,34 @@ func TestSetupLayout(t *testing.T) {
 					if s.players.bottom() >= s.boardB.y || s.viewport.bottom() >= s.start.y {
 						t.Fatal("Board, roster, and pinned action must not overlap")
 					}
-					if !s.showPreview || !containsRect(s.boardB, s.previewPanel) || !containsRect(s.previewPanel, s.preview) {
-						t.Fatal("board preview is hidden or outside its block")
+					if s.previewPanel.h > 0 && !containsRect(s.boardB, s.previewPanel) || s.showPreview && !containsRect(s.previewPanel, s.preview) {
+						t.Fatal("board preview is outside its block")
 					}
-					for i, r := range s.presetPills {
-						if r.h != s.back.h || compactHit(r, u).h != 44*u || !containsRect(s.boardB, compactHit(r, u)) {
-							t.Fatalf("preset %d must match Back's height, retain its hit area, and fit Board", i)
+					if s.presetPills[0][0].x > s.previewPanel.x {
+						if s.previewPanel.h > 0 && !containsRect(s.viewport, s.previewPanel) {
+							t.Fatal("the left preview must stay inside the scroll viewport")
+						}
+						if s.preview != s.previewPanel.inset(12*u) {
+							t.Fatal("the miniature must scale within the full background with its existing padding")
 						}
 					}
-					presetBottom := s.presetPills[len(s.presetPills)-1].bottom()
+					presetBottom := s.previewPanel.y
+					for g, group := range s.presetPills {
+						label := s.shapeLabels[g]
+						if label.y < presetBottom || !containsRect(s.boardB, label) {
+							t.Fatalf("%s must stack below the previous preset group", shapeNames[g])
+						}
+						for i, r := range group {
+							if r.h != s.back.h || compactHit(r, u).h != 44*u || !containsRect(s.boardB, compactHit(r, u)) || compactHit(r, u).y < label.bottom() {
+								t.Fatalf("%s preset %d must fit below its heading with a full hit area", shapeNames[g], i)
+							}
+						}
+						presetBottom = compactHit(group[len(group)-1], u).bottom()
+					}
 					if s.colsCtl.y <= presetBottom || s.rowsCtl.y <= presetBottom {
 						t.Fatal("Columns and Rows must sit below the preset buttons")
 					}
-					if s.colsCtl.x != s.presetPills[0].x || s.rowsCtl.right() != s.presetPills[1].right() {
+					if s.colsCtl.x != s.presetPills[0][0].x || s.rowsCtl.right() != s.presetPills[0][1].right() {
 						t.Fatal("presets and dimensions must share their group edges")
 					}
 					for _, ctl := range []struct {
@@ -75,7 +90,7 @@ func TestSetupLayout(t *testing.T) {
 					columns := map[float64]bool{}
 					for i := range players {
 						columns[s.seatTy[i].x] = true
-						if s.seatTy[i].h != s.back.h || s.seatTy[i].h != 40*u || s.seatTy[i].h != s.presetPills[0].h || s.seatHit[i].h != 44*u || !containsRect(s.players, s.seatHit[i]) {
+						if s.seatTy[i].h != s.back.h || s.seatTy[i].h != 40*u || s.seatTy[i].h != s.presetPills[0][0].h || s.seatHit[i].h != 44*u || !containsRect(s.players, s.seatHit[i]) {
 							t.Fatalf("seat %d must match Back's 40px height and retain a 44px target", i)
 						}
 						if !containsRect(s.seatHit[i], s.seatTy[i]) {
@@ -103,9 +118,6 @@ func TestSetupLayout(t *testing.T) {
 					if s.minusP.cy() != s.plusP.cy() || s.minusP.right() >= s.plusP.x {
 						t.Fatal("player count must be bracketed by minus and plus")
 					}
-					if size[0] >= 1040 && players == 2 && (s.maxScroll != 0 || !containsRect(s.viewport, s.boardB)) {
-						t.Fatal("default desktop setup requires scrolling")
-					}
 					start := s.start
 					s.scroll = s.maxScroll
 					s.layout(a)
@@ -113,6 +125,92 @@ func TestSetupLayout(t *testing.T) {
 						t.Fatal("scrolling must reveal Board without moving Start")
 					}
 				})
+			}
+		}
+	}
+}
+
+func TestSetupPreviewFollowsVisibleBoard(t *testing.T) {
+	for _, size := range [][2]float64{{1040, 640}, {1881, 851}, {844, 390}, {760, 844}} {
+		for _, u := range []float64{1, 2.625} {
+			for _, players := range []int{2, 12} {
+				a, s := withCutout(setupTestApp(size[0], size[1], u, players)), newSetup()
+				s.layout(a)
+				start, first, limit := s.start, s.presetPills[0][0], s.maxScroll
+				for _, progress := range []float64{0, 0.25, 0.5, 0.75, 1, 0} {
+					s.scroll = progress * limit
+					s.layout(a)
+					bodyTop, bodyBottom := s.boardB.y+s.blockPad+32*u, s.boardB.bottom()-s.blockPad
+					panel := s.previewPanel
+					if bodyTop >= s.viewport.bottom() {
+						if panel.h != 0 || s.showPreview {
+							t.Fatal("a Board below the viewport must not draw a miniature")
+						}
+						continue
+					}
+					if !containsRect(s.viewport, panel) || !containsRect(s.boardB, panel) {
+						t.Fatalf("preview %+v leaves its visible Board area at %v / u%g / %dp / scroll %g", panel, size, u, players, s.scroll)
+					}
+					if math.Abs(panel.y-max(bodyTop, s.viewport.y)) > 0.001 || math.Abs(panel.bottom()-min(bodyBottom, s.viewport.bottom())) > 0.001 {
+						t.Fatal("the preview must fill all of the visible Board column as the page scrolls")
+					}
+					if s.start != start || s.maxScroll != limit || math.Abs(s.presetPills[0][0].y-(first.y-s.scroll)) > 0.001 {
+						t.Fatal("following the preview must preserve normal page scrolling and the pinned Start")
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestSetupPresetSelection(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for _, size := range [][2]float64{{1040, 640}, {390, 844}, {844, 390}} {
+		a, s := setupTestApp(size[0], size[1], 1, 2), newSetup()
+		s.layout(a)
+		for g := range shapeNames {
+			for tier := range boardSizes {
+				s.scroll += s.presetPills[g][tier].cy() - s.viewport.cy()
+				s.layout(a)
+				r := s.presetPills[g][tier]
+				if !containsRect(s.viewport, compactHit(r, a.u)) {
+					t.Fatalf("%v: %s preset %d is unreachable by scrolling", size, shapeNames[g], tier)
+				}
+				a.in = input{x: r.cx(), y: r.cy(), clicked: true}
+				if err := s.update(a); err != nil {
+					t.Fatal(err)
+				}
+				cols, rows := presetSize(g, tier)
+				if a.set.Cols != cols || a.set.Rows != rows {
+					t.Fatalf("%v: %s preset %d selected %dx%d, want %dx%d", size, shapeNames[g], tier, a.set.Cols, a.set.Rows, cols, rows)
+				}
+			}
+		}
+	}
+}
+
+func TestSetupDimensionsAtScrollEnd(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for _, size := range [][2]float64{{1040, 640}, {390, 844}, {844, 390}} {
+		a, s := setupTestApp(size[0], size[1], 1, 12), newSetup()
+		s.layout(a)
+		s.scroll = s.maxScroll
+		s.layout(a)
+		for _, step := range []struct {
+			button     rect
+			cols, rows int
+		}{{s.plusCol, 10, 9}, {s.plusRow, 10, 10}, {s.minusCol, 9, 10}, {s.minusRow, 9, 9}} {
+			if !containsRect(s.viewport, setupStepHit(step.button, a.u)) {
+				t.Fatal("dimension stepper is unreachable at the end of scrolling")
+			}
+			a.in = input{x: step.button.cx(), y: step.button.cy(), clicked: true}
+			if err := s.update(a); err != nil {
+				t.Fatal(err)
+			}
+			if a.set.Cols != step.cols || a.set.Rows != step.rows {
+				t.Fatalf("%v: stepper set %dx%d, want %dx%d", size, a.set.Cols, a.set.Rows, step.cols, step.rows)
 			}
 		}
 	}

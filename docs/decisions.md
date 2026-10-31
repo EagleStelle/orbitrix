@@ -154,7 +154,8 @@ Choices made where the brief or the prototype left room. Newest last.
   choice (`fitSeats`); new seats take the next AI in dropdown order. A fresh install starts with player 1 Human and
   the other seats shuffled AIs (the prototype put the human on a random seat). While the players outnumber the
   cells, Start is disabled and reads "Board too small".
-- **Presets read cols × rows** (Small 9 × 5 … Giant 30 × 18), matching the Columns and Rows steppers.
+- **Presets read cols × rows**, matching the Columns and Rows steppers. (The Small 9 × 5 … Giant 30 × 18 set was
+  replaced on 2026-10-31; see Board presets below.)
 - **Sound**: C major pentatonic, C4–A6, each note a sine plus soft 2nd and 3rd harmonics with a 6 ms attack and
   exponential decay, rendered once at startup. One player per note (15 voices, under the 16 limit). Placing an orb
   plays the seat's own note; each wave plays a chord of 1–5 notes by its size, rooted higher as the chain goes on.
@@ -273,3 +274,73 @@ Choices made where the brief or the prototype left room. Newest last.
   code yet; only package comments, the `.gitignore` SQLite entries and doc text referred to them.
 - **Phases 5–8 rewritten** in CLAUDE.md: Phase 5 transports, hub, signaling and Docker; Phase 6 online screens and
   host safeguards; Phase 7 LAN on `ws`; Phase 8 NAS deploy, signed Android builds and downloads.
+
+## Board presets (2026-10-31)
+
+- **Three shapes, six sizes each** (user request; names and grouping chosen by the user). Portrait, Balanced and
+  Landscape stack vertically as plain headings, each above its own 2×3 grid of size tiers. All eighteen presets
+  appear in the scrollable list; the shape tabs and their switching implementation are removed. The preview outlines
+  only the selected board's shape's presets. The
+  tiers have the same name in every shape:
+
+  | Tier | Portrait | Balanced | Landscape |
+  |---|---|---|---|
+  | Coaster | 5 × 7 | 5 × 5 | 7 × 5 |
+  | Placemat | 6 × 9 | 6 × 6 | 9 × 6 |
+  | Doormat | 7 × 10 | 7 × 7 | 10 × 7 |
+  | Rug | 9 × 13 | 9 × 9 | 13 × 9 |
+  | Carpet | 11 × 15 | 11 × 11 | 15 × 11 |
+  | Floor | 13 × 18 | 13 × 13 | 18 × 13 |
+
+- **Floor is the largest board that works on every target.** The floor for a cell is 24 px: the prototype's smallest
+  cell (`calculate_cell_size`, kept in `cellSize`) and WCAG 2.5.8's minimum touch target. The tightest common screen
+  is a 360×780 phone (360 px is the narrowest and 780 the shortest of StatCounter's most common phone sizes in 2026).
+  Upright, with a cutout inset, the board gets 328 px across and about 430–485 px down, depending on the seat bar
+  (six seats in one column take the most). 328 / 24 allows 13 columns and 430 / 24 about 18 rows. A landscape board
+  plays on its side in the Android app (about 505–600 × 328 px beside the rail), but a phone browser turns it upright
+  into the same 328 × ~430 px, so landscape presets are the portrait ones turned, and Balanced stops at 13 × 13. A
+  phone browser held sideways with its address bar showing has less height (about 21 px cells on Floor); fullscreen
+  or holding it upright avoids that. Desktop (1040×640 minimum window) gives every preset 30 px or more.
+- **The ladder:** short sides 5, 6, 7, 9, 11, 13, each tier about 1.2× the last (about 1.45× the cells, a geometric
+  series from 5 × 5 up to 13 × 13), and long sides about 1.4× the short. Placemat Portrait is 6 × 9, the board the
+  original Chain Reaction is most often played on. The default 9 × 9 is Rug Balanced.
+- **Choose shape and size together.** Clicking a preset sets both dimensions directly; only that exact preset in
+  its shape section is outlined as chosen. Sections have 24 px headings, an 8 px gap, and three 44 px target rows
+  with 8 px gaps (180 px per section), with 24 px between sections. The preview background follows and fills the
+  visible part of its desktop column: its top and bottom stay inside both the Board body and the scroll viewport
+  above Start. The miniature scales with that visible background inside its 12 px padding, preserving its aspect
+  ratio and nested outlines. Its cached image reserves the viewport height so dragging does not replace the image
+  as the visible area grows. On narrow screens the preview remains above the preset sections.
+  Overflow scrolls the page above the pinned Start button, including at the minimum desktop window size.
+- **Custom:** the Columns and Rows steppers still allow any size from 3 to 40. A size that matches no preset chooses
+  no preset pill and the Board heading reads "Custom" before its dimensions; a preset size shows the preset's name
+  there. Boards saved with the old presets load as custom sizes.
+- Sources: [StatCounter mobile screen resolutions](https://gs.statcounter.com/screen-resolution-stats/mobile/worldwide),
+  [StatCounter desktop screen resolutions](https://gs.statcounter.com/screen-resolution-stats/desktop/worldwide),
+  [WCAG 2.5.8 target size (axe rule)](https://dequeuniversity.com/rules/axe/4.8/target-size),
+  [Chain Reaction game, usual 9 × 6 board](https://cic.du.ac.in/userfiles/downloads/ProjectBooklets/Chain%20Reaction%20Game.pdf).
+
+## Game rail takes the slack (2026-10-31)
+
+- **The rail fills the width the board can't use** (user request: a wide board left white space on both sides of
+  it). The board's shape usually fills the height first, which left a gap left and right of it; now the board keeps
+  the left margin, sits one margin from the rail, and the rail grows by the rest. The rail never gets narrower than
+  before, so a board that fills the width lays out as it did.
+- The spinner grows with the rail, centred, and the callout follows its width. Menu and the seat table span the full
+  rail. The responsive table choice below replaces the earlier sizing of rows from the rail's minimum width.
+
+## Responsive seat columns (2026-10-31)
+
+- **Fit the table to the actual rail** (user request: eight players in a single tall column left a wide rail with
+  an unnecessarily small wheel; also account for twelve players). After the board takes its space, compare one and
+  two columns, with type names when they fit, and choose the largest wheel. Equal wheel sizes prefer names, then
+  fewer columns. A second column of names uses spare rail width without taking more room from the board.
+- **Keep the original row appearance** (user correction). Desktop rows keep 18 px body text, a 40 px pitch with
+  36 px pill faces, and the same dots, padding and spacing in both column layouts. Column selection alone gives
+  the wheel more space; neither text nor pills shrink to enlarge it. Phone layouts keep their existing sizing and
+  column rules, including two columns for more than six portrait players. Seat numbers and orb counts always show.
+  Chain ×N always matches the wheel's width and centre.
+- Regression coverage includes eight and twelve players at 1919×1004, UI scales 1 and 2.625, and resizing the same
+  scene to 1340 px wide and back. For a 9×9 board the wide view uses two named columns and wheels 632 and 552 logical
+  px wide respectively; the board stays 940 px wide. The narrower view uses one named column and a 304 px wheel.
+  Layout checks enforce the original desktop text and pill sizes for every player count from two to twelve.
