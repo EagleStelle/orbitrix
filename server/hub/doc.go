@@ -1,3 +1,3 @@
-// Package hub is the transport-agnostic room, lobby and match engine used by both the
-// online server and LAN hosts. It must not depend on auth, SQLite or HTTP.
+// Package hub is the transport-agnostic room, lobby and match engine that runs inside the hosting client, online and
+// on LAN. It talks to players only through a Conn and must not depend on HTTP, WebRTC or signaling.
 package hub

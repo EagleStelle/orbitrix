@@ -2,11 +2,13 @@ package client
 
 import (
 	"math"
+	"slices"
 	"strconv"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
+
+	"orbitrix/client/platform"
 )
 
 // Settings tabs and their rows. New groups get a tab; new options get a row.
@@ -40,8 +42,11 @@ const (
 )
 
 var settingRows = [len(settingsTabs)][]settingRow{
-	tabVideo: {{"Theme", rowTheme, optTheme}, {"Fullscreen", rowToggle, optFullscreen},
-		{"Colorblind mode", rowToggle, optMarks}},
+	// Phones are always full screen, so they have no Fullscreen row.
+	tabVideo: slices.DeleteFunc([]settingRow{{"Theme", rowTheme, optTheme}, {"Fullscreen", rowToggle, optFullscreen},
+		{"Colorblind mode", rowToggle, optMarks}}, func(r settingRow) bool {
+		return r.id == optFullscreen && !platform.CanFullscreen
+	}),
 	tabAudio: {{"Sound", rowToggle, optSound}, {"Volume", rowSlider, optVolume}},
 }
 
@@ -53,7 +58,8 @@ type settingsMenu struct {
 	drag bool // dragging the volume slider
 
 	// Layout in device px, recomputed when the screen size or tab changes.
-	lw, lh, lt     float64
+	lv             rect
+	lt             int
 	backBtn        rect
 	titleX, titleY float64
 	tabs           [len(settingsTabs)]rect
@@ -67,25 +73,30 @@ type settingsMenu struct {
 func newSettingsMenu(back scene) *settingsMenu { return &settingsMenu{back: back, volN: -1} }
 
 func (s *settingsMenu) layout(a *app) {
-	if a.w == s.lw && a.h == s.lh && float64(s.tab) == s.lt {
+	v := a.safe()
+	if v == s.lv && s.tab == s.lt {
 		return
 	}
-	s.lw, s.lh, s.lt = a.w, a.h, float64(s.tab)
+	s.lv, s.lt = v, s.tab
 	u := a.u
-	// The same Back pill and title placement as Setup, inside this page's wider margin.
-	pad, bp := 40*u, 24*u
-	w := a.w - 2*pad // full width, like a game's settings screen
-	x := pad
-	s.backBtn = backButton(pad, pad, w, u)
+	// The same Back pill and title placement as Setup, inside this page's wider margin. Phones get Setup's compact
+	// margins and shorter rows that still clear the touch target.
+	pad, bp, tabGap, panelGap, rowH := 40*u, 24*u, 28*u, 20*u, 76*u
+	if v.w < 600*u || v.h < 640*u {
+		pad, bp, tabGap, panelGap, rowH = 16*u, 16*u, 16*u, 12*u, 56*u
+	}
+	w := v.w - 2*pad // full width, like a game's settings screen
+	x := v.x + pad
+	s.backBtn = backButton(x, v.y+pad, w, u)
 	s.titleX, s.titleY = s.backBtn.right()+16*u, s.backBtn.cy()
 
-	ty := s.backBtn.bottom() + 28*u
+	ty := s.backBtn.bottom() + tabGap
 	for i := range s.tabs {
 		s.tabs[i] = rect{x + float64(i)*136*u, ty, 124 * u, 44 * u}
 	}
 	n := len(settingRows[s.tab])
-	rowH := 76 * u
-	s.panel = rect{x, ty + 44*u + 20*u, w, max(float64(n)*rowH+2*bp, a.h-pad-(ty+44*u+20*u))} // down to the foot of the page
+	top := ty + 44*u + panelGap
+	s.panel = rect{x, top, w, max(float64(n)*rowH+2*bp, v.bottom()-pad-top)} // down to the foot of the page
 	for i := range n {
 		s.rows[i] = rect{x + bp, s.panel.y + bp + float64(i)*rowH, w - 2*bp, rowH}
 	}
@@ -102,7 +113,7 @@ func (s *settingsMenu) get(a *app, id int) bool {
 	case optSound:
 		return !a.set.Muted
 	case optFullscreen:
-		return a.set.Fullscreen
+		return ebiten.IsFullscreen() // a browser also leaves fullscreen on its own Esc
 	case optMarks:
 		return a.set.Marks
 	}
@@ -114,7 +125,7 @@ func (s *settingsMenu) flip(a *app, id int) {
 	case optSound:
 		a.toggleMute()
 	case optFullscreen:
-		a.set.Fullscreen = !a.set.Fullscreen
+		a.set.Fullscreen = !ebiten.IsFullscreen()
 		ebiten.SetFullscreen(a.set.Fullscreen)
 	case optMarks:
 		a.set.Marks = !a.set.Marks
@@ -138,7 +149,7 @@ func (s *settingsMenu) themeOptions(a *app, r rect) [2]rect {
 
 func (s *settingsMenu) update(a *app) error {
 	s.layout(a)
-	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) || a.clicked(compactHit(s.backBtn, a.u)) {
+	if a.in.esc || a.clicked(compactHit(s.backBtn, a.u)) {
 		s.close(a)
 		return nil
 	}
@@ -165,7 +176,7 @@ func (s *settingsMenu) update(a *app) error {
 		case rowSlider:
 			tr := s.sliderTrack(a, r)
 			hit := rect{tr.x - 14*a.u, r.y, tr.w + 28*a.u, r.h}
-			if a.clicked(hit) {
+			if a.hover(hit) && a.in.pressed { // on press, so a finger can drag the knob
 				s.drag = true
 			}
 			if s.drag {

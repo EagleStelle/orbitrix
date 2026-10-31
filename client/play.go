@@ -76,8 +76,8 @@ type playScene struct {
 	results string
 
 	// Layout in device px, recomputed when the screen size changes.
-	lw, lh                      float64
-	rail, menu                  rect
+	lv                          rect
+	menu                        rect
 	spinX, spinY, spinR         float64
 	callout                     rect
 	rowRect                     [core.MaxPlayers]rect
@@ -87,6 +87,7 @@ type playScene struct {
 	again, toHome               rect
 	exit                        rect
 	winFace                     *text.GoTextFace
+	winX                        float64
 	winTitleY, winDotY, winDotR float64
 	statsY                      float64
 }
@@ -147,7 +148,7 @@ func (p *playScene) update(a *app) error {
 	if p.paused {
 		return p.updatePause(a)
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+	if a.in.esc {
 		if p.over && !p.b.playing {
 			a.next = newHome()
 		} else {
@@ -206,7 +207,7 @@ func (p *playScene) update(a *app) error {
 // updatePause runs the pause menu. The game stands still behind it: no animation ticks, and an AI move that is
 // ready waits.
 func (p *playScene) updatePause(a *app) error {
-	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+	if a.in.esc {
 		p.paused = false
 		return nil
 	}
@@ -297,29 +298,44 @@ func (p *playScene) thinkAI(a *app) {
 }
 
 func (p *playScene) layout(a *app) {
-	if a.w == p.lw && a.h == p.lh {
+	v := a.safe()
+	if v == p.lv {
 		return
 	}
-	p.lw, p.lh = a.w, a.h
+	p.lv = v
+	if a.portrait() {
+		p.layoutBars(a, v)
+	} else {
+		p.layoutRail(a, v)
+	}
+	p.layoutPause(a, v)
+	p.layoutResults(a, v)
+}
+
+// layoutRail puts the board on the left and the rail on the right: Menu across the rail's top, then the spinner, the
+// chain callout and the seat table. A short screen (a phone on its side) gets smaller margins, gaps and spinner.
+func (p *playScene) layoutRail(a *app, v rect) {
 	u := a.u
-	pad := 32 * u
-	rw := max(280*u, min(340*u, a.w*0.26))
-	p.rail = rect{a.w - pad - rw, pad, rw, a.h - 2*pad}
-	r := p.rail
+	pad, menuGap, calloutGap, listGap, minSpin := 32*u, 24*u, 20*u, 24*u, 96*u
+	if v.h < 640*u {
+		pad, menuGap, calloutGap, listGap, minSpin = 16*u, 12*u, 8*u, 12*u, 72*u
+	}
+	rw := max(280*u, min(340*u, v.w*0.26))
+	r := rect{v.right() - pad - rw, v.y + pad, rw, v.h - 2*pad}
 	// The board is centred in the whole column left of the rail, margin to margin. Menu spans the rail and the rest of
 	// the rail starts one gap under it.
-	p.b.layout(rect{pad, pad, r.x - 2*pad, a.h - 2*pad}, u)
+	p.b.layout(rect{v.x + pad, v.y + pad, r.x - v.x - 2*pad, v.h - 2*pad}, u)
 	p.menu = rect{r.x, r.y, rw, compactButtonHeight * u}
-	top := p.menu.bottom() + 24*u
+	top := p.menu.bottom() + menuGap
 
 	// Top down under Menu: the spinner, the chain callout slot, the seat table. The spinner shrinks first when space
 	// runs out; if one column of seats still won't fit, they go into two compact columns without the type names.
 	avail := r.bottom() - top
-	above := 20*u + 40*u + 24*u // spinner to list, excluding the spinner itself
+	above := calloutGap + 40*u + listGap // spinner to list, excluding the spinner itself
 	rows, rowH := len(p.seats), 40*u
-	spinner := func() float64 { return max(96*u, min(240*u, rw*0.8, avail-above-float64(rows)*rowH)) }
+	spinner := func() float64 { return max(minSpin, min(240*u, rw*0.8, avail-above-float64(rows)*rowH)) }
 	d := spinner()
-	p.twoCol = rows > 6 && avail-above-d < float64(rows)*30*u
+	p.twoCol = rows > 3 && avail-above-d < float64(rows)*30*u
 	if p.twoCol {
 		rows = (rows + 1) / 2
 		d = spinner()
@@ -328,39 +344,115 @@ func (p *playScene) layout(a *app) {
 		rowH = max(24*u, (avail-above-d)/float64(rows))
 	}
 	p.spinR = d / 2
-	listY := top + d + above
 	p.spinX, p.spinY = r.cx(), top+p.spinR
-	p.callout = rect{r.cx() - 90*u, p.spinY + p.spinR + 20*u, 180 * u, 40 * u}
-	w := rw
+	p.callout = rect{r.cx() - 90*u, p.spinY + p.spinR + calloutGap, 180 * u, 40 * u}
+	p.layoutSeats(a, rect{r.x, top + d + above, rw, float64(rows) * rowH}, rows)
+}
+
+// layoutBars is the upright layout, built from the rail's parts: a top bar with Menu on the left and the chain
+// callout on the right, a bottom bar with the spinner on the left and the seat table beside it, and the board between
+// them.
+func (p *playScene) layoutBars(a *app, v rect) {
+	u := a.u
+	pad, gap := 16*u, 16*u
+	x, w := v.x+pad, v.w-2*pad
+	p.menu = rect{x, v.y + pad, 112 * u, compactButtonHeight * u}
+	cw := min(180*u, w-p.menu.w-12*u)
+	p.callout = rect{x + w - cw, p.menu.y, cw, 40 * u}
+
+	// More than six seats go into two compact columns without the type names, as on a crowded rail.
+	n := len(p.seats)
+	p.twoCol = n > 6
+	rows, rowH := n, 36*u
 	if p.twoCol {
-		w = (rw - 8*u) / 2
+		rows, rowH = (n+1)/2, 32*u
+	}
+	tableH := float64(rows) * rowH
+	d := max(88*u, min(140*u, tableH, w*0.32))
+	barH := max(d, tableH)
+	barY := v.bottom() - pad - barH
+	p.spinR = d / 2
+	p.spinX, p.spinY = x+p.spinR, barY+barH/2
+	tx := x + d + gap
+	p.layoutSeats(a, rect{tx, barY + (barH-tableH)/2, x + w - tx, tableH}, rows)
+
+	top := p.menu.bottom() + gap
+	p.b.layout(rect{x, top, w, barY - gap - top}, u)
+}
+
+// layoutSeats fills table with the seat rows, rows to a column.
+func (p *playScene) layoutSeats(a *app, table rect, rows int) {
+	u := a.u
+	rowH := table.h / float64(rows)
+	w := table.w
+	if p.twoCol {
+		w = (table.w - 8*u) / 2
 	}
 	for i := range p.seats {
-		p.rowRect[i] = rect{r.x + float64(i/rows)*(w+8*u), listY + float64(i%rows)*rowH, w, rowH - 4*u}
+		p.rowRect[i] = rect{table.x + float64(i/rows)*(w+8*u), table.y + float64(i%rows)*rowH, w, rowH - 4*u}
 	}
+}
 
-	// Pause menu: a centred panel of full-width buttons.
-	bw, bh, gap := 300*u, quietButtonHeight*u, 12*u
-	n := float64(len(pauseItems))
-	ph := 28*u + 40*u + 24*u + n*bh + (n-1)*gap + 28*u
-	p.pausePanel = rect{(a.w - bw - 56*u) / 2, (a.h - ph) / 2, bw + 56*u, ph}
+// layoutPause centres the pause menu: a panel of full-width buttons, two by two when the screen is too short for one
+// column.
+func (p *playScene) layoutPause(a *app, v rect) {
+	u := a.u
+	bw, bh, gap := min(300*u, v.w-32*u-56*u), quietButtonHeight*u, 12*u
+	cols := 1
+	rows := func() float64 { return float64((len(pauseItems) + cols - 1) / cols) }
+	ph := func() float64 { return 28*u + 40*u + 24*u + rows()*bh + (rows()-1)*gap + 28*u }
+	if ph() > v.h-32*u {
+		cols = 2
+	}
+	pw := float64(cols)*bw + float64(cols-1)*gap + 56*u
+	p.pausePanel = rect{v.x + (v.w-pw)/2, v.y + (v.h-ph())/2, pw, ph()}
 	for i := range p.pauseBtn {
-		p.pauseBtn[i] = rect{p.pausePanel.x + 28*u, p.pausePanel.y + 92*u + float64(i)*(bh+gap), bw, bh}
+		p.pauseBtn[i] = rect{p.pausePanel.x + 28*u + float64(i%cols)*(bw+gap),
+			p.pausePanel.y + 92*u + float64(i/cols)*(bh+gap), bw, bh}
 	}
+}
 
-	// Results: one centred column on the winner's ink, the title as large as the screen allows.
-	mid := a.h / 2
-	size := max(56*u, min(120*u, a.w*0.075, a.h*0.13))
+// layoutResults places the result: one centred column on the winner's ink, the title as large as the screen allows.
+// On a screen too short for the column the dot shrinks and the buttons stand side by side.
+func (p *playScene) layoutResults(a *app, v rect) {
+	u := a.u
+	bw, bh, gap := 220*u, quietButtonHeight*u, 12*u // the pause menu's button height and gap
+	size := max(56*u, min(120*u, v.w*0.075, v.h*0.13))
+	// "P12 wins!" is the widest title; it still fits across the screen.
+	if tw := textWidth(winTitles[len(p.seats)-1], newFace(srcDisplay, size, 800)); tw > v.w-32*u {
+		size *= (v.w - 32*u) / tw
+	}
 	p.winFace = newFace(srcDisplay, size, 800)
-	p.winTitleY = mid - 90*u
+	p.winX = v.cx()
+	n := 2
+	if platform.CanExit {
+		n = 3
+	}
+	p.winDotR = max(44*u, min(80*u, v.h*0.08))
+	above := func() float64 { return 2*p.winDotR + 28*u + size*0.6 } // dot top to title centre
+	below := size*0.5 + 34*u + 44*u + float64(n)*bh + float64(n-1)*gap
+	p.winTitleY = v.y + v.h/2 - 90*u
+	row := false
+	if p.winTitleY-above() < v.y+16*u || p.winTitleY+below > v.bottom()-16*u {
+		row = float64(n)*bw+float64(n-1)*gap <= v.w-32*u
+		if row {
+			below = size*0.5 + 34*u + 32*u + bh
+		}
+		p.winDotR = max(24*u, min(p.winDotR, (v.h-32*u-below-28*u-size*0.6)/2))
+		p.winTitleY = v.y + (v.h-above()-below)/2 + above()
+	}
 	p.statsY = p.winTitleY + size*0.5 + 34*u
-	p.winDotR = max(44*u, min(80*u, a.h*0.08))
 	p.winDotY = p.winTitleY - size*0.6 - 28*u - p.winDotR
-	// The same button height and gap as the pause menu.
-	bw = 220 * u
-	p.again = rect{a.w/2 - bw/2, p.statsY + 44*u, bw, bh}
-	p.toHome = rect{a.w/2 - bw/2, p.again.bottom() + gap, bw, bh}
-	p.exit = rect{a.w/2 - bw/2, p.toHome.bottom() + gap, bw, bh}
+	if row {
+		x := p.winX - (float64(n)*bw+float64(n-1)*gap)/2
+		p.again = rect{x, p.statsY + 32*u, bw, bh}
+		p.toHome = rect{p.again.right() + gap, p.again.y, bw, bh}
+		p.exit = rect{p.toHome.right() + gap, p.again.y, bw, bh}
+		return
+	}
+	p.again = rect{p.winX - bw/2, p.statsY + 44*u, bw, bh}
+	p.toHome = rect{p.winX - bw/2, p.again.bottom() + gap, bw, bh}
+	p.exit = rect{p.winX - bw/2, p.toHome.bottom() + gap, bw, bh}
 }
 
 func (p *playScene) draw(dst *ebiten.Image, a *app) {
@@ -453,7 +545,11 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 			fillPill(dst, r, sc.tile)
 		}
 		dr := min(12*u, r.h*0.34)
-		seatDot(dst, sc, i, r.x+14*u+dr, r.cy(), dr, !alive, a.set.Marks)
+		in, sp := 14*u, 12*u // row inset, and the space after the dot
+		if r.w < 130*u {     // two columns beside the spinner on an upright phone
+			in, sp = 8*u, 6*u
+		}
+		seatDot(dst, sc, i, r.x+in+dr, r.cy(), dr, !alive, a.set.Marks)
 		ink := sc.ink
 		if !alive {
 			ink = sc.dim
@@ -463,15 +559,15 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 		if p.twoCol {
 			name, bold = f.label, f.labelBold
 		}
-		x := r.x + 14*u + 2*dr + 12*u
+		x := r.x + in + 2*dr + sp
 		drawText(dst, seatNames[i], bold, x, r.cy(), text.AlignStart, ink)
 		if !p.twoCol {
 			drawText(dst, seatLabels[seat], name, x+44*u, r.cy(), text.AlignStart, ink)
 		}
 		if alive {
-			drawText(dst, p.orbS[i], bold, r.right()-14*u, r.cy(), text.AlignEnd, ink)
+			drawText(dst, p.orbS[i], bold, r.right()-in, r.cy(), text.AlignEnd, ink)
 		} else {
-			drawText(dst, "out", name, r.right()-14*u, r.cy(), text.AlignEnd, sc.dim)
+			drawText(dst, "out", name, r.right()-in, r.cy(), text.AlignEnd, sc.dim)
 		}
 	}
 }
@@ -507,15 +603,20 @@ func (p *playScene) drawResults(dst *ebiten.Image, a *app) {
 		return
 	}
 	// The winner's dot at mat scale, then the title at poster size.
-	fillCircle(dst, a.w/2, p.winDotY, p.winDotR, withAlpha(ink, alpha))
+	x := p.winX
+	fillCircle(dst, x, p.winDotY, p.winDotR, withAlpha(ink, alpha))
 	if alpha == 1 {
-		fillCircle(dst, a.w/2, p.winDotY, p.winDotR-8*u, w)
+		fillCircle(dst, x, p.winDotY, p.winDotR-8*u, w)
 		if a.set.Marks {
-			drawMark(dst, p.shown, a.w/2, p.winDotY, p.winDotR-8*u, w)
+			drawMark(dst, p.shown, x, p.winDotY, p.winDotR-8*u, w)
 		}
 	}
-	drawText(dst, winTitles[p.shown], p.winFace, a.w/2, p.winTitleY, text.AlignCenter, withAlpha(ink, alpha))
-	drawText(dst, p.results, f.body, a.w/2, p.statsY, text.AlignCenter, withAlpha(ink, alpha))
+	drawText(dst, winTitles[p.shown], p.winFace, x, p.winTitleY, text.AlignCenter, withAlpha(ink, alpha))
+	face := f.body
+	if textWidth(p.results, face) > p.lv.w-32*u { // a phone held upright
+		face = f.label
+	}
+	drawText(dst, p.results, face, x, p.statsY, text.AlignCenter, withAlpha(ink, alpha))
 
 	resultButton(dst, a, p.again, "Play again", w, ink, true, alpha)
 	resultButton(dst, a, p.toHome, "Main menu", w, ink, false, alpha)

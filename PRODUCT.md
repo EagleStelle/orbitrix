@@ -1,7 +1,7 @@
 # Orbitrix
 
 A turn-based chain-reaction orb game for 2–12 players, written in Go with Ebitengine. Targets Windows, Android and
-the web (WASM), with an optional online server and LAN play.
+the web (WASM), with online and LAN games hosted by one of the players.
 
 <!-- impeccable:product-schema 1 -->
 
@@ -19,7 +19,7 @@ desktop and web.
 ## Users
 
 - **Now:** the developer and their friends and family. They play pass-and-play on one device, at LAN sessions with
-  no internet, and online through an invite-only server. Devices are mixed: Windows PCs, Android phones (APK
+  no internet, and online in rooms one of them hosts. Devices are mixed: Windows PCs, Android phones (APK
   installed directly) and browsers, often in the same room.
 - **Later (possible):** a public audience of players who don't know the developer. Nothing is committed yet, but
   future work must not make a public release impossible.
@@ -47,7 +47,10 @@ have, fill empty seats with AI, and enjoy following a chain reaction as it plays
 - Local games on one device, passing it between players or playing alone against AIs.
 - LAN games: one Windows or Android device hosts; others join through discovery, by IP, or (in a browser) at
   `http://<host-ip>:7777`.
-- Online games through the invite-only Docker server: invite codes, room codes, lobbies, rematches, spectators.
+- Online games hosted by any player's client, a browser tab included. The host shares a room code or
+  `/join/<CODE>` link privately, approves each player, and can lock the room or kick. Players connect to the host
+  over WebRTC, through a Cloudflare TURN relay when their networks block a direct connection. The Docker container
+  on the developer's NAS only serves the website and signaling; no game traffic passes through it.
 - Codes and names are typed on a keypad drawn in the game on every platform, because mobile has no on-screen
   keyboard.
 
@@ -110,35 +113,42 @@ have, fill empty seats with AI, and enjoy following a chain reaction as it plays
 | Tool | Needed for | Notes |
 |---|---|---|
 | [Go](https://go.dev/dl/) 1.27.3+ | everything | The exact version is pinned in `go.mod`; older toolchains download it automatically (`GOTOOLCHAIN=auto`). |
-| [JDK](https://adoptium.net/) 17+ | Android | Used by Gradle and `ebitenmobile`. |
-| [Android SDK](https://developer.android.com/studio) + NDK | Android | Set `ANDROID_HOME`; install an NDK through the SDK manager (`ANDROID_NDK_HOME` if it isn't found). |
-| Docker | server deployment | Only for running the online server in a container. |
+| [JDK](https://adoptium.net/) 17+ | Android | Used by Gradle (the wrapper in `android/` fetches Gradle 9.8.2 and the Android Gradle Plugin itself). |
+| [Android SDK](https://developer.android.com/studio) + NDK | Android | The scripts use `ANDROID_HOME`, or `%LOCALAPPDATA%\Android\Sdk` / `~/Android/Sdk` when it isn't set. Install an NDK with the SDK manager (`sdkmanager "ndk;30.0.16248370"`). |
+| Docker | server deployment | Only for running the website and signaling server in a container. |
 
 Desktop builds on Windows and Linux are pure Go (`CGO_ENABLED=0`). Only the Android/iOS bindings need cgo, through
-`ebitenmobile`.
+`ebitenmobile`, which is pinned in `go.mod` as a tool (`go tool ebitenmobile`).
 
 ## Building
 
 Every script target works the same from bash and PowerShell. Output goes to `dist/`.
 
 ```sh
-bash scripts/build.sh [check|desktop|web|server|all]     # bash / Git Bash / CI
+bash scripts/build.sh [check|desktop|web|server|android|all]     # bash / Git Bash / CI
 ```
 
 ```powershell
-.\scripts\build.ps1 [check|desktop|web|server|all]       # PowerShell
+.\scripts\build.ps1 [check|desktop|web|server|android|all]       # PowerShell
 ```
 
 | Target | Output |
 |---|---|
 | `check` | gofmt, `go vet ./...`, `go test ./...` |
 | `desktop` | `dist/orbitrix[.exe]` (cross-compile with `GOOS=windows`) |
-| `web` | `dist/web/` — `game.wasm`, `wasm_exec.js`, `index.html` |
+| `web` | `dist/web/`: `game.wasm`, `wasm_exec.js`, `index.html`, each with `.gz` and `.br` copies (`cmd/webdist`) |
 | `server` | `dist/orbitrix-server[.exe]` |
-| `all` | all of the above (default) |
+| `android` | `dist/orbitrix.aar` (the Go game, arm64 + x86_64) and `dist/orbitrix.apk` (installable) |
+| `all` | check, desktop, web and server (default); `android` is separate because it needs the SDK |
 
 Run the desktop client directly with `go run ./cmd/orbitrix`. F3 toggles the frame-rate overlay (`-fps` starts
 with it on).
+
+Play the web build locally after a `web` build: `go run ./cmd/orbitrix-server -web dist/web`, then open
+`http://localhost:8080`. The server sends the precompressed copies to browsers that accept them.
+
+Install the Android build on a connected phone or emulator with `adb install -r dist/orbitrix.apk`. It is signed
+with the debug key, so it installs directly (no store).
 
 The AI tournament plays every pair of AI strategies and prints win rates and move times:
 
@@ -153,11 +163,12 @@ go run ./cmd/aitourney -games 20 -size 9x9      # -seed, -workers also available
 | `core/` | Pure game rules (board, moves, wave resolution, win/turn order, seeded RNG). No Ebitengine, net or OS imports. |
 | `core/ai/` | The eight AI personalities. |
 | `cmd/aitourney/` | Headless AI-vs-AI tournament. |
+| `cmd/webdist/` | Finishes a web build: loading-progress size and precompressed copies. |
 | `proto/` | Binary wire protocol. |
 | `client/` | Ebitengine game: scenes, rendering, input, audio, settings. `client/fonts/` holds the two OFL fonts and their licences. |
 | `cmd/orbitrix/` | Desktop and web entry point. |
-| `mobile/`, `android/` | `ebitenmobile` binding and the Gradle wrapper project. |
+| `mobile/`, `android/` | `ebitenmobile` binding and the Gradle project that wraps it (one activity in Java). |
 | `web/` | Page that loads `game.wasm`. |
-| `server/`, `cmd/orbitrix-server/` | Online server; `server/hub` is the shared room engine, `server/lan` the LAN host. |
+| `server/`, `cmd/orbitrix-server/` | Website and signaling server; `server/hub` is the room engine every host runs, `server/lan` the LAN host. |
 | `deploy/` | Dockerfile, docker-compose, Cloudflare Tunnel config. |
 | `docs/decisions.md` | Choices made where the brief left room. |

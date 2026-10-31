@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build Orbitrix targets into dist/.
-# Usage: scripts/build.sh [check|desktop|web|server|all]   (default: all)
+# Usage: scripts/build.sh [check|desktop|web|server|android|all]   (default: all; android is separate)
 # Cross-compile the desktop client with e.g. GOOS=windows scripts/build.sh desktop
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -23,18 +23,36 @@ desktop() {
 
 web() {
 	mkdir -p "$out/web"
-	GOOS=js GOARCH=wasm go build -trimpath -o "$out/web/game.wasm" ./cmd/orbitrix
+	GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o "$out/web/game.wasm" ./cmd/orbitrix
 	# wasm_exec.js must match the Go version that built game.wasm. -f because the
 	# toolchain's copy is read-only, so a previous copy can't be opened for writing.
 	cp -f "$(go env GOROOT)/lib/wasm/wasm_exec.js" web/index.html "$out/web/"
+	go run ./cmd/webdist "$out/web" # loading progress size, .gz and .br copies
 }
 
 server() {
 	go build -trimpath -o "$out/orbitrix-server$(go env GOEXE)" ./cmd/orbitrix-server
 }
 
+# android binds ./mobile into an AAR and wraps it in an APK. Needs the Android SDK with an NDK and a JDK.
+android() {
+	if [ -z "${ANDROID_HOME:-}" ]; then
+		if [ -n "${LOCALAPPDATA:-}" ]; then
+			ANDROID_HOME="$LOCALAPPDATA/Android/Sdk"
+		else
+			ANDROID_HOME="$HOME/Android/Sdk"
+		fi
+		export ANDROID_HOME
+	fi
+	# arm64 for phones, x86_64 for emulators and Chromebooks.
+	go tool ebitenmobile bind -target android/arm64,android/amd64 -androidapi 24 -javapkg com.orbitrix \
+		-trimpath -ldflags="-s -w" -o "$out/orbitrix.aar" ./mobile
+	(cd android && sh ./gradlew -q assembleRelease)
+	cp -f android/build/outputs/apk/release/orbitrix-release.apk "$out/orbitrix.apk"
+}
+
 case "${1:-all}" in
-	check | desktop | web | server) "$1" ;;
+	check | desktop | web | server | android) "$1" ;;
 	all) check; desktop; web; server ;;
-	*) echo "usage: $0 [check|desktop|web|server|all]" >&2; exit 2 ;;
+	*) echo "usage: $0 [check|desktop|web|server|android|all]" >&2; exit 2 ;;
 esac

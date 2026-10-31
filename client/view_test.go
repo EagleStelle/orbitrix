@@ -90,26 +90,31 @@ func TestCellSize(t *testing.T) {
 }
 
 // TestOrbsStayInCell runs every cell of a board through a few seconds of motion at every count and checks that
-// orbs stay finite and inside their orbit (a lone orb only jitters about the centre), and that updating doesn't
-// allocate.
+// orbs stay finite and inside their orbit (a lone orb only jitters about the centre), that every cell size shows the
+// same picture scaled, and that updating doesn't allocate.
 func TestOrbsStayInCell(t *testing.T) {
 	geo, err := core.NewGeometry(6, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := newOrbField(geo)
+	f, ref := newOrbField(geo), newOrbField(geo)
+	r := orbRadius(orbCell)
 	for _, cell := range []float64{24, 60, 80} {
-		maxOrbit := max(2, cell/2-orbRadius(cell)-12)
+		s := cell / orbCell
 		for i := range geo.Cells() {
 			for count := 1; count <= 7; count++ {
-				limit := maxOrbit
+				limit := max(2, orbCell/2-r-12) * s
 				if count == 1 {
-					limit = 3 * max(0.6, orbRadius(cell)*0.28)
+					limit = 3 * max(0.6, r*0.28) * s
 				}
 				for tms := 0.0; tms < 3000; tms += 16.7 {
-					for _, p := range f.update(i, count, tms, cell) {
+					ps, want := f.update(i, count, tms, cell), ref.update(i, count, tms, orbCell)
+					for k, p := range ps {
 						if d := math.Hypot(p[0], p[1]); math.IsNaN(d) || d > limit+1e-6 {
 							t.Fatalf("cell %v, %d orbs at %v ms: orb %v from centre (max %v)", cell, count, tms, d, limit)
+						}
+						if math.Abs(p[0]-want[k][0]*s) > 1e-9 || math.Abs(p[1]-want[k][1]*s) > 1e-9 {
+							t.Fatalf("cell %v, %d orbs at %v ms: orb %d at %v, want %v scaled by %v", cell, count, tms, k, p, want[k], s)
 						}
 					}
 				}
@@ -122,7 +127,7 @@ func TestOrbsStayInCell(t *testing.T) {
 }
 
 func TestOrbRadius(t *testing.T) {
-	for cell, want := range map[float64]float64{24: 8, 30: 8, 60: 13, 80: 17} {
+	for cell, want := range map[float64]float64{24: 5.1, 40: 8.5, 80: 17} {
 		if got := orbRadius(cell); got != want {
 			t.Errorf("orbRadius(%v) = %v, want %v", cell, got, want)
 		}

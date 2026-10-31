@@ -1,3 +1,5 @@
+//go:build !js
+
 package platform
 
 import (
@@ -10,8 +12,17 @@ import (
 // CanExit reports whether the app may quit itself. A browser tab can't.
 const CanExit = runtime.GOOS != "js"
 
+// dataDir replaces the user config folder where the OS has none for apps (Android); see SetDataDir.
+var dataDir string
+
+// SetDataDir sets the folder that holds Orbitrix's files. The Android wrapper calls it before the game starts.
+func SetDataDir(d string) { dataDir = d }
+
 // dir is the per-user folder that holds Orbitrix's files.
 func dir() (string, error) {
+	if dataDir != "" {
+		return dataDir, nil
+	}
 	base, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("config dir: %w", err)

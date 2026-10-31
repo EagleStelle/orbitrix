@@ -1,2 +1,5 @@
 # LF everywhere: bash rejects CRLF scripts and gofmt flags CRLF Go files.
 * text=auto eol=lf
+# Except Windows batch files (the Gradle wrapper): cmd.exe misreads labels in LF files.
+*.bat text eol=crlf
+*.jar binary

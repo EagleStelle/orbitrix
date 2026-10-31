@@ -14,11 +14,6 @@ CLAUDE.md
 *.aar
 *.apk
 
-# SQLite data
-*.db
-*.db-wal
-*.db-shm
-
 # Android / Gradle
 .gradle/
 build/

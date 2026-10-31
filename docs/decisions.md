@@ -134,10 +134,12 @@ Choices made where the brief or the prototype left room. Newest last.
   three small images (a rounded tile, an orb atlas holding a rim disc and a fill disc, and a ring). Nothing is
   cached per move any more, which also removes the per-move layer rebuild the first pass had. Orbs get a rim in the
   mat's colour so overlapping orbs read as separate pieces; explosions are flat rings in the exploding cell's ink.
-- **Orb motion** is ported exactly from the prototype's `draw_orbs_on_surface`, in base units (its unscaled cell,
-  24–80 px, from `calculate_cell_size`), so sizes, orbits, jitter and separation keep its proportions at any window
-  size. At those sizes the orbit radius is smaller than the minimum separation, so orbs in a full cell overlap, as
-  they did there.
+- **Orb motion** is ported exactly from the prototype's `draw_orbs_on_surface`, but always runs at its largest cell
+  (80 px) and is scaled to the board's cell (user request: fixed orb-to-cell ratio). The prototype's fixed pixel
+  constants (8 px minimum radius, 12 px orbit margin, separations) made orbs a third of a 24 px cell and stacked
+  them on the centre on big boards; now every board shows the 80 px picture: orb radius 17/80 ≈ 21% of the cell,
+  orbit up to 11/80. The orbit radius is still smaller than the minimum separation, so orbs in a full cell overlap,
+  as they did there.
 - **Animation replays core's result.** `core.Game.Apply` resolves the move at once; the client's view starts from
   the old position and replays the recorded waves (launch, then land), which a test checks ends equal to the game.
   Leftover orbs stay, unlike the prototype's animated path.
@@ -181,3 +183,75 @@ Choices made where the brief or the prototype left room. Newest last.
 - **One Back/Menu component** (polish pass): Back on Setup and Settings and Menu on the game rail share the compact
   40 px face, 44 px target, glyph and label offsets; Settings tabs are quiet pills like the other buttons on the
   mat; Results buttons are 52 px like the pause menu (user choice); hover always matches the click target.
+
+## Phase 4
+
+- **One client everywhere** (user request: real reuse, mobile = desktop made responsive). Web and Android run the
+  same `client` package and scenes as the desktop; there is no mobile or web UI of its own. `cmd/orbitrix` is also
+  the WASM entry point, and `mobile` only starts `client.New()`. Layouts respond to the size they get, measured in
+  the safe area: portrait means taller than wide, and compact margins apply below 640 px tall or 600 px wide.
+- **Portrait game** (user choice): the rail splits into a top bar (Menu left, Chain ×N callout right) and a bottom bar
+  (spinner left, seat table beside it). A full-width Menu was considered and dropped (user).
+- **Portrait Home** (user choice): wordmark and seat dots on top, live mat in the middle, PLAY and the buttons at the
+  bottom.
+- **Wide boards turn** (user choice): a board wider than tall in an area taller than wide is drawn a quarter turn
+  clockwise. In that case turning always gives bigger tiles (both of its scale limits beat the unturned one's
+  tighter limit). Only the board's drawing and hit-testing turn; the game and its moves don't.
+- **Phone landscape** keeps the rail, with 16 px margins, tighter gaps, a spinner down to 72 px and two seat columns
+  once a fourth seat no longer fits; pause buttons go two by two and the result buttons side by side when the screen
+  is too short. Layout tests cover 1040×640 to 1920×1080, 844×390, 780×360, 390×844, 360×740, 412×915 and 768×1024 at
+  scales 1 and 2.625 with a cutout, for 2–12 players and 9×9 and 30×18 boards: every part inside the safe area and no
+  overlaps.
+- **Input bug fixed from Phase 3:** Ebitengine reports pointer positions on the screen `Layout` returns, which is
+  already in device pixels, but the client multiplied them by the UI scale again. Invisible at 100% scaling; on a
+  2.6× phone or a hi-DPI browser every click landed far off.
+- **Touch:** the first finger is the pointer. It clicks on release and only if it moved less than 10 px; a longer
+  drag scrolls Setup. The volume slider starts dragging on press. A lifted finger moves the pointer off screen so no
+  hover sticks; the mouse takes over again as soon as it moves. A tap shorter than one 60 Hz tick is never seen
+  (Ebitengine polls touches each tick); real taps last longer, but `adb shell input tap` doesn't, so automated tests
+  use a 90 ms `input swipe` at one point.
+- **Android:** `ebitenmobile bind` (pinned as a Go tool in `go.mod`) builds `dist/orbitrix.aar` for arm64 (phones)
+  and x86_64 (emulators, Chromebooks); 32-bit ARM is left out. A plain Gradle project (AGP 9.4.1, Gradle 9.8.2,
+  compileSdk/targetSdk 37, minSdk 24, no AndroidX) wraps it with one Java activity: immersive full screen (user
+  choice; a swipe shows the bars for a moment), drawing under the cutout and reporting its insets as the safe area,
+  the back button as Esc (`OnBackInvokedCallback` from Android 13, the key before), suspend/resume, and the rest of
+  the config changes handled in place so rotating never restarts the game. Back on Home moves the app to the
+  background, as Android expects of a root screen. Settings live in the app's files folder, passed in at start.
+  Settings has no Fullscreen row on phones. The release APK is signed with the debug key so it installs directly (a
+  store release needs a real keystore), and its native code is stored compressed for a smaller file to pass around.
+- **Web:** settings live in `localStorage` (`orbitrix/settings.json`). Fullscreen is not restored at start (browsers
+  only allow it after a click) and the Fullscreen toggle shows the real state, since a browser also leaves fullscreen
+  on its own Esc. Ebitengine resumes audio after the first gesture by itself. `web/index.html` shows the twelve seat
+  dots filling with their inks as `game.wasm` streams in, in the saved theme; `cmd/webdist` writes the uncompressed
+  size into the page (a compressed download's length is not the wasm's) and saves `.gz` and `.br` copies of each
+  file at the best levels. `server.Static` sends the best copy the browser accepts and makes every file revalidate
+  (`wasm_exec.js` and `game.wasm` must come from the same build); `orbitrix-server -web dist/web` serves it now, and
+  Phase 5 and the LAN host reuse it. Brotli needs `github.com/andybalholm/brotli`, used only by `cmd/webdist`.
+- **Sizes** (Go 1.27.3, Ebitengine v2.10.5, stripped): `game.wasm` 22.2 MB, 5.5 MB gzipped, 3.9 MB brotli.
+  `orbitrix.apk` 10.8 MB: the game's native code is 5.2 MB for arm64 and 5.6 MB for x86_64, the Java 18 KB. AGP 9's
+  built-in Kotlin is off (`android.builtInKotlin=false`), since it added kotlin-stdlib (0.6 MB) to a Java-only APK.
+  The two fonts add 1.4 MB to each build before compression; subsetting them is still open.
+- **Verified** on the API 36 emulator (1080×2400, 420 dpi, cutout): the APK (Home, Setup, a game on a turned
+  30×18 board, back to pause, landscape rail, Settings, settings kept across restarts, back on Home) and the web
+  build in the emulator's Chrome over touch (Setup drag-scroll, a game, settings kept across reloads); the web build
+  at desktop size in headless Edge.
+
+## Multiplayer plan change (2026-10-31, before Phase 5)
+
+- **Player-hosted games instead of a central game server** (user decision). The hosting player's client runs
+  `server/hub` for online and LAN games alike, and is authoritative. Players connect to the host over WebRTC data
+  channels (`github.com/pion/webrtc/v4`, native and `js/wasm`), with STUN at `stun.cloudflare.com:3478` and
+  Cloudflare Realtime TURN as the relay when CGNAT or strict NATs block a direct connection. Any client can host,
+  web included (the hub runs in the tab's wasm).
+- **The Docker container on the NAS only serves the website and signaling** (`/signal`, versioned JSON, in-memory
+  state). No game traffic or game logic goes through it.
+- **The hub talks only to a `Conn` interface**, with `ws` (LAN), `rtc` (online) and `loopback` (the host's own
+  player) implementations in `server/transport`. LAN keeps its plan and uses `ws`.
+- **Friends-only access without accounts:** a private room code, host approval of each new joiner, lock and kick,
+  and per-player rejoin tokens issued by the host's hub. The code dies when the host leaves. Short-lived TURN
+  credentials go only to hosts and approved joiners.
+- **Dropped:** SQLite, invites, accounts, device tokens, the admin CLI, bans, server-side rooms, authoritative moves
+  and AI seats on the server, spectators, the 200-room load test and the Cloudflare Access option. None of them had
+  code yet; only package comments, the `.gitignore` SQLite entries and doc text referred to them.
+- **Phases 5–8 rewritten** in CLAUDE.md: Phase 5 transports, hub, signaling and Docker; Phase 6 online screens and
+  host safeguards; Phase 7 LAN on `ws`; Phase 8 NAS deploy, signed Android builds and downloads.

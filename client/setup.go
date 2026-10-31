@@ -5,7 +5,6 @@ import (
 	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
 	"orbitrix/core"
@@ -37,7 +36,8 @@ type setupScene struct {
 	menu int // seat whose type menu is open, or -1
 
 	// Layout in device px, recomputed when the screen size changes.
-	lw, lh, lu, lscroll      float64
+	lv                       rect
+	lu, lscroll              float64
 	lp                       int
 	viewport                 rect
 	scroll, maxScroll        float64
@@ -68,22 +68,23 @@ type setupScene struct {
 func newSetup() *setupScene { return &setupScene{menu: -1} }
 
 func (s *setupScene) layout(a *app) {
-	if a.w == s.lw && a.h == s.lh && a.u == s.lu && a.set.Players == s.lp && s.scroll == s.lscroll {
+	v := a.safe()
+	if v == s.lv && a.u == s.lu && a.set.Players == s.lp && s.scroll == s.lscroll {
 		return
 	}
-	s.lw, s.lh, s.lu, s.lp = a.w, a.h, a.u, a.set.Players
+	s.lv, s.lu, s.lp = v, a.u, a.set.Players
 	u := a.u
 	pad, gap, bp := 20*u, 16*u, 20*u
-	if a.w < 1200*u {
+	if v.w < 1200*u {
 		pad, gap, bp = 16*u, 12*u, 16*u
 	}
 	s.blockPad = bp
-	w := a.w - 2*pad
-	s.back = backButton(pad, pad, w, u)
+	w := v.w - 2*pad
+	s.back = backButton(v.x+pad, v.y+pad, w, u)
 	s.titleX, s.titleY = s.back.right()+16*u, s.back.cy()
-	s.start = rect{pad, a.h - pad - 52*u, w, 52 * u}
+	s.start = rect{v.x + pad, v.bottom() - pad - 52*u, w, 52 * u}
 	top := s.back.bottom() + gap
-	s.viewport = rect{pad, top, w, max(1, s.start.y-gap-top)}
+	s.viewport = rect{v.x + pad, top, w, max(1, s.start.y-gap-top)}
 
 	// Visible controls match Back; their larger hit rows preserve touch usability.
 	buttonH, targetH := compactButtonHeight*u, compactButtonTarget*u
@@ -102,7 +103,7 @@ func (s *setupScene) layout(a *app) {
 	if sideBySide {
 		controlsW = max(controlsMin, min(420*u, inner*0.42))
 	}
-	stackDimensions := a.w < 600*u || controlsW < 2*dimensionMin+gap
+	stackDimensions := v.w < 600*u || controlsW < 2*dimensionMin+gap
 	dimensionsH := targetH
 	if stackDimensions {
 		dimensionsH = 2*targetH + gap
@@ -126,8 +127,8 @@ func (s *setupScene) layout(a *app) {
 	s.scroll = max(0, min(s.maxScroll, s.scroll))
 	s.lscroll = s.scroll
 	boardH := max(boardMin, s.viewport.h-gap-playerH)
-	s.players = rect{pad, top - s.scroll, w, playerH}
-	s.boardB = rect{pad, s.players.bottom() + gap, w, boardH}
+	s.players = rect{v.x + pad, top - s.scroll, w, playerH}
+	s.boardB = rect{v.x + pad, s.players.bottom() + gap, w, boardH}
 	p := s.players
 	s.headY = p.y + bp + 22*u
 	colW := (inner - float64(cols-1)*gap) / float64(cols)
@@ -205,20 +206,20 @@ func (s *setupScene) begin(a *app) {
 
 // menuRects keeps options touch-sized, using two columns when the window is short.
 func (s *setupScene) menuRects(a *app) (panel, first rect) {
-	u := a.u
+	u, v := a.u, a.safe()
 	t := s.seatTy[s.menu]
 	cols := 1
-	if float64(len(seatLabels))*compactButtonTarget*u+12*u > a.h-16*u {
+	if float64(len(seatLabels))*compactButtonTarget*u+12*u > v.h-16*u {
 		cols = 2
 	}
 	rows := (len(seatLabels) + cols - 1) / cols
-	w := min(a.w-16*u, max(t.w, 200*u)*float64(cols))
+	w := min(v.w-16*u, max(t.w, 200*u)*float64(cols))
 	h := float64(rows)*compactButtonTarget*u + 12*u
 	y := t.bottom() + 6*u
-	if y+h > a.h-8*u {
+	if y+h > v.bottom()-8*u {
 		y = t.y - 6*u - h
 	}
-	panel = rect{max(8*u, min(t.x, a.w-8*u-w)), max(8*u, min(y, a.h-8*u-h)), w, h}
+	panel = rect{max(v.x+8*u, min(t.x, v.right()-8*u-w)), max(v.y+8*u, min(y, v.bottom()-8*u-h)), w, h}
 	return panel, rect{panel.x + 6*u, panel.y + 6*u, (w - 12*u) / float64(cols), compactButtonTarget * u}
 }
 
@@ -230,13 +231,13 @@ func setupMenuOption(panel, first rect, i int, u float64) rect {
 func (s *setupScene) update(a *app) error {
 	s.layout(a)
 	u, set := a.u, a.set
-	if s.maxScroll > 0 && a.in.wheel != 0 && s.viewport.contains(a.in.x, a.in.y) {
-		s.scroll -= a.in.wheel * (compactButtonTarget + 8) * u
+	if s.maxScroll > 0 && (a.in.dragY != 0 || a.in.wheel != 0 && s.viewport.contains(a.in.x, a.in.y)) {
+		s.scroll -= a.in.wheel*(compactButtonTarget+8)*u + a.in.dragY
 		s.menu = -1
 		s.layout(a)
 	}
 
-	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+	if a.in.esc {
 		if s.menu >= 0 {
 			s.menu = -1
 		} else {
@@ -318,7 +319,7 @@ func (s *setupScene) draw(dst *ebiten.Image, a *app) {
 
 	drawBack(dst, a, s.back)
 	titleFace := f.title
-	if textWidth("Set up the game", titleFace) > a.w-s.titleX-s.back.x {
+	if textWidth("Set up the game", titleFace) > s.viewport.right()-s.titleX {
 		titleFace = f.heading
 	}
 	drawText(dst, "Set up the game", titleFace, s.titleX, s.titleY, text.AlignStart, sc.ink)

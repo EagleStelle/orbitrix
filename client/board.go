@@ -73,6 +73,7 @@ type board struct {
 
 	// Layout in device pixels.
 	area   rect
+	turned bool    // drawn a quarter turn clockwise: a wide board in a tall area
 	base   float64 // base cell size
 	k      float64 // device px per base unit
 	ox, oy float64 // board origin
@@ -109,7 +110,10 @@ func (b *board) layout(area rect, u float64) {
 		return
 	}
 	b.area = area
-	cols, rows := b.geo.Cols, b.geo.Rows
+	// A wide board in a tall area (an upright phone) turns so its long side runs down the screen and its tiles stay
+	// big enough to tap. Only the drawing turns; the game is the same.
+	b.turned = area.h > area.w && b.geo.Cols > b.geo.Rows
+	cols, rows := b.screenSize()
 	b.base = cellSize(cols, rows, area.w/u, area.h/u)
 	// The outer tiles' edges, not the cells around them, meet the area's edges, so the board shares the screen margin.
 	bw, bh := (float64(cols)-2*tileGutter)*b.base, (float64(rows)-2*tileGutter)*b.base
@@ -142,22 +146,37 @@ func (b *board) layout(area rect, u float64) {
 	b.badge = newFace(srcUI, max(9, 0.17*cell), 700)
 }
 
+// screenSize is the board's columns and rows as drawn.
+func (b *board) screenSize() (cols, rows int) {
+	if b.turned {
+		return b.geo.Rows, b.geo.Cols
+	}
+	return b.geo.Cols, b.geo.Rows
+}
+
 // cellAt returns the cell under device point (x, y), or -1.
 func (b *board) cellAt(x, y float64) int {
 	if b.k == 0 {
 		return -1
 	}
-	c := int(math.Floor((x - b.ox) / b.k / b.base))
-	r := int(math.Floor((y - b.oy) / b.k / b.base))
-	if c < 0 || r < 0 || c >= b.geo.Cols || r >= b.geo.Rows {
+	sc := int(math.Floor((x - b.ox) / b.k / b.base))
+	sr := int(math.Floor((y - b.oy) / b.k / b.base))
+	cols, rows := b.screenSize()
+	if sc < 0 || sr < 0 || sc >= cols || sr >= rows {
 		return -1
 	}
-	return b.geo.Index(c, r)
+	if b.turned {
+		return b.geo.Index(sr, b.geo.Rows-1-sc)
+	}
+	return b.geo.Index(sc, sr)
 }
 
 // centre of cell i in device px.
 func (b *board) centre(i int) (float64, float64) {
 	c, r := b.geo.Coords(i)
+	if b.turned { // a quarter turn clockwise: the first row becomes the last column
+		c, r = b.geo.Rows-1-r, c
+	}
 	return b.ox + (float64(c)+0.5)*b.base*b.k, b.oy + (float64(r)+0.5)*b.base*b.k
 }
 
@@ -171,7 +190,8 @@ func (b *board) tileRect(i int) rect {
 // bounds is the whole board, outer tile edge to outer tile edge, in device px.
 func (b *board) bounds() rect {
 	cell, g := b.base*b.k, tileGutter*b.base*b.k
-	return rect{b.ox + g, b.oy + g, float64(b.geo.Cols)*cell - 2*g, float64(b.geo.Rows)*cell - 2*g}
+	cols, rows := b.screenSize()
+	return rect{b.ox + g, b.oy + g, float64(cols)*cell - 2*g, float64(rows)*cell - 2*g}
 }
 
 // start shows a move: mover's orb lands in cell, then waves (from core.Game.Apply) play out. snd may be nil.

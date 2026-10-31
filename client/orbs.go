@@ -6,8 +6,8 @@ import (
 	"orbitrix/core"
 )
 
-// Orb motion, from the prototype's draw_orbs_on_surface. Everything here is in "base" units: the prototype's
-// unscaled cell size, before the board is scaled to fit the window. Positions are relative to the cell centre.
+// Orb motion, from the prototype's draw_orbs_on_surface. It runs in the units of an orbCell-sized cell and is scaled
+// to the board's base cell (before the board is scaled to fit the window). Positions are relative to the cell centre.
 const (
 	orbSlots     = 8       // per-cell seed and position slots; the prototype cached 8 seeds per cell
 	smoothness   = 8.0     // exponential smoothing rate (1/s): lower is smoother but laggier
@@ -26,9 +26,14 @@ var (
 	layoutRadii  = [3][]float64{{0.6, 0.6}, {0.5, 0.5, 0.6}, {0.48, 0.48, 0.72, 0.72}}
 )
 
-// orbRadius is the prototype's get_orb_radius: at least 8, about 22% of the cell, never above a third of it.
+// orbCell is the cell size the orb motion runs at: the prototype's largest cell, the only size where its fixed pixel
+// constants (8 px minimum radius, 12 px orbit margin, separations) leave orbs room to orbit. Other cells scale that
+// picture, so orbs keep one proportion to their cell on every board.
+const orbCell = 80
+
+// orbRadius is the prototype's get_orb_radius at orbCell (17 px, about 21% of the cell), scaled to cell.
 func orbRadius(cell float64) float64 {
-	return min(max(8, math.Floor(cell*0.22)), math.Floor(cell/3))
+	return cell * min(max(8, math.Floor(orbCell*0.22)), math.Floor(orbCell/3)) / orbCell
 }
 
 // orbField holds the deterministic per-cell variation and the smoothed orb positions of every cell.
@@ -64,13 +69,13 @@ func newOrbField(geo *core.Geometry) *orbField {
 }
 
 // update moves the orbs of cell i (holding count orbs, count >= 1) towards their layout at time tms and returns
-// them; the result is only valid until the next call. cell is the base cell size.
+// them; the result is only valid until the next call. cell is the base cell size; the motion runs at orbCell.
 func (f *orbField) update(i, count int, tms, cell float64) [][2]float64 {
 	capacity := int(f.geo.Cap[i])
 	pop := count >= capacity-1
 	corner := capacity == 2
-	r := orbRadius(cell)
-	maxOrbit := max(2, cell/2-r-12)
+	r := orbRadius(orbCell)
+	maxOrbit := max(2, orbCell/2-r-12)
 
 	jitterAmp, freq, breathAmp := max(0.18, r*0.10), 0.0016, 0.002
 	angSpeed, driftAmp, driftRate, driftMix, breathRate, breathMix := angIdle, 0.12*0.45, 0.00012, 0.35, 0.0006, 0.35
@@ -213,8 +218,9 @@ func (f *orbField) update(i, count int, tms, cell float64) [][2]float64 {
 		}
 	}
 	f.n[i], f.lastT[i] = uint8(slots), tms
+	s := cell / orbCell
 	for k := range slots {
-		t[k] = [2]float64{p[2*k], p[2*k+1]}
+		t[k] = [2]float64{p[2*k] * s, p[2*k+1] * s}
 	}
 	return t[:slots]
 }

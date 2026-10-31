@@ -13,12 +13,14 @@ import (
 
 // homeScene is the title screen: one column as wide as the wordmark (the wordmark, the twelve seat dots spread
 // across it, the PLAY dot centred in it, and a stack of full-width buttons), beside a live demo mat where four AIs
-// play real chain reactions. The button stack is a list so the Local, LAN and Online entries can join it later.
+// play real chain reactions. On a screen taller than wide the column opens around the mat instead: wordmark and
+// dots above it, PLAY and the buttons below it. The button stack is a list so the Local, LAN and Online entries
+// can join it later.
 type homeScene struct {
 	demo *demo
 
 	// Layout in device px, recomputed when the screen size changes.
-	lw, lh              float64
+	lv                  rect
 	logo                *text.GoTextFace
 	logoX               [len(logoLetters)]float64
 	x, w                float64 // the column: left edge and width (the wordmark's)
@@ -40,14 +42,20 @@ var logoLetters = [...]string{"O", "R", "B", "I", "T", "R", "I", "X"}
 func newHome() *homeScene { return &homeScene{} }
 
 func (s *homeScene) layout(a *app) {
-	if a.w == s.lw && a.h == s.lh {
+	v := a.safe()
+	if v == s.lv {
 		return
 	}
-	s.lw, s.lh = a.w, a.h
+	s.lv = v
 	u := a.u
+	portrait := a.portrait()
 	pad := 64 * u
-	col := max(420*u, a.w*0.36)
-	s.x = pad
+	col := max(420*u, v.w*0.36)
+	room := col - pad - 24*u // the wordmark's width beside the mat
+	if portrait {
+		pad, col = 24*u, v.w
+		room = col - 2*pad
+	}
 
 	// The wordmark sets the width of everything under it: 60 px tall at most, so it leads without crowding the PLAY dot.
 	// It is set letter by letter with a little tracking: at this weight Unbounded's R and B touch when set solid.
@@ -59,33 +67,32 @@ func (s *homeScene) layout(a *app) {
 		}
 		return w - f.Size*0.045
 	}
-	size := min(60*u, a.f.logo.Size*(col-pad-24*u)/track(a.f.logo))
+	size := min(60*u, a.f.logo.Size*room/track(a.f.logo))
 	s.logo = newFace(srcDisplay, size, 800)
 	s.w = track(s.logo)
-	s.x = max(pad, (col-s.w)/2) // centre the column in the area left of the mat
+	s.x = v.x + max(pad, (col-s.w)/2) // centre the column in the area left of the mat
 
 	labels := []string{"Settings"}
 	if platform.CanExit {
 		labels = append(labels, "Exit")
 	}
 	s.dotR = max(8*u, min(16*u, s.w/12*0.36))
-	s.playR = max(64*u, min(s.w*0.3, a.h*0.17, 150*u))
-	s.playFace = newFace(srcDisplay, s.playR*0.34, 800) // the label grows with the dot
 	bh, gap := quietButtonHeight*u, 12*u
 	stack := float64(len(labels))*(bh+gap) - gap
-	block := size + 30*u + 2*s.dotR + 44*u + 2*s.playR + 32*u + stack
-	top := (a.h - block) / 2
-	s.logoY = top + size/2
-	s.dotsY = s.logoY + size/2 + 30*u + s.dotR
-	s.playX, s.playY = s.x+s.w/2, s.dotsY+s.dotR+44*u+s.playR
-	y := s.playY + s.playR + 32*u
+	s.playX = s.x + s.w/2
+	var y float64 // top of the button stack
+	if portrait {
+		y = s.layoutPortrait(a, v, size, stack)
+	} else {
+		y = s.layoutBeside(a, v, size, stack, col)
+	}
+	s.playFace = newFace(srcDisplay, s.playR*0.34, 800) // the label grows with the dot
 	s.items = s.items[:0]
 	buttonW := min(2*s.playR, quietButtonMaxWidth*u)
 	for _, l := range labels {
 		s.items = append(s.items, homeItem{l, rect{s.playX - buttonW/2, y, buttonW, bh}})
 		y += bh + gap
 	}
-	s.mat = rect{col, 24 * u, a.w - col - 24*u, a.h - 48*u}
 
 	rows := 7
 	cols := max(5, min(12, int(math.Round(float64(rows)*s.mat.w/s.mat.h))))
@@ -95,6 +102,38 @@ func (s *homeScene) layout(a *app) {
 	s.demo.layout(s.mat, u)
 }
 
+// layoutBeside puts the column left of the mat, centred top to bottom, and returns the top of its button stack. On a
+// screen too short for it, the gaps tighten and the PLAY dot shrinks until the column fits.
+func (s *homeScene) layoutBeside(a *app, v rect, size, stack, col float64) float64 {
+	u := a.u
+	gLogo, gDots, gPlay := 30*u, 44*u, 32*u
+	rest := func() float64 { return size + gLogo + 2*s.dotR + gDots + gPlay + stack }
+	s.playR = max(64*u, min(s.w*0.3, v.h*0.17, 150*u))
+	if rest()+2*s.playR > v.h-32*u {
+		gLogo, gDots, gPlay = 16*u, 20*u, 20*u
+		s.playR = max(40*u, min(s.playR, (v.h-32*u-rest())/2))
+	}
+	s.logoY = v.y + (v.h-rest()-2*s.playR)/2 + size/2
+	s.dotsY = s.logoY + size/2 + gLogo + s.dotR
+	s.playY = s.dotsY + s.dotR + gDots + s.playR
+	s.mat = rect{v.x + col, v.y + 24*u, v.w - col - 24*u, v.h - 48*u}
+	return s.playY + s.playR + gPlay
+}
+
+// layoutPortrait opens the column around the mat: the wordmark and dots at the top, PLAY and the buttons at the
+// bottom within thumb reach, and the mat filling the middle. It returns the top of the button stack.
+func (s *homeScene) layoutPortrait(a *app, v rect, size, stack float64) float64 {
+	u := a.u
+	s.playR = max(48*u, min(s.w*0.3, v.h*0.11, 150*u))
+	s.logoY = v.y + 32*u + size/2
+	s.dotsY = s.logoY + size/2 + 24*u + s.dotR
+	stackY := v.bottom() - 24*u - stack
+	s.playY = stackY - 24*u - s.playR
+	top := s.dotsY + s.dotR + 24*u
+	s.mat = rect{v.x + 16*u, top, v.w - 32*u, max(1, s.playY-s.playR-24*u-top)}
+	return stackY
+}
+
 func (s *homeScene) playRect() rect {
 	return rect{s.playX - s.playR, s.playY - s.playR, 2 * s.playR, 2 * s.playR}
 }
@@ -102,6 +141,10 @@ func (s *homeScene) playRect() rect {
 func (s *homeScene) update(a *app) error {
 	s.layout(a)
 	s.demo.tick()
+	if a.in.esc {
+		platform.Leave() // Android's back button on the first screen; Esc on desktop and web does nothing here
+		return nil
+	}
 	if a.clicked(s.playRect()) {
 		a.next = newSetup()
 		return nil

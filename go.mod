@@ -3,8 +3,8 @@ module orbitrix
 go 1.27.3
 
 require (
+	github.com/andybalholm/brotli v1.2.7
 	github.com/hajimehoshi/ebiten/v2 v2.10.5
-	golang.org/x/image v0.47.0
 )
 
 require (
@@ -15,7 +15,12 @@ require (
 	github.com/go-text/typesetting v0.3.5 // indirect
 	github.com/jfreymuth/pulse v0.1.3 // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
+	golang.org/x/image v0.47.0 // indirect
+	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/tools v0.51.0 // indirect
 )
+
+tool github.com/hajimehoshi/ebiten/v2/cmd/ebitenmobile
