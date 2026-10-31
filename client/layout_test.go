@@ -170,6 +170,22 @@ func TestRailColumnsGrowSpinner(t *testing.T) {
 	}
 }
 
+func TestOrbAtlasFitsGPUWithoutShrinkingOrbs(t *testing.T) {
+	for _, c := range []struct {
+		draw, side float64
+		limit      int
+	}{{100, 100, 4096}, {600, 292, 4096}, {600, 292, 0}, {600, 146, 2048}, {400, 400, 16384}} {
+		if got := orbAtlasSide(c.draw, c.limit); got != c.side {
+			t.Fatalf("%g px orb on a %d px GPU: source side %g, want %g", c.draw, c.limit, got, c.side)
+		}
+	}
+	b := &board{orbSize: 292, orbDrawSize: 600, sc: &schemes[themeLight]}
+	b.orb(1000, 1000, 0)
+	if b.verts[0].DstX != 700 || b.verts[3].DstX != 1300 || b.verts[1].SrcX != 292 {
+		t.Fatal("a bounded atlas must preserve the orb's physical size while sampling the smaller source")
+	}
+}
+
 func TestHomeLayout(t *testing.T) {
 	for _, size := range layoutSizes {
 		for _, u := range []float64{1, 2.625} {
@@ -210,17 +226,17 @@ func TestWantsLandscape(t *testing.T) {
 	}
 }
 
-// TestScreenFit checks that a screen too big for the GPU shrinks until twice its width, rounded up to vector's 16 px,
-// and its height fit the largest image, while screens that already fit keep full resolution.
+// TestScreenFit checks that a screen too big for the GPU shrinks until it fits the largest image with its padding,
+// while screens that already fit keep full resolution.
 func TestScreenFit(t *testing.T) {
 	for _, tc := range []struct {
 		w, h   float64
 		m      int
 		shrink bool
 	}{
-		{2560, 1600, 4096, true}, {1600, 2560, 4096, false}, {2420, 1288, 4096, true}, {1080, 2400, 4096, false},
-		{3840, 2160, 16384, false}, {2560, 1600, 8192, false}, {9000, 1000, 16384, true}, {1000, 5000, 4096, true},
-		{2560, 1600, 0, true},
+		{2560, 1600, 4096, false}, {5120, 2880, 4096, true}, {4096, 2160, 4096, true}, {1080, 2400, 4096, false},
+		{3840, 2160, 16384, false}, {7680, 4320, 4096, true}, {20000, 1000, 16384, true}, {1000, 5000, 4096, true},
+		{5120, 2880, 0, true},
 	} {
 		k := screenFit(tc.w, tc.h, tc.m)
 		m := tc.m
@@ -228,7 +244,7 @@ func TestScreenFit(t *testing.T) {
 			m = 4096
 		}
 		w, h := int(math.Ceil(tc.w*k)), int(math.Ceil(tc.h*k))
-		if (k < 1) != tc.shrink || 2*((w+15)&^15) > m-3 || h > m-3 {
+		if (k < 1) != tc.shrink || w+1 > m || h+1 > m {
 			t.Errorf("%gx%g on a %d px GPU: scale %.3f gives %dx%d", tc.w, tc.h, tc.m, k, w, h)
 		}
 	}

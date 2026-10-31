@@ -114,12 +114,12 @@ type setupScene struct {
 	minusRow, plusRow        rect
 	start                    rect
 
-	// The mini board drawn in the preview, cached until the size, mode or preview changes.
-	mini                *ebiten.Image
-	miniC, miniR, miniS int
-	miniSc              *scheme
-	dims, sizeName      string // the Board heading: "cols × rows", and the preset's name or Custom
-	dimC, dimR          int
+	// The screen clipped to the viewport, kept until either changes.
+	content, contentOf *ebiten.Image
+	contentV           rect
+
+	dims, sizeName string // the Board heading: "cols × rows", and the preset's name or Custom
+	dimC, dimR     int
 }
 
 func newSetup() *setupScene { return &setupScene{menu: -1} }
@@ -392,9 +392,12 @@ func (s *setupScene) draw(dst *ebiten.Image, a *app) {
 	drawText(dst, "Set up the game", titleFace, s.titleX, s.titleY, text.AlignStart, sc.ink)
 
 	v := s.viewport
-	content := dst.SubImage(image.Rect(int(v.x), int(v.y), int(v.right()), int(v.bottom()))).(*ebiten.Image)
-	s.drawPlayers(content, a)
-	s.drawBoard(content, a)
+	if s.contentOf != dst || s.contentV != v {
+		s.contentOf, s.contentV = dst, v
+		s.content = dst.SubImage(image.Rect(int(v.x), int(v.y), int(v.right()), int(v.bottom()))).(*ebiten.Image)
+	}
+	s.drawPlayers(s.content, a)
+	s.drawBoard(s.content, a)
 	if s.maxScroll > 0 {
 		h := max(24*u, v.h*v.h/(v.h+s.maxScroll))
 		fillRound(dst, rect{v.right() + 5*u, v.y + (v.h-h)*s.scroll/s.maxScroll, 3 * u, h}, 1.5*u, sc.dim)
@@ -441,7 +444,11 @@ func (s *setupScene) drawPlayers(dst *ebiten.Image, a *app) {
 		}
 		drawText(dst, seatNames[i], f.labelBold, tag.x, tag.cy(), text.AlignStart, tagInk)
 		drawText(dst, seatLabels[set.seats[i]], f.labelBold, tag.right()+8*u, t.cy(), text.AlignStart, ink)
-		chevron(dst, t.right()-20*u, t.cy(), 5*u, 2*u, s.menu == i, ink)
+		tip := 2.5 * u // the chevron points down, or up while its menu is open
+		if s.menu == i {
+			tip = -tip
+		}
+		chevron(dst, t.right()-20*u, t.cy(), 5*u, tip, 2*u, ink)
 	}
 }
 
@@ -485,7 +492,7 @@ func (s *setupScene) drawBoard(dst *ebiten.Image, a *app) {
 		k := min(pv.w/float64(fc), pv.h/float64(fr))
 		ox := math.Round(pv.x + (pv.w-float64(fc)*k)/2)
 		oy := math.Round(pv.y + (pv.h-float64(fr)*k)/2)
-		s.drawMini(dst, a, k, ox, oy)
+		drawMini(dst, a, k, ox, oy)
 		for t := range boardSizes {
 			c, r := presetSize(g, t)
 			// At small scales an outline inside the chosen board only adds scribble, so it is dropped.
@@ -515,33 +522,17 @@ func (s *setupScene) drawBoard(dst *ebiten.Image, a *app) {
 	stepper(dst, a, set.Rows, core.MinSize, core.MaxSize, s.minusRow, s.plusRow)
 }
 
-// drawMini draws the chosen board's tiles at k px per cell with their top left at (ox, oy), cached in an image.
-func (s *setupScene) drawMini(dst *ebiten.Image, a *app, k, ox, oy float64) {
-	set, sc := a.set, a.sc
-	w, h := int(math.Ceil(s.preview.w)), int(math.Ceil(s.preview.h))
-	size := w<<16 | h // cache key: both sides
-	if s.mini == nil || s.miniC != set.Cols || s.miniR != set.Rows || s.miniS != size || s.miniSc != sc {
-		if s.mini == nil || s.mini.Bounds().Dx() != w || s.mini.Bounds().Dy() < h {
-			if s.mini != nil {
-				s.mini.Deallocate()
-			}
-			// Reserve the visible height once so scrolling can resize the preview without replacing its image.
-			s.mini = ebiten.NewImage(w, max(h, int(math.Ceil(s.viewport.h))))
+// drawMini draws the chosen board's tiles at k px per cell with their top left at (ox, oy), in one batch.
+func drawMini(dst *ebiten.Image, a *app, k, ox, oy float64) {
+	g := k * tileGutter
+	var img *ebiten.Image
+	for c := range a.set.Cols {
+		for r := range a.set.Rows {
+			img = queueRound(rect{ox + float64(c)*k + g, oy + float64(r)*k + g, k - 2*g, k - 2*g}, k*tileRadius, 0, nil,
+				a.sc.tile)
 		}
-		s.miniC, s.miniR, s.miniS, s.miniSc = set.Cols, set.Rows, size, sc
-		s.mini.Clear()
-		g := k * tileGutter
-		scratchPath.Reset()
-		for c := range set.Cols {
-			for r := range set.Rows {
-				addRound(&scratchPath, rect{float64(c)*k + g, float64(r)*k + g, k - 2*g, k - 2*g}, k*tileRadius)
-			}
-		}
-		fillPath(s.mini, &scratchPath, sc.tile)
 	}
-	var op ebiten.DrawImageOptions
-	op.GeoM.Translate(ox, oy)
-	dst.DrawImage(s.mini, &op)
+	drawShapes(dst, img)
 }
 
 func (s *setupScene) drawMenu(dst *ebiten.Image, a *app) {

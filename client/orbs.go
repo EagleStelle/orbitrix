@@ -210,7 +210,7 @@ func (f *orbField) update(i, count int, tms, cell float64) [][2]float64 {
 		for k := range slots {
 			p[2*k], p[2*k+1] = t[k][0], t[k][1]
 		}
-	} else {
+	} else if tms != f.lastT[i] {
 		alpha := 1 - math.Exp(-smoothness*max(1e-6, (tms-f.lastT[i])/1000))
 		for k := range slots {
 			p[2*k] += (t[k][0] - p[2*k]) * alpha

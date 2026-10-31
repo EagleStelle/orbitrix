@@ -79,17 +79,18 @@ type board struct {
 	k      float64 // device px per base unit
 	ox, oy float64 // board origin
 
-	tileImg  *ebiten.Image
-	orbImg   *ebiten.Image // atlas of square cells: rim disc, fill disc, then the twelve marks
-	orbSize  float64       // side of each atlas cell
-	sc       *scheme       // the mode being drawn
-	marks    bool          // draw shape marks on orbs
-	markInk  [core.MaxPlayers]color.RGBA
-	burstImg *ebiten.Image
-	verts    []ebiten.Vertex
-	idx      []uint32
-	tri      ebiten.DrawTrianglesOptions
-	badge    *text.GoTextFace
+	tileImg     *ebiten.Image
+	orbImg      *ebiten.Image // atlas of square cells: rim disc, fill disc, then the twelve marks
+	orbSize     float64       // side of each atlas cell
+	orbDrawSize float64       // side on screen; large atlases may render at a smaller resolution
+	sc          *scheme       // the mode being drawn
+	marks       bool          // draw shape marks on orbs
+	markInk     [core.MaxPlayers]color.RGBA
+	burstImg    *ebiten.Image
+	verts       []ebiten.Vertex
+	idx         []uint32
+	tri         ebiten.DrawTrianglesOptions
+	badge       *text.GoTextFace
 }
 
 func newBoard(g *core.Game) *board {
@@ -113,12 +114,16 @@ func (b *board) layout(area rect, u float64) {
 	b.area = area
 	b.turned = b.turns(area)
 	cols, rows := b.screenSize()
+	previousBase, previousScale := b.base, b.k
 	b.base = cellSize(cols, rows, area.w/u, area.h/u)
 	// The outer tiles' edges, not the cells around them, meet the area's edges, so the board shares the screen margin.
 	bw, bh := (float64(cols)-2*tileGutter)*b.base, (float64(rows)-2*tileGutter)*b.base
 	b.k = min(area.w/bw, area.h/bh)
 	g := tileGutter * b.base * b.k
 	b.ox, b.oy = math.Round(area.x+(area.w-bw*b.k)/2-g), math.Round(area.y+(area.h-bh*b.k)/2-g)
+	if b.tileImg != nil && b.base == previousBase && b.k == previousScale {
+		return // scrolling moves the board without rebuilding its tile and orb images
+	}
 
 	if b.tileImg != nil {
 		b.tileImg.Deallocate()
@@ -133,9 +138,11 @@ func (b *board) layout(area rect, u float64) {
 	// optionally the owner's shape mark. Rim, fill and the twelve marks come from one atlas, so every orb batches
 	// together and keeps its painter's order.
 	r := orbRadius(b.base) * b.k
-	s := math.Ceil(2*r) + 4
-	fr := r - max(1.5, r*0.16)
-	b.orbSize = s
+	drawSize := math.Ceil(2*r) + 4
+	s := orbAtlasSide(drawSize, ebiten.MaxImageSize())
+	fr := (r - max(1.5, r*0.16)) * s / drawSize
+	r *= s / drawSize
+	b.orbSize, b.orbDrawSize = s, drawSize
 	b.orbImg = ebiten.NewImage(int((2+core.MaxPlayers)*s), int(s))
 	fillCircle(b.orbImg, s/2, s/2, r, pureWhite)
 	fillCircle(b.orbImg, s+s/2, s/2, fr, pureWhite)
@@ -143,6 +150,11 @@ func (b *board) layout(area rect, u float64) {
 		markShape(b.orbImg, p, float64(2+p)*s+s/2, s/2, fr, pureWhite)
 	}
 	b.badge = newFace(srcUI, max(9, 0.17*cell), 700)
+}
+
+// orbAtlasSide bounds the source texture while keeping large full-width boards at their intended scale.
+func orbAtlasSide(drawSize float64, limit int) float64 {
+	return math.Floor(drawSize * screenFit(drawSize*(2+core.MaxPlayers), drawSize, limit))
 }
 
 // turns reports whether the board turns a quarter in area: a wide board in a tall area (an upright phone browser)
@@ -333,10 +345,11 @@ func (b *board) draw(dst *ebiten.Image, sc *scheme, tms float64, turn int, marks
 // orb queues one of player p's orbs at (x, y): its rim in the mat's colour, its fill, and its mark if marks are on.
 func (b *board) orb(x, y float64, p int) {
 	s := b.orbSize
-	b.quad(x, y, s/2, 0, s, b.sc.ground, 1)
-	b.quad(x, y, s/2, s, s, b.sc.players[p], 1)
+	h := b.orbDrawSize / 2
+	b.quad(x, y, h, 0, s, b.sc.ground, 1)
+	b.quad(x, y, h, s, s, b.sc.players[p], 1)
 	if b.marks {
-		b.quad(x, y, s/2, float64(2+p)*s, s, b.markInk[p], 1)
+		b.quad(x, y, h, float64(2+p)*s, s, b.markInk[p], 1)
 	}
 }
 
@@ -356,8 +369,11 @@ func (b *board) quad(x, y, h, sx, src float64, c color.RGBA, a float64) {
 	b.idx = append(b.idx, n, n+1, n+2, n+1, n+3, n+2)
 }
 
+// flush draws the queued quads from src. Tiles draw at their cached size and large orbs may upscale; only burst
+// rings shrink, so only they pay for mipmaps.
 func (b *board) flush(dst, src *ebiten.Image) {
 	if len(b.idx) > 0 {
+		b.tri.DisableMipmaps = src != b.burstImg
 		dst.DrawTriangles32(b.verts, b.idx, src, &b.tri)
 	}
 	b.verts, b.idx = b.verts[:0], b.idx[:0]

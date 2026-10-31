@@ -116,13 +116,10 @@ func pillLabel(dst *ebiten.Image, a *app, r rect, label, note string, ink color.
 
 // arrowLeft draws a back arrow centred at (x, y), s wide.
 func arrowLeft(dst *ebiten.Image, x, y, s, w float64, c color.RGBA) {
-	scratchPath.Reset()
-	scratchPath.MoveTo(float32(x+s/2), float32(y))
-	scratchPath.LineTo(float32(x-s/2), float32(y))
-	scratchPath.MoveTo(float32(x-s/2+s*0.4), float32(y-s*0.4))
-	scratchPath.LineTo(float32(x-s/2), float32(y))
-	scratchPath.LineTo(float32(x-s/2+s*0.4), float32(y+s*0.4))
-	strokePath(dst, &scratchPath, w, c)
+	tip, h := x-s/2, s*0.4
+	line(dst, x+s/2, y, tip, y, w, c)
+	line(dst, tip+h, y-h, tip, y, w, c)
+	line(dst, tip+h, y+h, tip, y, w, c)
 }
 
 // hamburger draws the Menu glyph, three lines s wide, centred at (x, y).

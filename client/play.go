@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"log"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -83,9 +84,12 @@ type playScene struct {
 	callout                     rect
 	rowRect                     [core.MaxPlayers]rect
 	table                       seatStyle
-	orbsMax                     string  // as many 8s as the most orbs this board holds at rest has digits
-	compact                     bool    // a phone: label-size seat rows and the small callout
-	typeDX                      float64 // seat type name's offset from the player tag
+	orbsMax                     string        // as many 8s as the most orbs this board holds at rest has digits
+	compact                     bool          // a phone: label-size seat rows and the small callout
+	typeDX                      float64       // seat type name's offset from the player tag
+	wheel, pointer              *ebiten.Image // the spinner, drawn by renderSpinner
+	wheelX, wheelY              float64
+	spinKey                     spinnerKey
 	pausePanel                  rect
 	pauseBtn                    [len(pauseItems)]rect
 	again, toHome               rect
@@ -292,7 +296,8 @@ func (p *playScene) thinkAI(a *app) {
 		seed := rng.Uint64()
 		p.aiBusy, p.aiDelay = true, aiDelayMin+a.rng.Intn(aiDelayMax-aiDelayMin+1)
 		g, bot, out := p.scratch, &p.bot, p.aiMove
-		go func() { out <- bot.Choose(g, s, seed, ai.DefaultBudget) }()
+		budget := aiBudget(g.Geo.Cells())
+		go func() { out <- bot.Choose(g, s, seed, budget) }()
 		return
 	}
 	if p.aiDelay > 0 {
@@ -305,6 +310,17 @@ func (p *playScene) thinkAI(a *app) {
 		p.move(a, cell)
 	default:
 	}
+}
+
+// aiBudget is the AI's work per move on a board of cells. Go in a browser runs on one thread, so a thinking AI holds
+// up drawing there; boards bigger than the largest preset get proportionally less work, keeping the pause about as
+// short as on that preset.
+func aiBudget(cells int) int {
+	if runtime.GOOS != "js" {
+		return ai.DefaultBudget
+	}
+	z := boardSizes[len(boardSizes)-1]
+	return min(ai.DefaultBudget, ai.DefaultBudget*z.short*z.long/cells)
 }
 
 func (p *playScene) layout(a *app) {
@@ -596,12 +612,17 @@ func (p *playScene) layoutResults(a *app, v rect) {
 
 func (p *playScene) draw(dst *ebiten.Image, a *app) {
 	p.layout(a)
+	if p.over && !p.b.playing && p.overT >= wipeTicks {
+		p.drawResults(dst, a)
+		return
+	}
 	sc, u := a.sc, a.u
 	turn := p.shown
 	if p.over && !p.b.playing {
 		turn = -1
 	}
-	p.b.draw(dst, sc, a.tms(), turn, a.set.Marks)
+	// The board's tick clock stops during pause and resumes without jumping ahead.
+	p.b.draw(dst, sc, p.b.clock*(1000.0/60), turn, a.set.Marks)
 	if !p.b.playing && !p.over && !p.paused && p.seats[p.game.Turn] == seatHuman {
 		if cell := p.b.cellAt(a.in.x, a.in.y); cell >= 0 && p.game.Legal(cell) {
 			p.b.drawHover(dst, cell, sc.players[p.game.Turn], u)
@@ -625,49 +646,10 @@ func (p *playScene) drawMenuButton(dst *ebiten.Image, a *app) {
 }
 
 func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
-	sc, f, u := a.sc, &a.f, a.u
+	sc, f := a.sc, &a.f
 	p.drawMenuButton(dst, a)
 
-	// Spinner: a wedge per seat in its ink (out seats printed blank), the pointer on the player to move.
-	n := len(p.seats)
-	for i := range n {
-		a0 := -math.Pi/2 + float64(i)*2*math.Pi/float64(n)
-		c := sc.players[i]
-		if !p.alive[i] {
-			c = sc.tile
-		}
-		scratchPath.Reset()
-		scratchPath.MoveTo(float32(p.spinX), float32(p.spinY))
-		scratchPath.Arc(float32(p.spinX), float32(p.spinY), float32(p.spinR), float32(a0),
-			float32(a0+2*math.Pi/float64(n)), 0)
-		scratchPath.Close()
-		fillPath(dst, &scratchPath, c)
-	}
-	for i := range n {
-		an := -math.Pi/2 + float64(i)*2*math.Pi/float64(n)
-		line(dst, p.spinX, p.spinY, p.spinX+p.spinR*math.Cos(an), p.spinY+p.spinR*math.Sin(an), 3*u, sc.ground)
-	}
-	if a.set.Marks {
-		rm := p.spinR * 0.66
-		mr := min(p.spinR*0.17, math.Pi*rm/float64(n)*0.62)
-		for i := range n {
-			if p.alive[i] {
-				an := p.wedgeAngle(i)
-				drawMark(dst, i, p.spinX+rm*math.Cos(an), p.spinY+rm*math.Sin(an), mr, sc.players[i])
-			}
-		}
-	}
-	fillCircle(dst, p.spinX, p.spinY, p.spinR*0.2, sc.ground)
-	tip := p.spinR + 12*u
-	sx, sy := math.Cos(p.spin), math.Sin(p.spin)
-	w := p.spinR * 0.09
-	scratchPath.Reset()
-	scratchPath.MoveTo(float32(p.spinX+tip*sx), float32(p.spinY+tip*sy))
-	scratchPath.LineTo(float32(p.spinX-w*sy), float32(p.spinY+w*sx))
-	scratchPath.LineTo(float32(p.spinX+w*sy), float32(p.spinY-w*sx))
-	scratchPath.Close()
-	fillPath(dst, &scratchPath, sc.ink)
-	fillCircle(dst, p.spinX, p.spinY, p.spinR*0.1, sc.ink)
+	p.drawSpinner(dst, a)
 
 	// The chain callout, in the mover's ink.
 	if p.chainHold > 0 && p.chain >= 2 {
@@ -711,6 +693,81 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 	}
 }
 
+// spinnerKey is what the cached spinner images show.
+type spinnerKey struct {
+	x, y, r, u float64
+	alive      [core.MaxPlayers]bool
+	sc         *scheme
+	marks      bool
+}
+
+// drawSpinner draws the turn spinner: a wedge per seat in its ink (out seats printed blank) and the pointer on the
+// player to move. Both are images redrawn only when what they show changes; the pointer turns as it is drawn.
+func (p *playScene) drawSpinner(dst *ebiten.Image, a *app) {
+	if k := (spinnerKey{p.spinX, p.spinY, p.spinR, a.u, p.alive, a.sc, a.set.Marks}); p.wheel == nil || k != p.spinKey {
+		p.spinKey = k
+		p.renderSpinner(a)
+	}
+	imageOp = ebiten.DrawImageOptions{}
+	imageOp.GeoM.Translate(p.wheelX, p.wheelY)
+	dst.DrawImage(p.wheel, &imageOp)
+	h := float64(p.pointer.Bounds().Dy()) / 2
+	imageOp = ebiten.DrawImageOptions{Filter: ebiten.FilterLinear, DisableMipmaps: true}
+	imageOp.GeoM.Translate(-h, -h)
+	imageOp.GeoM.Rotate(p.spin)
+	imageOp.GeoM.Translate(p.spinX, p.spinY)
+	dst.DrawImage(p.pointer, &imageOp)
+}
+
+// renderSpinner caches the wheel at whole-pixel alignment and the rim pointer pointing right around its hub.
+func (p *playScene) renderSpinner(a *app) {
+	if p.wheel != nil {
+		p.wheel.Deallocate()
+		p.pointer.Deallocate()
+	}
+	sc, u, n, r := a.sc, a.u, len(p.seats), p.spinR
+	p.wheelX, p.wheelY = math.Floor(p.spinX-r)-spritePad, math.Floor(p.spinY-r)-spritePad
+	x, y := p.spinX-p.wheelX, p.spinY-p.wheelY
+	p.wheel = ebiten.NewImage(int(math.Ceil(x+r))+spritePad, int(math.Ceil(y+r))+spritePad)
+	for i := range n {
+		a0 := -math.Pi/2 + float64(i)*2*math.Pi/float64(n)
+		c := sc.players[i]
+		if !p.alive[i] {
+			c = sc.tile
+		}
+		scratchPath.Reset()
+		scratchPath.MoveTo(float32(x), float32(y))
+		scratchPath.Arc(float32(x), float32(y), float32(r), float32(a0), float32(a0+2*math.Pi/float64(n)), 0)
+		scratchPath.Close()
+		fillPath(p.wheel, &scratchPath, c)
+	}
+	for i := range n {
+		an := -math.Pi/2 + float64(i)*2*math.Pi/float64(n)
+		line(p.wheel, x, y, x+r*math.Cos(an), y+r*math.Sin(an), 3*u, sc.ground)
+	}
+	if a.set.Marks {
+		rm := r * 0.66
+		mr := min(r*0.17, math.Pi*rm/float64(n)*0.62)
+		for i := range n {
+			if p.alive[i] {
+				an := p.wedgeAngle(i)
+				drawMark(p.wheel, i, x+rm*math.Cos(an), y+rm*math.Sin(an), mr, sc.players[i])
+			}
+		}
+	}
+	fillCircle(p.wheel, x, y, r*0.2, sc.ground)
+
+	tip, w, h := r+12*u, r*0.09, math.Ceil(r*0.1)+spritePad
+	p.pointer = ebiten.NewImage(int(math.Ceil(h+tip))+spritePad, int(2*h))
+	scratchPath.Reset()
+	scratchPath.MoveTo(float32(h+tip), float32(h))
+	scratchPath.LineTo(float32(h), float32(h+w))
+	scratchPath.LineTo(float32(h), float32(h-w))
+	scratchPath.Close()
+	fillPath(p.pointer, &scratchPath, sc.ink)
+	fillCircle(p.pointer, h, h, r*0.1, sc.ink)
+}
+
 // drawPause dims the game and shows the pause menu.
 func (p *playScene) drawPause(dst *ebiten.Image, a *app) {
 	sc, u := a.sc, a.u
@@ -736,7 +793,11 @@ func (p *playScene) drawResults(dst *ebiten.Image, a *app) {
 	bb := p.b.bounds()
 	cx, cy := bb.cx(), bb.cy()
 	reach := math.Hypot(max(cx, a.w-cx), max(cy, a.h-cy))
-	fillCircle(dst, cx, cy, e*reach, w)
+	if t < 1 {
+		fillCircle(dst, cx, cy, e*reach, w)
+	} else {
+		dst.Fill(&sc.players[p.shown]) // avoid boxing the colour each frame
+	}
 	alpha := p.resultsAlpha()
 	if alpha == 0 {
 		return

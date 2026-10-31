@@ -168,13 +168,19 @@ var seatLabels = func() []string {
 	return l
 }()
 
-// Geometry and drawing helpers. They share one path, so call them from the draw goroutine only. They take
+// Geometry and drawing helpers. They share scratch buffers, so call them from the draw goroutine only. They take
 // color.RGBA, not color.Color, because boxing a colour into an interface allocates and they run many times a frame.
 var (
 	scratchPath vector.Path
 	pathOp      vector.DrawPathOptions
 	strokeOp    = vector.StrokeOptions{LineJoin: vector.LineJoinRound, LineCap: vector.LineCapRound}
-	textOp      text.DrawOptions
+	imageOp     ebiten.DrawImageOptions
+	shapeVerts  []ebiten.Vertex
+	shapeIdx    []uint32
+	shapeOp     = ebiten.DrawTrianglesOptions{
+		Filter: ebiten.FilterLinear, ColorScaleMode: ebiten.ColorScaleModePremultipliedAlpha,
+		DisableMipmaps: true, // sprites are drawn at about their own size
+	}
 )
 
 type rect struct{ x, y, w, h float64 }
@@ -202,10 +208,106 @@ func addRound(p *vector.Path, r rect, rad float64) {
 	p.Close()
 }
 
-func fillRound(dst *ebiten.Image, r rect, rad float64, c color.RGBA) {
+// Shapes are drawn from small white sprites that vector renders once, tinted and stretched as nine-slices: corners
+// keep the sprite's scale, edges and middle stretch. Filling paths with vector every frame costs several GPU passes
+// and a render-target switch per path, which phones can't afford for a screen of controls.
+const (
+	spritePad = 2   // transparent margin, so filtering never reads past a sprite
+	spriteMax = 512 // the largest corner a sprite holds; bigger corners (the results flood) scale it up
+	spriteCap = 256 // sprites kept before the cache starts over; resizing a window keeps making new sizes
+)
+
+// spriteKey names a sprite: a rounded square 2c px across with corner radius r and border width w (0 fills), both
+// in quarter px, or the shape mark of seat mark-1 in a dot of radius c.
+type spriteKey struct{ mark, c, r, w int }
+
+var sprites = map[spriteKey]*ebiten.Image{}
+
+// newSprite makes and keeps the image for k: side px plus the margin.
+func newSprite(k spriteKey, side int) *ebiten.Image {
+	if len(sprites) >= spriteCap {
+		clear(sprites) // dropped images are released when collected
+	}
+	img := ebiten.NewImage(side+2*spritePad, side+2*spritePad)
+	sprites[k] = img
+	return img
+}
+
+// roundSprite is the rounded square sprite with corner c and radius r and border w in quarter px (see spriteKey).
+func roundSprite(c, r, w int) *ebiten.Image {
+	k := spriteKey{c: c, r: r, w: w}
+	if img, ok := sprites[k]; ok {
+		return img
+	}
+	img := newSprite(k, 2*c)
+	box, rad, bw := rect{spritePad, spritePad, float64(2 * c), float64(2 * c)}, float64(r)/4, float64(w)/4
 	scratchPath.Reset()
-	addRound(&scratchPath, r, rad)
-	fillPath(dst, &scratchPath, c)
+	if w == 0 {
+		addRound(&scratchPath, box, rad)
+		fillPath(img, &scratchPath, pureWhite)
+		return img
+	}
+	addRound(&scratchPath, box.inset(bw/2), max(0, rad-bw/2))
+	pathOp = vector.DrawPathOptions{AntiAlias: true}
+	strokeOp.Width = float32(bw)
+	vector.StrokePath(img, &scratchPath, &strokeOp, &pathOp)
+	return img
+}
+
+// queueRound queues r with corners of radius rad, filled (w = 0) or as a border w wide inside r, mapped through g
+// (nil leaves it upright), and returns the sprite drawShapes draws the queue from. Shapes queued together must share
+// it, so only queue several shapes of one size and radius.
+func queueRound(r rect, rad, w float64, g *ebiten.GeoM, c color.RGBA) *ebiten.Image {
+	if r.w <= 0 || r.h <= 0 {
+		return nil
+	}
+	rad = max(0, min(rad, r.w/2, r.h/2))
+	corner := min(max(rad, w, 1), r.w/2, r.h/2)
+	cs := math.Ceil(corner)
+	if cs > 64 {
+		cs = min(spriteMax, math.Ceil(cs/8)*8) // fewer sizes of big sprite, each drawn at most 12% smaller
+	}
+	k := cs / corner // sprite px per screen px
+	img := roundSprite(int(cs), int(math.Round(rad*k*4)), int(math.Round(w*k*4)))
+
+	xs := [4]float64{r.x, r.x + corner, r.right() - corner, r.right()}
+	ys := [4]float64{r.y, r.y + corner, r.bottom() - corner, r.bottom()}
+	ss := [4]float32{spritePad, spritePad + float32(cs), spritePad + float32(cs), spritePad + 2*float32(cs)}
+	cr, cg, cb, ca := float32(c.R)/255, float32(c.G)/255, float32(c.B)/255, float32(c.A)/255
+	n := uint32(len(shapeVerts))
+	for j, y := range ys {
+		for i, x := range xs {
+			px, py := x, y
+			if g != nil {
+				px, py = g.Apply(x, y)
+			}
+			shapeVerts = append(shapeVerts, ebiten.Vertex{DstX: float32(px), DstY: float32(py), SrcX: ss[i], SrcY: ss[j],
+				ColorR: cr, ColorG: cg, ColorB: cb, ColorA: ca})
+		}
+	}
+	for j := range uint32(3) {
+		for i := range uint32(3) {
+			// A border's middle is empty, and a pill or circle has no middle row or column.
+			if w > 0 && i == 1 && j == 1 || i == 1 && r.w-2*corner <= 0 || j == 1 && r.h-2*corner <= 0 {
+				continue
+			}
+			v := n + 4*j + i
+			shapeIdx = append(shapeIdx, v, v+1, v+4, v+1, v+5, v+4)
+		}
+	}
+	return img
+}
+
+// drawShapes draws the queued shapes from img in one batch and empties the queue.
+func drawShapes(dst, img *ebiten.Image) {
+	if len(shapeIdx) > 0 {
+		dst.DrawTriangles32(shapeVerts, shapeIdx, img, &shapeOp)
+	}
+	shapeVerts, shapeIdx = shapeVerts[:0], shapeIdx[:0]
+}
+
+func fillRound(dst *ebiten.Image, r rect, rad float64, c color.RGBA) {
+	drawShapes(dst, queueRound(r, rad, 0, nil, c))
 }
 
 // fillPill fills r with fully rounded ends.
@@ -213,51 +315,41 @@ func fillPill(dst *ebiten.Image, r rect, c color.RGBA) { fillRound(dst, r, r.h/2
 
 // strokeRound draws a border of width w inside r.
 func strokeRound(dst *ebiten.Image, r rect, rad, w float64, c color.RGBA) {
-	scratchPath.Reset()
-	addRound(&scratchPath, r.inset(w/2), max(0, rad-w/2))
-	strokePath(dst, &scratchPath, w, c)
+	drawShapes(dst, queueRound(r, rad, w, nil, c))
 }
 
-// dashedRect draws r's outline as dashes of length d (and gaps of d) at width w.
+// dashedRect draws r's outline as dashes of length d (and gaps of d) at width w, centred on its edges: the top and
+// right sides start at the top-left and top-right corners, the bottom and left sides at the opposite ones.
 func dashedRect(dst *ebiten.Image, r rect, d, w float64, c color.RGBA) {
-	p := &scratchPath
-	p.Reset()
-	side := func(x0, y0, x1, y1 float64) {
-		l := math.Hypot(x1-x0, y1-y0)
-		for s := 0.0; s < l; s += 2 * d {
-			e := min(l, s+d)
-			p.MoveTo(float32(x0+(x1-x0)*s/l), float32(y0+(y1-y0)*s/l))
-			p.LineTo(float32(x0+(x1-x0)*e/l), float32(y0+(y1-y0)*e/l))
-		}
+	var img *ebiten.Image
+	for s := 0.0; s < r.w; s += 2 * d {
+		l := min(d, r.w-s)
+		img = queueRound(rect{r.x + s, r.y - w/2, l, w}, 0, 0, nil, c)
+		queueRound(rect{r.right() - s - l, r.bottom() - w/2, l, w}, 0, 0, nil, c)
 	}
-	side(r.x, r.y, r.right(), r.y)
-	side(r.right(), r.y, r.right(), r.bottom())
-	side(r.right(), r.bottom(), r.x, r.bottom())
-	side(r.x, r.bottom(), r.x, r.y)
-	strokeOp.LineCap = vector.LineCapButt
-	strokePath(dst, p, w, c)
-	strokeOp.LineCap = vector.LineCapRound
+	for s := 0.0; s < r.h; s += 2 * d {
+		l := min(d, r.h-s)
+		img = queueRound(rect{r.right() - w/2, r.y + s, w, l}, 0, 0, nil, c)
+		queueRound(rect{r.x - w/2, r.bottom() - s - l, w, l}, 0, 0, nil, c)
+	}
+	drawShapes(dst, img)
 }
 
 func fillCircle(dst *ebiten.Image, x, y, r float64, c color.RGBA) {
-	scratchPath.Reset()
-	scratchPath.Arc(float32(x), float32(y), float32(r), 0, 2*math.Pi, vector.Clockwise)
-	fillPath(dst, &scratchPath, c)
+	fillRound(dst, rect{x - r, y - r, 2 * r, 2 * r}, r, c)
 }
 
 // ring draws a circle outline of width w inside radius r.
 func ring(dst *ebiten.Image, x, y, r, w float64, c color.RGBA) {
-	scratchPath.Reset()
-	scratchPath.Arc(float32(x), float32(y), float32(r-w/2), 0, 2*math.Pi, vector.Clockwise)
-	scratchPath.Close()
-	strokePath(dst, &scratchPath, w, c)
+	strokeRound(dst, rect{x - r, y - r, 2 * r, 2 * r}, r, w, c)
 }
 
+// line draws a stroke w wide with round caps from (x0, y0) to (x1, y1).
 func line(dst *ebiten.Image, x0, y0, x1, y1, w float64, c color.RGBA) {
-	scratchPath.Reset()
-	scratchPath.MoveTo(float32(x0), float32(y0))
-	scratchPath.LineTo(float32(x1), float32(y1))
-	strokePath(dst, &scratchPath, w, c)
+	var g ebiten.GeoM
+	g.Rotate(math.Atan2(y1-y0, x1-x0))
+	g.Translate(x0, y0)
+	drawShapes(dst, queueRound(rect{-w / 2, -w / 2, math.Hypot(x1-x0, y1-y0) + w, w}, w/2, 0, &g, c))
 }
 
 // tint scales cs by c, like ColorScale.ScaleWithColor without the interface.
@@ -265,27 +357,61 @@ func tint(cs *ebiten.ColorScale, c color.RGBA) {
 	cs.Scale(float32(c.R)/255, float32(c.G)/255, float32(c.B)/255, float32(c.A)/255)
 }
 
+// fillPath fills p with vector. It is for rendering cached images; drawing the screen every frame uses sprites.
 func fillPath(dst *ebiten.Image, p *vector.Path, c color.RGBA) {
 	pathOp = vector.DrawPathOptions{AntiAlias: true}
 	tint(&pathOp.ColorScale, c)
 	vector.FillPath(dst, p, nil, &pathOp)
 }
 
-func strokePath(dst *ebiten.Image, p *vector.Path, w float64, c color.RGBA) {
-	pathOp = vector.DrawPathOptions{AntiAlias: true}
-	tint(&pathOp.ColorScale, c)
-	strokeOp.Width = float32(w)
-	vector.StrokePath(dst, p, &strokeOp, &pathOp)
+// labelKey names a label laid out by drawText.
+type labelKey struct {
+	s     string
+	face  text.Face
+	align text.Align
 }
+
+const labelCap = 512 // labels kept before the cache starts over; orb counts and new font sizes keep adding them
+
+// labels keeps each label's glyphs, laid out around (0, 0) as text.Draw lays them out before moving them into place,
+// so drawing the same text every frame neither shapes it again nor allocates.
+var labels = map[labelKey][]text.Glyph{}
 
 // drawText draws s with its horizontal anchor at x (start, centre or end) and its vertical centre at y.
 func drawText(dst *ebiten.Image, s string, face text.Face, x, y float64, align text.Align, c color.RGBA) {
-	textOp = text.DrawOptions{}
-	textOp.GeoM.Translate(x, y)
-	tint(&textOp.ColorScale, c)
-	textOp.PrimaryAlign = align
-	textOp.SecondaryAlign = text.AlignCenter
-	text.Draw(dst, s, face, &textOp)
+	drawScaledText(dst, s, face, x, y, align, 1, c)
+}
+
+func labelGlyphs(s string, face text.Face, align text.Align) []text.Glyph {
+	k := labelKey{s, face, align}
+	glyphs, ok := labels[k]
+	if !ok {
+		if len(labels) >= labelCap {
+			clear(labels)
+		}
+		glyphs = text.AppendGlyphs(nil, s, face, &text.LayoutOptions{PrimaryAlign: align, SecondaryAlign: text.AlignCenter})
+		labels[k] = glyphs
+	}
+	return glyphs
+}
+
+// drawScaledText fits cached glyphs uniformly without creating a font for each changing count.
+func drawScaledText(dst *ebiten.Image, s string, face text.Face, x, y float64, align text.Align, scale float64, c color.RGBA) {
+	glyphs := labelGlyphs(s, face, align)
+	for _, g := range glyphs {
+		if g.Image == nil {
+			continue
+		}
+		imageOp = ebiten.DrawImageOptions{}
+		if scale != 1 {
+			imageOp.GeoM.Scale(scale, scale)
+			imageOp.Filter = ebiten.FilterLinear
+			imageOp.DisableMipmaps = true
+		}
+		imageOp.GeoM.Translate(g.X*scale+x, g.Y*scale+y)
+		tint(&imageOp.ColorScale, c)
+		dst.DrawImage(g.Image, &imageOp)
+	}
 }
 
 func textWidth(s string, face text.Face) float64 {
@@ -294,11 +420,25 @@ func textWidth(s string, face text.Face) float64 {
 }
 
 // drawMark draws seat p's shape mark centred in a dot of radius r filled with c, in black or white for contrast.
+// The mark comes from a sprite rendered once per seat and size.
 func drawMark(dst *ebiten.Image, p int, x, y, r float64, c color.RGBA) {
-	markShape(dst, p, x, y, r, inkOn(c))
+	sr := max(1, math.Ceil(r))
+	k := spriteKey{mark: p + 1, c: int(sr)}
+	img, ok := sprites[k]
+	if !ok {
+		img = newSprite(k, 2*int(sr))
+		markShape(img, p, spritePad+sr, spritePad+sr, sr, pureWhite)
+	}
+	imageOp = ebiten.DrawImageOptions{Filter: ebiten.FilterLinear, DisableMipmaps: true} // at least half size
+	imageOp.GeoM.Translate(-spritePad-sr, -spritePad-sr)
+	imageOp.GeoM.Scale(r/sr, r/sr)
+	imageOp.GeoM.Translate(x, y)
+	tint(&imageOp.ColorScale, inkOn(c))
+	dst.DrawImage(img, &imageOp)
 }
 
-// markShape draws seat p's shape mark in ink, sized for a dot of radius r centred at (x, y).
+// markShape draws seat p's shape mark in ink, sized for a dot of radius r centred at (x, y). Two marks fill vector
+// paths, so it renders cached images (drawMark's sprites, the board's orb atlas), not the screen each frame.
 // The marks, in seat order: dot, bar, plus, cross, triangle, square, diamond, stem, pair, ring, chevron, frame.
 func markShape(dst *ebiten.Image, p int, x, y, r float64, ink color.RGBA) {
 	s, w := r*0.42, r*0.2
@@ -337,11 +477,7 @@ func markShape(dst *ebiten.Image, p int, x, y, r float64, ink color.RGBA) {
 	case 9:
 		ring(dst, x, y, s*0.8+w/2, w, ink)
 	case 10:
-		scratchPath.Reset()
-		scratchPath.MoveTo(float32(x-s), float32(y+s*0.4))
-		scratchPath.LineTo(float32(x), float32(y-s*0.4))
-		scratchPath.LineTo(float32(x+s), float32(y+s*0.4))
-		strokePath(dst, &scratchPath, w, ink)
+		chevron(dst, x, y, s, -s*0.4, w, ink)
 	case 11:
 		strokeRound(dst, rect{x - s*0.7 - w/2, y - s*0.7 - w/2, s*1.4 + w, s*1.4 + w}, 0, w, ink)
 	}
@@ -360,15 +496,8 @@ func seatDot(dst *ebiten.Image, sc *scheme, p int, x, y, r float64, out, marks b
 	}
 }
 
-// chevron draws a small open chevron pointing down (or up) centred at (x, y).
-func chevron(dst *ebiten.Image, x, y, s, w float64, up bool, c color.RGBA) {
-	d := s / 2
-	if up {
-		d = -d
-	}
-	scratchPath.Reset()
-	scratchPath.MoveTo(float32(x-s), float32(y-d))
-	scratchPath.LineTo(float32(x), float32(y+d))
-	scratchPath.LineTo(float32(x+s), float32(y-d))
-	strokePath(dst, &scratchPath, w, c)
+// chevron draws an open chevron centred at (x, y), s wide on each side, its point d below y (above when d < 0).
+func chevron(dst *ebiten.Image, x, y, s, d, w float64, c color.RGBA) {
+	line(dst, x-s, y-d, x, y+d, w, c)
+	line(dst, x, y+d, x+s, y-d, w, c)
 }

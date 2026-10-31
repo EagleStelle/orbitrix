@@ -163,15 +163,16 @@ Choices made where the brief or the prototype left room. Newest last.
 - **Settings** are JSON in the user config folder (`%AppData%\Orbitrix\settings.json` on Windows), written through
   a temporary file: board size, players, seats (by name), theme, fullscreen, colorblind mode, sound and volume.
   Missing fields keep their defaults. Web and Android storage come in Phase 4.
-- **UI scale** is the monitor's device scale factor; the game draws at full device resolution. The minimum window
+- **UI scale** is the monitor's device scale factor, capped at 2 since "UI drawn from sprites"; the game draws at
+  that resolution. The minimum window
   is 1040×640; when the height runs short, the rail's seat list goes to two compact columns; Setup keeps its
   control sizes and scrolls above Start.
 - **Fonts add about 1.4 MB** (Unbounded 0.78 MB, Archivo 0.66 MB, both variable). Subsetting them is a possible
   Phase 4 size saving, without Python tooling.
 - **FPS overlay** (frame rate and the slowest frame of the last second) is off by default; F3 toggles it and `-fps`
   starts with it on.
-- **Performance meets the Phase 3 bar.** `ORBITRIX_PERF_SECONDS=60 go test -tags perf -run TestPerf40x40 -v
-  ./client` fills a 40×40 board for twelve AIs to two-thirds of its capacity, then plays on in a 1920×1080 window
+- **Performance meets the Phase 3 bar.** `ORBITRIX_PERF_SECONDS=60 go test -tags perf -run TestPerf -v ./client`
+  (its first case; the test now covers more screens, see "UI drawn from sprites") fills a 40×40 board for twelve AIs to two-thirds of its capacity, then plays on in a 1920×1080 window
   with vsync and records every frame (`ORBITRIX_PERF_MARKS=1` turns Colorblind mode on, `ORBITRIX_PERF_NOVSYNC=1`
   measures headroom). On the development desktop at 60 Hz with marks on it held 59.7 FPS over 3,582 frames through
   chains of up to 471 waves: frame gap p50 16.7 ms and p99 17.5 ms, with no frame over 25 ms after the first. Draw
@@ -179,7 +180,7 @@ Choices made where the brief or the prototype left room. Newest last.
   reproduce.
 - **Allocations:** the client's own update and draw code does not allocate per frame. The drawing helpers take
   `color.RGBA`, not `color.Color`, because boxing a colour into an interface allocates. About 200 allocations a frame
-  remain inside Ebitengine, mostly `text/v2` shaping and `vector` path filling: a few GC cycles a minute and no
+  remain inside Ebitengine, mostly `text/v2` shaping: a few GC cycles a minute and no
   dropped frames on desktop. If Android shows GC hitches, caching drawn labels as images removes the text share.
 - **One Back/Menu component** (polish pass): Back on Setup and Settings and Menu on the game rail share the compact
   40 px face, 44 px target, glyph and label offsets; Settings tabs are quiet pills like the other buttons on the
@@ -309,8 +310,7 @@ Choices made where the brief or the prototype left room. Newest last.
   with 8 px gaps (180 px per section), with 24 px between sections. The preview background follows and fills the
   visible part of its desktop column: its top and bottom stay inside both the Board body and the scroll viewport
   above Start. The miniature scales with that visible background inside its 12 px padding, preserving its aspect
-  ratio and nested outlines. Its cached image reserves the viewport height so dragging does not replace the image
-  as the visible area grows. On narrow screens the preview remains above the preset sections.
+  ratio and nested outlines. On narrow screens the preview remains above the preset sections.
   Overflow scrolls the page above the pinned Start button, including at the minimum desktop window size.
 - **Custom:** the Columns and Rows steppers still allow any size from 3 to 40. A size that matches no preset chooses
   no preset pill and the Board heading reads "Custom" before its dimensions; a preset size shows the preset's name
@@ -344,3 +344,63 @@ Choices made where the brief or the prototype left room. Newest last.
   scene to 1340 px wide and back. For a 9×9 board the wide view uses two named columns and wheels 632 and 552 logical
   px wide respectively; the board stays 940 px wide. The narrower view uses one named column and a 304 px wheel.
   Layout checks enforce the original desktop text and pill sizes for every player count from two to twelve.
+
+## UI drawn from sprites (2026-10-31)
+
+- **Why:** every frame filled each button, block, dot and icon with anti-aliased `vector` paths. Ebitengine 2.10
+  draws each such path 8 times into a stencil texture twice its width, and every text draw between two paths flushes
+  that work with a render-target switch, which tile-based phone GPUs pay for heavily. The stencil texture also only
+  grows and is cleared in full on every flush, so one full-screen fill (the pause veil, the results flood) slowed
+  every later screen. At 1080×2400 on the development desktop Setup took 3.3–3.7 ms a frame, 88% of it in `vector`;
+  the Game rail 0.75 ms and Home 0.4–0.7 ms. Scrolling Setup with a 40×40 board took 27.6 ms a frame (36 FPS),
+  because the preview resized with the scroll and re-filled one path of 1,600 rounded tiles each step.
+- **Sprites:** shapes now come from small white sprites that `vector` renders once and the cache in `theme.go` keeps
+  (`queueRound`, `drawShapes`). A rounded rectangle, pill, circle, border or ring is a nine-slice of a rounded-square
+  sprite: corners keep the sprite's scale, edges and middle stretch, tinted per draw in one `DrawTriangles32`. A
+  stroke with round caps is a turned pill, so icons (arrow, chevrons, hamburger, plus and minus) are a few strokes.
+  Seat marks are sprites per seat and size. The spinner's wheel and pointer are images redrawn only when a seat goes
+  out, the layout or the theme changes; the pointer turns as it is drawn. The Setup preview queues its tiles into
+  one batch. `vector` now only renders sprites and cached images, never the screen.
+- **Bounds:** corners above 64 px are rounded up to multiples of 8, and above 512 px the sprite scales up (only the
+  results flood, which becomes a plain fill once it covers the screen). The cache starts over after 256 sprites, as
+  resizing a window keeps making sizes. With no full-screen `vector` fills left, `screenFit` no longer halves the
+  width. A pill or circle skips its empty middle cells (a circle is four quads).
+- **2× cap** (user choice): `Layout` caps device px per logical px at `maxScale` = 2. Phones at 2.6–3.5× draw a
+  smaller frame that the OS or browser scales up: a 1080×2400 phone fills 823×1829 px, about 40% fewer pixels, for
+  slightly softer text. Desktops at 2× or less are unchanged.
+- **Draw only after an Update:** displays above 60 Hz call `Draw` more often than the 60 Hz `Update`. The screen is
+  no longer cleared every frame, and `Draw` returns at once when no `Update` ran (and the size did not change) since
+  the last frame, so the screen keeps it. A 120 Hz phone draws half the frames it did; a 60 Hz display is unchanged.
+- **Still screens:** Setup, Settings, paused games and finished results are drawn only when the pointer moves, presses,
+  lifts or scrolls, a key the game handles is pressed, the screen changes or resizes, or the FPS overlay is on; every
+  30 ticks they redraw anyway, a backstop for a frame the platform lost (an Android app back from the background).
+  Idle on Setup, the real game loop drew 7 frames in 3 s instead of about 180.
+- **Pause and results:** game orb motion uses the board's 60 Hz clock, so pausing freezes it and resuming does not
+  jump ahead. Repeated draws at the same time do not advance smoothing. Once the results wipe covers the screen,
+  drawing skips the hidden board and rail; the last frame of the wipe still draws before the screen becomes idle.
+- **Labels:** `drawText` keeps each label's glyphs from `text.AppendGlyphs`, laid out around (0, 0) as `text.Draw`
+  lays them out before moving them into place, so text draws pixel-identical without shaping or allocating every
+  frame (the cache starts over after 512 labels). Tiles, orbs, sprites, marks and the spinner pointer skip
+  Ebitengine's mipmap check, as they draw at about their own size; burst rings shrink and keep mipmaps.
+  Allocations per frame in the frame-time check fell from 170 to 70; drawing CPU fell about 23% and text CPU about
+  half (desktop A/B). On the emulator, still and animated screens now cost the same CPU (about 43%): what is left is
+  Ebitengine presenting each frame at 60 Hz, not drawing it.
+- **Result** (same desktop, 1080×2400): Setup 0.6–0.7 ms, Game 0.3–0.4 ms, Home 0.24 ms, Setup with a 40×40 board
+  1.4 ms; scrolling it at 1440×900 1.8 ms. At the capped 823×1829: Setup 0.62 ms, Game 0.27 ms, Home 0.23 ms (this
+  GPU is not fill-bound at phone sizes; phone GPUs are).
+- **Frame-time check:** `ORBITRIX_PERF_SECONDS=10 go test -tags perf -run TestPerf -v ./client` runs each screen for
+  that many seconds in one window: the dense 40×40 game at 1920×1080 and on a 1080×2400 phone (at the 2× cap), the
+  paused game, finished results, idle Setup and Settings, Setup with twelve players and a 40×40 board scrolling up
+  and down at 1440×900 and on the phone, and Home on both. Cases use the production `Game.Update`/`Game.Draw` loop
+  and an initialized animation clock. A case fails when its p99 frame gap is over 25 ms; idle cases also fail if
+  they redraw more than about twice a second. Draw timings count scene redraws, not skipped draws.
+- **Android emulator check (2026-11-01):** Android 16 x86_64, 1080×2400 at 420 dpi, drawing at 822×1828 with the
+  production 2× cap. A temporary build used the production game loop, seeded a dense 40×40 board with twelve AIs
+  and colorblind marks, and measured each screen for ten seconds after two seconds of warmup. Home, scrolling
+  Setup, dense play, pause, resumed play and opaque results held 59.9–60.1 FPS; p99 frame gaps stayed below 19.3 ms.
+  Dense play/resume draw p99 was 2.73/2.79 ms, scrolling Setup 1.75 ms. Pause and results each redrew 20 times in ten
+  seconds, and the board clock stayed at 216 throughout pause before advancing to 936 after resume. This checks
+  the Android runtime and rendering path, not a physical phone's GPU speed or thermal limits.
+- **Web AI budget:** Go in a browser has one thread, so an AI that is thinking holds up drawing. On web builds, boards
+  bigger than the largest preset (Floor, 234 cells) get `ai.DefaultBudget × 234 / cells` work units per move (192 on
+  40×40); preset boards keep the full budget.

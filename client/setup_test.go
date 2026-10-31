@@ -5,12 +5,13 @@ import (
 	"math"
 	"slices"
 	"testing"
+	"time"
 
 	"orbitrix/core"
 )
 
 func setupTestApp(w, h, u float64, players int) *app {
-	a := &app{w: w * u, h: h * u, u: u, f: newFonts(u), sc: &schemes[themeLight],
+	a := &app{w: w * u, h: h * u, u: u, f: newFonts(u), sc: &schemes[themeLight], epoch: time.Now(),
 		set: &settings{Cols: 9, Rows: 9, Players: players, seats: []int{seatHuman}}}
 	a.set.fitSeats()
 	return a
