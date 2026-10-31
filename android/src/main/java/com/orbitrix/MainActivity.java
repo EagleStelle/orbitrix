@@ -1,6 +1,7 @@
 package com.orbitrix;
 
 import android.app.Activity;
+import android.content.pm.ActivityInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.DisplayCutout;
@@ -103,5 +104,14 @@ public final class MainActivity extends Activity implements Host {
     @Override
     public void leave() {
         runOnUiThread(() -> moveTaskToBack(true));
+    }
+
+    // A game on a board with more columns than rows holds the screen on its side (either way up); leaving it hands
+    // the orientation back to the phone's own rotation setting.
+    @Override
+    public void rotate(boolean landscape) {
+        runOnUiThread(() -> setRequestedOrientation(landscape
+                ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                : ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED));
     }
 }

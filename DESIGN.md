@@ -60,6 +60,11 @@ typography:
     fontSize: "20px"
     fontWeight: 800
     lineHeight: 1
+  callout-compact:
+    fontFamily: "Unbounded"
+    fontSize: "15px"
+    fontWeight: 800
+    lineHeight: 1
   number:
     fontFamily: "Unbounded"
     fontSize: "20px"
@@ -192,6 +197,11 @@ components:
     rounded: "{rounded.pill}"
     width: "180px"
     height: "40px"
+  chain-callout-compact:
+    textColor: "{colors.ink}"
+    typography: "{typography.callout-compact}"
+    rounded: "{rounded.pill}"
+    height: "32px"
 ---
 
 # Design System: Orbitrix
@@ -202,7 +212,7 @@ components:
 
 Orbitrix is a printed vinyl floor mat for a loud room of friends. The board is a sheet of printed rounded-square tiles with gutters; the players' twelve inks are the only colour on it; every control is plain ink on the vinyl. Everything is drawn in code as flat, solid fills. Nothing has a bevel, a glow, a gradient or a cast shadow. The category's neon-orbs-on-black look and the purple party-app shell are both rejected.
 
-The system is built to be read from the couch. Type is large: seat rows on the game rail use 18 px body. The display face is a wide, heavy geometric (Unbounded) and is used only for things people shout: the wordmark, PLAY, Start, Chain ×N and the winner's title. Archivo handles everything else. There are two modes, a light vinyl mat (the default) and a warm charcoal mat at night. They share every rule, and only the values change.
+The system is built to be read from the couch. Type is large: seat rows on the desktop game rail use 18 px body; a phone held in the hand steps down to the 15 px label size. The display face is a wide, heavy geometric (Unbounded) and is used only for things people shout: the wordmark, PLAY, Start, Chain ×N and the winner's title. Archivo handles everything else. There are two modes, a light vinyl mat (the default) and a warm charcoal mat at night. They share every rule, and only the values change.
 
 Colour signals ownership and turn, never decoration. A player's tiles light up only when it is their turn. A chain callout appears in the mover's ink, and the winner's ink floods the screen at the end. Colorblind mode adds each player's shape mark everywhere that player's colour appears.
 
@@ -245,11 +255,11 @@ The palette is two quiet neutral sets (a light vinyl mat and a night mat) that c
 - **Display** (Unbounded 800, wordmark capped at 60 px): the ORBITRIX wordmark on Home. The same face also sets PLAY (34% of the dot radius) and the winner's title (56 to 120 px, scaling with the window).
 - **Headline** (Unbounded 700, 26 px): screen titles ("Set up the game", "Settings", "Paused").
 - **Title** (Unbounded 700, 17 px): block headings (Players, Board) and the labels of primary buttons.
-- **Callout** (Unbounded 800, 20 px): "Chain ×N" in the mover's ink.
+- **Callout** (Unbounded 800, 20 px): "Chain ×N" in the mover's ink. **Callout compact** (Unbounded 800, 15 px) sets it on phones (portrait, or under 640 px tall).
 - **Number** (Unbounded 700, 20 px): stepper values and the board dimensions.
-- **Body** (Archivo 500 or 700, 18 px): seat rows on the game rail, Settings row labels and the volume value, and the results line.
-- **Label** (Archivo 700 or 500, 15 px): pill labels, seat tags and dropdown options.
-- **Small** (Archivo 500 or 700, 13 px): preset dimensions after a preset name, and the F3 frame-rate overlay.
+- **Body** (Archivo 500 or 700, 18 px): seat rows on the desktop game rail, Settings row labels and the volume value, and the results line.
+- **Label** (Archivo 700 or 500, 15 px): pill labels, seat tags, dropdown options, and the game's seat rows on phones (or in two columns on the desktop rail).
+- **Small** (Archivo 500 or 700, 13 px): preset dimensions after a preset name, the game's two-column seat rows on phones, and the F3 frame-rate overlay.
 
 ### Named Rules
 **The Shout Rule.** Unbounded is used only for words the room says out loud and for numbers. Everything you read quietly is set in Archivo.
@@ -265,10 +275,12 @@ One layout serves every target (desktop, browser, Android): there is no separate
 - **Setup roster:** show active seats only, in one to four columns. The minimum column width starts at 220 px and grows to fit the measured longest strategy, P12 tag, padding and chevron. Player columns divide the full body width equally after subtracting the existing 12 px or 16 px gutters; pills fill their column without a width cap. A short final row keeps the same grid-column widths, and a single column fills the body width. With twelve players, window widths of 1040, 760, 640 and 390 px fit four, three, two and one columns respectively; the four-column pills at 1040 px are about 235 px wide. The heading groups minus, the player count, and plus; the controls stop at two and twelve players. There is no Add player chip. Row pitch is 52 px (44 px target plus 8 px gap). Each seat combines its ink dot, player number, Human/AI choice and chevron in one 40 px pill, inset 2 px vertically in its 44 px hit row. Setup groups use the compact Back/Menu sizing role and shared fill hover; Home and pause-menu quiet buttons retain their larger 52 px faces. Changing the count preserves existing Human/AI choices via `fitSeats`; new seats take AI defaults.
 - **Setup reflow:** the mini-mat preview remains part of the Board block at every size, with nested preset outlines. Six preset pills always use two columns and three target rows (148 px, with 44 px targets and 8 px gaps); each visible face is 40 px tall, inset 2 px vertically. Presets sit above the Columns/Rows controllers with a gap between them. Presets and dimensions share one aligned control group, using the full body width when stacked; beside the preview, its width aims for 42% of the body up to 420 px, with the measured inline-pair minimum taking precedence. The preview sits on the left when its 200 px minimum, the control group's minimum width and the gutter fit; otherwise it sits above the entire group. Each dimension group is one 44 px-high inline row with its label and −/value/+ controls vertically centred. Its minimum width includes the wider Columns/Rows label, an 8 px gap, two 44 px targets and the widest cached numeric label with 12 px padding. The groups share one line when the pair and gutter fit; below a 600 px viewport width or when the pair cannot fit its own control-group width, full-width Rows sits below full-width Columns with the existing 12 px or 16 px gutter. Overflow wheel-scrolls (or drags, on touch) within a clipped viewport above Start; the same layout is the phone layout.
 - **Settings:** a Back pill and a headline, tab pills (124 × 44 px), and one panel that runs down to the bottom of the page. Rows are 76 px tall, separated by hairlines. Compact screens use 16 px margins and padding and 56 px rows. Phones have no Fullscreen row: they are always full screen.
-- **Game:** one 32 px margin on all four sides, and 32 px between the board and the rail. The right-hand rail (280 to 340 px) starts with the Menu pill on the top margin, spanning the rail's full width. The rest of the rail starts 24 px under Menu, anchored to the top: the spinner (96 to 240 px), the chain callout slot and then the seat table. The board is centred in the whole column left of the rail, from the top margin to the bottom margin and from the left margin to the 32 px gap before the rail. The table switches to two columns when there are more than three seats and the height runs out. Below 640 px of height the margin is 16 px, the gaps under Menu, around the callout and above the table are 12, 8 and 12 px, and the spinner may shrink to 72 px.
-- **Game, portrait:** the rail's parts split into a top bar and a bottom bar around the board, 16 px margins and gaps. Top bar: the Menu pill (112 px, like Back) on the left and the chain callout slot (up to 180 px) on the right. Bottom bar: the spinner (88 to 140 px, at most 32% of the width) on the left and the seat table beside it, centred against each other. Up to six seats get one column of 36 px rows with full names; more get two compact columns of 32 px rows (number and orbs only, 8 px row insets when a column is under 130 px). The board fills the space between the bars.
+- **Game (desktop, browser, phone on its side):** one computation for every platform. The board fills the column left of a rail, margin to margin; the rail stacks Menu on the top margin, the spinner, the chain callout and the seat table, and **every part is the spinner's width**: the rail is exactly as wide as the narrowest seat table that fits the height, Menu and the callout need, and the spinner is drawn that wide. The table takes the first set-out that fits: one column with numbers and type names, one column with numbers, then two columns with numbers. Every set-out shows the seat number (P1–P12), the dot and the orbs; widths are measured from the real text (the widest number, the longest type name in this game, as many digits as this board's orbs can reach). Desktop: 32 px margins, 24 px under Menu, the callout in its own slot 20 px under the spinner, 24 px above the table, rows 24 to 40 px. Below 640 px of height (a phone on its side): 16 px margins, 12 px gaps (clear of the pointer's tip), no type names, rows 20 to 32 px, and the callout floats across the spinner's middle instead of taking a slot. Only when two columns at 20 px rows still leave too little height for a spinner that wide (ten or more players on a phone under about 400 px tall) does the spinner shrink below the rail's width, centred in it.
+- **Seat rows:** inset, dot, space, number, type, orbs right-aligned. Desktop one column: 14 px insets, 12 px dots, 12 px space, body size. Phone one column: 10 px insets, 10 px dots, 8 px space, label size. Two columns pack tighter: 6 px insets, dots 2 px smaller, 4 px space, at least 6 px before the orbs, 8 px between columns, label size on desktop and small on a phone.
+- **Game, portrait:** the board fills the top, 16 px margins and gaps. Under it a bar holds the spinner (88 to 140 px, at most 32% of the width, never narrower than the callout) with the chain callout, exactly the spinner's width, 12 px below it (clear of the pointer's tip) on the left, and the seat table beside them, centred against each other. Menu spans the full width at the bottom margin, in thumb reach. Up to six seats get one column of 36 px rows at the label size, with type names when they fit; more get two columns of 32 px rows at the small size (number and orbs). A crowded table on a narrow phone takes what it lacks from the gap before it, down to 8 px. The compact callout is 32 px tall and at least wide enough for "Chain ×88" (three digits still fit inside).
+- **Orientation:** on Android a game whose board has more columns than rows turns the phone to landscape (either way up), Settings from its pause menu included, and leaving the game hands rotation back to the phone. Where the app can't turn the screen (browsers, desktop windows), such a board in an area taller than wide is drawn a quarter turn instead (see Board).
 - **Pause and Results on small screens:** the pause buttons narrow to fit the width and go two by two when one column is too tall. The winner's title shrinks so "P12 wins!" fits the width, and on a screen too short for the column the winner's dot shrinks (24 px radius at least) and the result buttons stand side by side; the results line drops to the label size when the body size would not fit.
-- **Board:** tiles have a 7% gutter on each side of every cell, and the board is scaled to fill its area with the outer tiles' edges on the area's edges (no extra inner margin). A board whose shape differs from its area is centred, so the leftover space splits evenly on both sides of the slack axis, on the game screen and on Home alike. A board wider than tall in an area taller than wide is drawn a quarter turn clockwise, so its long side runs down the screen and its tiles stay big enough to tap; only the drawing turns.
+- **Board:** tiles have a 7% gutter on each side of every cell, and the board is scaled to fill its area with the outer tiles' edges on the area's edges (no extra inner margin). A board whose shape differs from its area is centred, so the leftover space splits evenly on both sides of the slack axis, on the game screen and on Home alike. Where the app can't turn the screen itself (browsers, desktop windows), a board wider than tall in an area taller than wide is drawn a quarter turn clockwise, so its long side runs down the screen and its tiles stay big enough to tap; only the drawing turns.
 - **Web loader:** before the game starts, the page shows the twelve seat dots (16 px, 12 px apart) on the mat, in the saved theme; each fills with its ink as another twelfth of the game arrives. No text, unless loading fails.
 
 ## Elevation & Depth
@@ -312,7 +324,7 @@ Buttons are plain pills: solid where they act, quiet where they offer.
 - **Slider:** a mat-coloured track with an ink fill and a 12 px ink knob. Everything turns dim while sound is muted.
 
 ### Navigation
-- **Back and Menu** are one compact component: a tile pill with a 40 px face in a 44 px target, the stroked glyph centred 22 px from its left edge and the label at 42 px. Back is 112 px wide on Setup and Settings (arrow only, 44 px wide, on pages narrower than 540 px); Menu spans the game rail, and is 112 px wide in the portrait top bar.
+- **Back and Menu** are one compact component: a tile pill with a 40 px face in a 44 px target, the stroked glyph centred 22 px from its left edge and the label at 42 px. Back is 112 px wide on Setup and Settings (arrow only, 44 px wide, on pages narrower than 540 px); Menu spans the game rail, and the full width at the bottom of the portrait game.
 - **Touch:** a finger acts on release, and only if it has not dragged more than 10 px, so a drag scrolls Setup without pressing what it started on; the volume knob follows a finger from the moment it lands. A lifted finger leaves no hover behind. Android's back button acts as Esc, and on Home it sends the app to the background.
 - **Menu pill** on the game rail (hamburger + "Menu") opens the pause dialog: Resume (primary), Restart, Settings, Main menu.
 - **Settings tabs:** Video and Audio, as pills (the chosen style for the active tab, tile fill otherwise).
@@ -322,7 +334,7 @@ Buttons are plain pills: solid where they act, quiet where they offer.
 A pie with one wedge per seat in that seat's ink, split by 3 px lines in the mat colour. Seats that are out are drawn as blank tile. There is a mat-coloured hub and an ink pointer aimed at the player to move. In Colorblind mode each living wedge carries its mark.
 
 ### Chain Callout (signature)
-A pill in the mover's ink reading "Chain ×N" in Unbounded 800, in `inkOn` contrast. It appears for chains of 2 or more and fades out.
+A pill in the mover's ink reading "Chain ×N" in Unbounded 800, in `inkOn` contrast, always exactly the spinner's width. It appears for chains of 2 or more and fades out. On a phone on its side it floats across the spinner's middle.
 
 ### Board, Orbs and Bursts (signature)
 Board tiles are rounded squares, printed blank or lit 30% toward the mover's ink. Orbs are flat discs in their owner's ink with a rim in the mat colour, plus their mark in Colorblind mode, all drawn in one batch. A burst is a flat ring in the exploding player's ink that expands over 18 ticks and fades. The hover tile gets an outline in the mover's ink. A cell holding more than four orbs gets an ink count badge.

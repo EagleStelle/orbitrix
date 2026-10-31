@@ -15,6 +15,8 @@ import (
 type Host interface {
 	// Leave sends the app to the background, as the back button does on Android's root screen.
 	Leave()
+	// Rotate holds the screen in landscape, or lets it turn freely again.
+	Rotate(landscape bool)
 }
 
 var start sync.Once
@@ -25,6 +27,7 @@ func Start(dataDir string, host Host) {
 	start.Do(func() {
 		platform.SetDataDir(dataDir)
 		platform.Leave = host.Leave
+		platform.Rotate = host.Rotate
 		ebitenmobile.SetGame(client.New())
 	})
 }

@@ -120,22 +120,24 @@ func newFace(src *text.GoTextFaceSource, size float64, weight float32) *text.GoT
 
 // fonts is the type scale, rebuilt when the UI scale changes. Sizes are logical px.
 type fonts struct {
-	logo, title, heading, callout, number   *text.GoTextFace // Unbounded
-	body, bodyBold, label, labelBold, small *text.GoTextFace // Archivo
+	logo, title, heading, callout, calloutCompact, number *text.GoTextFace // Unbounded
+	body, bodyBold, label, labelBold, small, smallBold    *text.GoTextFace // Archivo
 }
 
 func newFonts(u float64) fonts {
 	return fonts{
-		logo:      newFace(srcDisplay, 80*u, 800),
-		title:     newFace(srcDisplay, 26*u, 700),
-		heading:   newFace(srcDisplay, 17*u, 700),
-		callout:   newFace(srcDisplay, 20*u, 800),
-		number:    newFace(srcDisplay, 20*u, 700),
-		body:      newFace(srcUI, 18*u, 500),
-		bodyBold:  newFace(srcUI, 18*u, 700),
-		label:     newFace(srcUI, 15*u, 500),
-		labelBold: newFace(srcUI, 15*u, 700),
-		small:     newFace(srcUI, 13*u, 500),
+		logo:           newFace(srcDisplay, 80*u, 800),
+		title:          newFace(srcDisplay, 26*u, 700),
+		heading:        newFace(srcDisplay, 17*u, 700),
+		callout:        newFace(srcDisplay, 20*u, 800),
+		calloutCompact: newFace(srcDisplay, 15*u, 800),
+		number:         newFace(srcDisplay, 20*u, 700),
+		body:           newFace(srcUI, 18*u, 500),
+		bodyBold:       newFace(srcUI, 18*u, 700),
+		label:          newFace(srcUI, 15*u, 500),
+		labelBold:      newFace(srcUI, 15*u, 700),
+		small:          newFace(srcUI, 13*u, 500),
+		smallBold:      newFace(srcUI, 13*u, 700),
 	}
 }
 

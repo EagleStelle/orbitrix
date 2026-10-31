@@ -190,18 +190,36 @@ Choices made where the brief or the prototype left room. Newest last.
   same `client` package and scenes as the desktop; there is no mobile or web UI of its own. `cmd/orbitrix` is also
   the WASM entry point, and `mobile` only starts `client.New()`. Layouts respond to the size they get, measured in
   the safe area: portrait means taller than wide, and compact margins apply below 640 px tall or 600 px wide.
-- **Portrait game** (user choice): the rail splits into a top bar (Menu left, Chain ×N callout right) and a bottom bar
-  (spinner left, seat table beside it). A full-width Menu was considered and dropped (user).
+- **Portrait game** (user choice): the board fills the top; under it the spinner with the Chain ×N callout below it
+  sits left of the seat table, and a full-width Menu is anchored at the bottom in thumb reach. This replaced an
+  earlier top bar (Menu left, callout right) after phone testing (user).
+- **Phone type sizes** (user choice): upright screens and screens under 640 px tall set the game's seat rows at the
+  15 px label size (13 px when the table splits into two columns) and Chain ×N at Unbounded 800 15 px in a 32 px pill
+  sized for "Chain ×88"; the desktop rail keeps 18 px rows and the 20 px callout in its 180×40 pill.
 - **Portrait Home** (user choice): wordmark and seat dots on top, live mat in the middle, PLAY and the buttons at the
   bottom.
-- **Wide boards turn** (user choice): a board wider than tall in an area taller than wide is drawn a quarter turn
-  clockwise. In that case turning always gives bigger tiles (both of its scale limits beat the unturned one's
-  tighter limit). Only the board's drawing and hit-testing turn; the game and its moves don't.
-- **Phone landscape** keeps the rail, with 16 px margins, tighter gaps, a spinner down to 72 px and two seat columns
-  once a fourth seat no longer fits; pause buttons go two by two and the result buttons side by side when the screen
-  is too short. Layout tests cover 1040×640 to 1920×1080, 844×390, 780×360, 390×844, 360×740, 412×915 and 768×1024 at
-  scales 1 and 2.625 with a cutout, for 2–12 players and 9×9 and 30×18 boards: every part inside the safe area and no
-  overlaps.
+- **Wide boards rotate the phone** (user request, replacing the turned board on Android): a game whose board has
+  more columns than rows asks Android for landscape (`SCREEN_ORIENTATION_SENSOR_LANDSCAPE`, either way up, even with
+  auto-rotate off), and every other screen hands rotation back (`UNSPECIFIED`, the phone's own setting). The Go side
+  decides per scene (`wantsLandscape`: a game, or Settings opened from its pause menu) and calls `platform.Rotate`,
+  which the activity implements. Browsers can only lock orientation in fullscreen and iPhone Safari not at all, so web
+  and desktop keep the turned board (user choice): a board wider than tall in an area taller than wide is drawn a
+  quarter turn clockwise, which always gives bigger tiles; only its drawing and hit-testing turn.
+- **One rail for every platform, as wide as the spinner** (user request). Desktop, browsers and phones on their side
+  share `layoutRail`: Menu, spinner, callout and seat table are all the spinner's width, and that width is the least
+  the seat table needs. The table takes the first of three set-outs that fits the height (names in one column,
+  numbers in one column, numbers in two columns); widths are measured from the text actually shown (`seatTableWidth`,
+  which `drawRail` follows), with orb counts sized to the digits of the most orbs the board holds at rest (sum of
+  capacity − 1). The seat number always shows (user requirement). Phones skip type names and float the callout over
+  the spinner. That can't hold for every case: two columns of numbered rows need about 180–195 px, and a spinner that
+  wide plus six 20 px rows doesn't fit under about 400 px of height, so ten or more players on such phones get a
+  spinner up to 50 px narrower than the rail (144 vs 195 px on a 780×360 phone with 12 players on 30×18). The
+  emulator's 914×411 fits every case at full width. Results with 2 players: 222 px rail on desktop (was 280–340), 116
+  px on a phone on its side; the board gets the rest.
+- **Small screens:** pause buttons go two by two and the result buttons side by side when the screen is too short.
+  Layout tests cover 1040×640 to 1920×1080, 844×390, 780×360, 390×844, 360×740, 412×915 and 768×1024 at scales 1 and
+  2.625 with a cutout, for 2–12 players and 9×9 and 30×18 boards: every part inside the safe area, no overlaps, every
+  seat row at least as wide as its content, the seat number always shown, and the rail's parts the spinner's width.
 - **Input bug fixed from Phase 3:** Ebitengine reports pointer positions on the screen `Layout` returns, which is
   already in device pixels, but the client multiplied them by the UI scale again. Invisible at 100% scaling; on a
   2.6× phone or a hi-DPI browser every click landed far off.

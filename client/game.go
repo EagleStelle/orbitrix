@@ -170,6 +170,19 @@ type Game struct {
 	lastDraw, frameStart time.Time
 	worst                time.Duration
 	fpsText              string
+	landscape            bool // the screen is held in landscape (platform.Rotate)
+}
+
+// wantsLandscape reports whether s shows a game whose board has more columns than rows, which a phone shows best on
+// its side. Settings opened from the pause menu keep the game's orientation.
+func wantsLandscape(s scene) bool {
+	switch s := s.(type) {
+	case *playScene:
+		return s.cols > s.rows
+	case *settingsMenu:
+		return wantsLandscape(s.back)
+	}
+	return false
 }
 
 // New returns the root game, on the Home screen.
@@ -210,6 +223,10 @@ func (g *Game) Update() error {
 	}
 	if a.next != nil {
 		g.scene, a.next = a.next, nil
+		if l := wantsLandscape(g.scene); platform.Rotate != nil && l != g.landscape {
+			g.landscape = l
+			platform.Rotate(l)
+		}
 	}
 	shape := ebiten.CursorShapeDefault
 	if a.pointer {

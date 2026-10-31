@@ -2,6 +2,7 @@ package client
 
 import (
 	"fmt"
+	"math"
 	"testing"
 
 	"orbitrix/core"
@@ -53,11 +54,15 @@ func TestPlayLayout(t *testing.T) {
 						}
 						p.layout(a)
 						v := a.safe()
-						parts := map[string]rect{
-							"menu":    compactHit(p.menu, u),
-							"callout": p.callout,
-							"board":   p.b.bounds(),
-							"spinner": {p.spinX - p.spinR, p.spinY - p.spinR, 2 * p.spinR, 2 * p.spinR},
+						spinner := rect{p.spinX - p.spinR, p.spinY - p.spinR, 2 * p.spinR, 2 * p.spinR}
+						parts := map[string]rect{"menu": compactHit(p.menu, u), "board": p.b.bounds(), "spinner": spinner}
+						overlay := !a.portrait() && p.compact // a phone on its side floats the callout over the spinner
+						if overlay {
+							if !containsRect(spinner, p.callout) {
+								t.Fatalf("callout %+v must float inside the spinner %+v", p.callout, spinner)
+							}
+						} else {
+							parts["callout"] = p.callout
 						}
 						for i := range players {
 							parts[seatNames[i]] = p.rowRect[i]
@@ -65,6 +70,32 @@ func TestPlayLayout(t *testing.T) {
 						checkParts(t, v, parts)
 						if size == [2]float64{390, 844} && board[0] > board[1] && !p.b.turned {
 							t.Fatal("a wide board must turn on an upright phone")
+						}
+
+						// The spinner sets the width: the callout everywhere, and Menu and the seat table on the rail.
+						d := 2 * p.spinR
+						if math.Abs(p.callout.w-d) > 0.01 || math.Abs(p.callout.cx()-p.spinX) > 0.01 {
+							t.Fatalf("callout %+v must be the spinner's width (%.1f) and centre", p.callout, d)
+						}
+						table, cols := p.rowRect[0], float64(p.table.cols)
+						need := (p.seatTableWidth(a) - (cols-1)*8*u) / cols
+						for _, r := range p.rowRect[:players] {
+							table.w = max(table.w, r.right()-table.x)
+							if r.w < need-0.01 {
+								t.Fatalf("seat row %+v is narrower than its content (%.1f)", r, need)
+							}
+						}
+						if !p.table.tags {
+							t.Fatal("the seat numbers must always show")
+						}
+						// On the rail the spinner is only ever narrower than Menu and the table when the table is at its
+						// last style and its least row height.
+						squeezed := p.table == railStyles[len(railStyles)-1] && p.rowRect[0].h+4*u <= 24*u
+						if !a.portrait() && (math.Abs(p.menu.w-table.w) > 0.01 || table.x != p.menu.x ||
+							math.Abs(p.menu.cx()-p.spinX) > 0.01 || d > p.menu.w+0.01 ||
+							d < p.menu.w-0.01 && !squeezed) {
+							t.Fatalf("rail: Menu %+v and seat table %+v must be the spinner's width (%.1f) and column",
+								p.menu, table, d)
 						}
 
 						if !containsRect(v, p.pausePanel) {
@@ -107,6 +138,25 @@ func TestHomeLayout(t *testing.T) {
 			}
 			t.Run(fmt.Sprintf("%.0fx%.0f/u%g", size[0], size[1], u), func(t *testing.T) { checkParts(t, v, parts) })
 		}
+	}
+}
+
+func TestWantsLandscape(t *testing.T) {
+	a := setupTestApp(390, 844, 1, 2)
+	for _, tc := range []struct {
+		cols, rows int
+		want       bool
+	}{{30, 18, true}, {9, 9, false}, {5, 9, false}} {
+		p, err := newPlay(a, tc.cols, tc.rows, a.set.seats)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if wantsLandscape(p) != tc.want || wantsLandscape(newSettingsMenu(p)) != tc.want {
+			t.Errorf("%dx%d game: wantsLandscape != %v", tc.cols, tc.rows, tc.want)
+		}
+	}
+	if wantsLandscape(newHome()) || wantsLandscape(newSetup()) || wantsLandscape(newSettingsMenu(newHome())) {
+		t.Error("only a game rotates the screen")
 	}
 }
 

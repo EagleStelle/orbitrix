@@ -19,6 +19,10 @@ var (
 // sets it; elsewhere it does nothing.
 var Leave = func() {}
 
+// Rotate holds the screen in landscape (true) or lets it turn freely again (false). The mobile wrapper sets it; it
+// stays nil where the app can't turn the screen itself (desktop, web).
+var Rotate func(landscape bool)
+
 // PressBack reports a press of Android's back button.
 func PressBack() { back.Store(true) }
 

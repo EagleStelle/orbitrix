@@ -7,6 +7,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
+	"orbitrix/client/platform"
 	"orbitrix/core"
 )
 
@@ -110,9 +111,10 @@ func (b *board) layout(area rect, u float64) {
 		return
 	}
 	b.area = area
-	// A wide board in a tall area (an upright phone) turns so its long side runs down the screen and its tiles stay
-	// big enough to tap. Only the drawing turns; the game is the same.
-	b.turned = area.h > area.w && b.geo.Cols > b.geo.Rows
+	// A wide board in a tall area (an upright phone browser) turns so its long side runs down the screen and its tiles
+	// stay big enough to tap. Only the drawing turns; the game is the same. Where the app can rotate the screen itself
+	// (Android), the game goes landscape instead (wantsLandscape).
+	b.turned = area.h > area.w && b.geo.Cols > b.geo.Rows && platform.Rotate == nil
 	cols, rows := b.screenSize()
 	b.base = cellSize(cols, rows, area.w/u, area.h/u)
 	// The outer tiles' edges, not the cells around them, meet the area's edges, so the board shares the screen margin.

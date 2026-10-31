@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -81,7 +82,10 @@ type playScene struct {
 	spinX, spinY, spinR         float64
 	callout                     rect
 	rowRect                     [core.MaxPlayers]rect
-	twoCol                      bool
+	table                       seatStyle
+	orbsMax                     string  // as many 8s as the most orbs this board holds at rest has digits
+	compact                     bool    // a phone: label-size seat rows and the small callout
+	typeDX                      float64 // seat type name's offset from the player tag
 	pausePanel                  rect
 	pauseBtn                    [len(pauseItems)]rect
 	again, toHome               rect
@@ -101,6 +105,12 @@ func newPlay(a *app, cols, rows int, seats []int) (*playScene, error) {
 		cols: cols, rows: rows, seats: append([]int(nil), seats...), game: g, b: newBoard(g),
 		seed: a.rng.Uint64(), scratch: g.Clone(), aiMove: make(chan int, 1),
 	}
+	// Every orb of a settled board sits in a cell below its capacity, and a player can't own more than all of them.
+	most := 0
+	for _, c := range g.Geo.Cap {
+		most += int(c) - 1
+	}
+	p.orbsMax = strings.Repeat("8", len(strconv.Itoa(most)))
 	p.settle()
 	p.spin = p.wedgeAngle(p.shown)
 	return p, nil
@@ -303,6 +313,13 @@ func (p *playScene) layout(a *app) {
 		return
 	}
 	p.lv = v
+	// Phones (upright, or short on their side) set the seat rows at the button label size; the desktop rail keeps body
+	// size for couch distance.
+	p.compact = a.portrait() || v.h < 640*a.u
+	p.typeDX = 44 * a.u
+	if p.compact {
+		p.typeDX = max(30*a.u, textWidth("P12", a.f.labelBold)) + 8*a.u // as on the Setup seat pill
+	}
 	if a.portrait() {
 		p.layoutBars(a, v)
 	} else {
@@ -312,82 +329,178 @@ func (p *playScene) layout(a *app) {
 	p.layoutResults(a, v)
 }
 
-// layoutRail puts the board on the left and the rail on the right: Menu across the rail's top, then the spinner, the
-// chain callout and the seat table. A short screen (a phone on its side) gets smaller margins, gaps and spinner.
-func (p *playScene) layoutRail(a *app, v rect) {
-	u := a.u
-	pad, menuGap, calloutGap, listGap, minSpin := 32*u, 24*u, 20*u, 24*u, 96*u
-	if v.h < 640*u {
-		pad, menuGap, calloutGap, listGap, minSpin = 16*u, 12*u, 8*u, 12*u, 72*u
-	}
-	rw := max(280*u, min(340*u, v.w*0.26))
-	r := rect{v.right() - pad - rw, v.y + pad, rw, v.h - 2*pad}
-	// The board is centred in the whole column left of the rail, margin to margin. Menu spans the rail and the rest of
-	// the rail starts one gap under it.
-	p.b.layout(rect{v.x + pad, v.y + pad, r.x - v.x - 2*pad, v.h - 2*pad}, u)
-	p.menu = rect{r.x, r.y, rw, compactButtonHeight * u}
-	top := p.menu.bottom() + menuGap
-
-	// Top down under Menu: the spinner, the chain callout slot, the seat table. The spinner shrinks first when space
-	// runs out; if one column of seats still won't fit, they go into two compact columns without the type names.
-	avail := r.bottom() - top
-	above := calloutGap + 40*u + listGap // spinner to list, excluding the spinner itself
-	rows, rowH := len(p.seats), 40*u
-	spinner := func() float64 { return max(minSpin, min(240*u, rw*0.8, avail-above-float64(rows)*rowH)) }
-	d := spinner()
-	p.twoCol = rows > 3 && avail-above-d < float64(rows)*30*u
-	if p.twoCol {
-		rows = (rows + 1) / 2
-		d = spinner()
-	}
-	if avail-above-d < float64(rows)*rowH {
-		rowH = max(24*u, (avail-above-d)/float64(rows))
-	}
-	p.spinR = d / 2
-	p.spinX, p.spinY = r.cx(), top+p.spinR
-	p.callout = rect{r.cx() - 90*u, p.spinY + p.spinR + calloutGap, 180 * u, 40 * u}
-	p.layoutSeats(a, rect{r.x, top + d + above, rw, float64(rows) * rowH}, rows)
+// seatStyle is how the seat table sets out its rows: which parts each row shows, and in how many columns.
+type seatStyle struct {
+	names bool // the seat's type (Human, Gambler, ...)
+	tags  bool // the seat's number (P1, P2, ...)
+	cols  int
 }
 
-// layoutBars is the upright layout, built from the rail's parts: a top bar with Menu on the left and the chain
-// callout on the right, a bottom bar with the spinner on the left and the seat table beside it, and the board between
-// them.
+// railStyles are the rail's seat tables, richest first; the rail takes the first that fits its height. Every style
+// shows the seat numbers.
+var railStyles = [...]seatStyle{{names: true, tags: true, cols: 1}, {tags: true, cols: 1}, {tags: true, cols: 2}}
+
+// layoutRail puts the board on the left and a rail on the right, every part of it the spinner's width: Menu, then the
+// spinner, the chain callout and the seat table. The table takes the first of railStyles that fits the height, and the
+// rail is only as wide as that table, Menu and the callout need, so the spinner stays small and the board gets the
+// room. Phones skip the type names and float the callout over the spinner instead of giving it a slot.
+//
+// Only when even two columns of rows at their least height leave too little height for a spinner that wide (many
+// players on a short phone held sideways) does the spinner shrink below the rail's width, centred in it.
+func (p *playScene) layoutRail(a *app, v rect) {
+	u := a.u
+	pad, menuGap, calloutGap, listGap, rowMin, rowMax := 32*u, 24*u, 20*u, 24*u, 24*u, 40*u
+	styles := railStyles[:]
+	if p.compact {
+		// 12 px gaps keep the pointer's tip, which reaches 12 px past the spinner, clear of Menu and the seats.
+		pad, menuGap, listGap, rowMin, rowMax = 16*u, 12*u, 12*u, 20*u, 32*u
+		styles = styles[1:]
+	}
+	h := v.h - 2*pad
+	cw, ch := p.calloutSize(a)
+	fixed := compactButtonHeight*u + menuGap + listGap // the height besides the spinner and the rows
+	if !p.compact {
+		fixed += calloutGap + ch
+	}
+	menuW := 42*u + textWidth("Menu", a.f.labelBold) + 18*u // as drawMenuButton sets it out
+	n := len(p.seats)
+	var w float64
+	var rows int
+	for _, st := range styles {
+		p.table = st
+		rows = (n + st.cols - 1) / st.cols
+		w = max(menuW, cw, p.seatTableWidth(a))
+		if fixed+w+float64(rows)*rowMin <= h {
+			break
+		}
+	}
+	rowH := max(rowMin, min(rowMax, (h-fixed-w)/float64(rows)))
+	d := min(w, h-fixed-float64(rows)*rowH)
+
+	x, y := v.right()-pad-w, v.y+pad
+	p.b.layout(rect{v.x + pad, y, x - v.x - 2*pad, h}, u)
+	p.menu = rect{x, y, w, compactButtonHeight * u}
+	p.spinR = d / 2
+	p.spinX, p.spinY = x+w/2, p.menu.bottom()+menuGap+p.spinR
+	below := p.spinY + p.spinR
+	if p.compact {
+		p.callout = rect{p.spinX - p.spinR, p.spinY - ch/2, d, ch}
+	} else {
+		p.callout = rect{p.spinX - p.spinR, below + calloutGap, d, ch}
+		below = p.callout.bottom()
+	}
+	p.layoutSeats(a, rect{x, below + listGap, w, float64(rows) * rowH}, rows)
+}
+
+// seatFaces are the seat rows' regular and bold faces: body on the desktop rail, a step down on a phone or in two
+// columns, and two steps down for two columns on a phone.
+func (p *playScene) seatFaces(a *app) (name, bold *text.GoTextFace) {
+	switch {
+	case p.compact && p.table.cols == 2:
+		return a.f.small, a.f.smallBold
+	case p.compact || p.table.cols == 2:
+		return a.f.label, a.f.labelBold
+	}
+	return a.f.body, a.f.bodyBold
+}
+
+// seatInsets are a seat row's inset at each end, the space after its dot, the least space before its orbs, and the
+// dot's largest radius. Two columns pack tighter.
+func (p *playScene) seatInsets(a *app) (in, sp, gap, dot float64) {
+	u := a.u
+	dot = 12 * u
+	if p.compact {
+		dot = 10 * u
+	}
+	switch {
+	case p.table.cols == 2:
+		return 6 * u, 4 * u, 6 * u, dot - 2*u
+	case p.compact:
+		return 10 * u, 8 * u, 12 * u, dot
+	}
+	return 14 * u, 12 * u, 12 * u, dot
+}
+
+// seatTableWidth is the narrowest table whose rows fit the parts p.table shows, set out as drawRail draws them:
+// inset, dot, space, number, type, gap, orbs (or "out"), inset, and 8 px between columns.
+func (p *playScene) seatTableWidth(a *app) float64 {
+	name, bold := p.seatFaces(a)
+	in, sp, gap, dot := p.seatInsets(a)
+	row := 2*in + 2*dot + sp + gap + max(textWidth(p.orbsMax, bold), textWidth("out", name))
+	switch {
+	case p.table.names:
+		label := 0.0
+		for _, s := range p.seats {
+			label = max(label, textWidth(seatLabels[s], name))
+		}
+		row += p.typeDX + label
+	case p.table.tags:
+		tag := 0.0
+		for i := range p.seats {
+			tag = max(tag, textWidth(seatNames[i], bold))
+		}
+		row += tag
+	}
+	return float64(p.table.cols)*row + float64(p.table.cols-1)*8*a.u
+}
+
+// calloutSize is the chain callout pill: 180×40 on the desktop rail; on a phone a 32 px pill sized for "Chain ×88",
+// which a three-digit chain still fits inside.
+func (p *playScene) calloutSize(a *app) (w, h float64) {
+	if p.compact {
+		return textWidth("Chain ×88", a.f.calloutCompact) + 20*a.u, 32 * a.u
+	}
+	return 180 * a.u, 40 * a.u
+}
+
+// layoutBars is the upright layout, built from the rail's parts: the board at the top, then a bar with the spinner
+// and the chain callout under it on the left and the seat table beside them, and Menu across the bottom in thumb
+// reach.
 func (p *playScene) layoutBars(a *app, v rect) {
 	u := a.u
 	pad, gap := 16*u, 16*u
 	x, w := v.x+pad, v.w-2*pad
-	p.menu = rect{x, v.y + pad, 112 * u, compactButtonHeight * u}
-	cw := min(180*u, w-p.menu.w-12*u)
-	p.callout = rect{x + w - cw, p.menu.y, cw, 40 * u}
+	p.menu = rect{x, v.bottom() - pad - compactButtonHeight*u, w, compactButtonHeight * u}
 
-	// More than six seats go into two compact columns without the type names, as on a crowded rail.
+	// More than six seats go into two columns. Each row shows as much as the table's width allows.
 	n := len(p.seats)
-	p.twoCol = n > 6
+	styles := []seatStyle{{names: true, tags: true, cols: 1}, {tags: true, cols: 1}}
 	rows, rowH := n, 36*u
-	if p.twoCol {
+	if n > 6 {
+		styles = []seatStyle{{tags: true, cols: 2}}
 		rows, rowH = (n+1)/2, 32*u
 	}
 	tableH := float64(rows) * rowH
-	d := max(88*u, min(140*u, tableH, w*0.32))
-	barH := max(d, tableH)
-	barY := v.bottom() - pad - barH
+	// The spinner over the callout, as wide as the spinner and 12 px under it so the pointer's tip clears it,
+	// centred against the table.
+	cw, ch := p.calloutSize(a)
+	d := max(cw, 88*u, min(140*u, tableH, w*0.32))
+	colH := d + 12*u + ch
+	barH := max(colH, tableH)
+	barY := p.menu.y - gap - barH
 	p.spinR = d / 2
-	p.spinX, p.spinY = x+p.spinR, barY+barH/2
+	p.spinX, p.spinY = x+p.spinR, barY+(barH-colH)/2+p.spinR
+	p.callout = rect{x, p.spinY + p.spinR + 12*u, d, ch}
 	tx := x + d + gap
+	for _, p.table = range styles {
+		if p.seatTableWidth(a) <= x+w-tx {
+			break
+		}
+	}
+	// Twelve seats on a narrow phone take the few px they lack from the gap, down to 8 px.
+	tx -= min(gap-8*u, max(0, p.seatTableWidth(a)-(x+w-tx)))
 	p.layoutSeats(a, rect{tx, barY + (barH-tableH)/2, x + w - tx, tableH}, rows)
 
-	top := p.menu.bottom() + gap
+	top := v.y + pad
 	p.b.layout(rect{x, top, w, barY - gap - top}, u)
 }
 
-// layoutSeats fills table with the seat rows, rows to a column.
+// layoutSeats fills table with the seat rows in p.table's columns, rows to a column, 8 px apart.
 func (p *playScene) layoutSeats(a *app, table rect, rows int) {
 	u := a.u
 	rowH := table.h / float64(rows)
-	w := table.w
-	if p.twoCol {
-		w = (table.w - 8*u) / 2
-	}
+	cols := float64(p.table.cols)
+	w := (table.w - (cols-1)*8*u) / cols
 	for i := range p.seats {
 		p.rowRect[i] = rect{table.x + float64(i/rows)*(w+8*u), table.y + float64(i%rows)*rowH, w, rowH - 4*u}
 	}
@@ -535,34 +648,34 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 		c := sc.players[p.chainOwner]
 		alpha := min(1, float64(p.chainHold)/20)
 		fillPill(dst, p.callout, withAlpha(c, alpha))
-		drawText(dst, p.chainText, f.callout, p.callout.cx(), p.callout.cy(), text.AlignCenter, withAlpha(inkOn(c), alpha))
+		face := f.callout
+		if p.compact {
+			face = f.calloutCompact
+		}
+		drawText(dst, p.chainText, face, p.callout.cx(), p.callout.cy(), text.AlignCenter, withAlpha(inkOn(c), alpha))
 	}
 
+	// The seat rows, set out as seatTableWidth measures them.
+	name, bold := p.seatFaces(a)
+	in, sp, _, dot := p.seatInsets(a)
 	for i, seat := range p.seats {
 		r := p.rowRect[i]
 		alive, current := p.alive[i], i == p.shown && !p.over
 		if current {
 			fillPill(dst, r, sc.tile)
 		}
-		dr := min(12*u, r.h*0.34)
-		in, sp := 14*u, 12*u // row inset, and the space after the dot
-		if r.w < 130*u {     // two columns beside the spinner on an upright phone
-			in, sp = 8*u, 6*u
-		}
+		dr := min(dot, r.h*0.34)
 		seatDot(dst, sc, i, r.x+in+dr, r.cy(), dr, !alive, a.set.Marks)
 		ink := sc.ink
 		if !alive {
 			ink = sc.dim
 		}
-		// Couch distance: full-size text unless the table is squeezed into two columns.
-		name, bold := f.body, f.bodyBold
-		if p.twoCol {
-			name, bold = f.label, f.labelBold
-		}
 		x := r.x + in + 2*dr + sp
-		drawText(dst, seatNames[i], bold, x, r.cy(), text.AlignStart, ink)
-		if !p.twoCol {
-			drawText(dst, seatLabels[seat], name, x+44*u, r.cy(), text.AlignStart, ink)
+		if p.table.tags {
+			drawText(dst, seatNames[i], bold, x, r.cy(), text.AlignStart, ink)
+		}
+		if p.table.names {
+			drawText(dst, seatLabels[seat], name, x+p.typeDX, r.cy(), text.AlignStart, ink)
 		}
 		if alive {
 			drawText(dst, p.orbS[i], bold, r.right()-in, r.cy(), text.AlignEnd, ink)
