@@ -202,7 +202,7 @@ type demo struct {
 }
 
 // demoStrategies are picked for lively, chain-heavy play.
-var demoStrategies = [4]ai.Strategy{ai.Gambler, ai.Conqueror, ai.Spy, ai.Jester}
+var demoStrategies = [4]ai.Strategy{ai.Gambler, ai.Raider, ai.Spy, ai.Jester}
 
 func newDemo(cols, rows int, seed uint64) *demo {
 	d := &demo{cols: cols, rows: rows, rng: core.NewRNG(seed)}

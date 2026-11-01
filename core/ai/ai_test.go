@@ -2,6 +2,7 @@ package ai
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -105,10 +106,10 @@ func TestChooseOnFinishedGame(t *testing.T) {
 	}
 }
 
-// TestTakesTheWin: exploding a's primed edge cell captures all of b. Spy (deliberate noise), Conqueror
+// TestTakesTheWin: exploding a's primed edge cell captures all of b. Spy (deliberate noise), Raider
 // (opening mode) and Jester can miss it, as in the prototype.
 func TestTakesTheWin(t *testing.T) {
-	for _, s := range []Strategy{Gambler, Sentinel, Architect, Voyager, Tactician} {
+	for _, s := range []Strategy{Gambler, Warden, Mason, Voyager, Tactician} {
 		for seed := range uint64(20) {
 			g := grid(t, 2, 0,
 				". a2 b2 . .",
@@ -142,7 +143,7 @@ func TestVoyagerTakesBigCapture(t *testing.T) {
 }
 
 func TestOpensInACorner(t *testing.T) {
-	for _, s := range []Strategy{Sentinel, Conqueror} {
+	for _, s := range []Strategy{Warden, Raider} {
 		for seed := range uint64(20) {
 			g, _ := core.NewGame(7, 7, 2)
 			var b Bot
@@ -153,29 +154,29 @@ func TestOpensInACorner(t *testing.T) {
 	}
 }
 
-// TestConquerorRetreats: a's only cell is next to b's primed cell, so Conqueror plays as far from b as it can.
-func TestConquerorRetreats(t *testing.T) {
+// TestRaiderRetreats: a's only cell is next to b's primed cell, so Raider plays as far from b as it can.
+func TestRaiderRetreats(t *testing.T) {
 	g := grid(t, 2, 0,
 		"a1 b2 . . .",
 		".  .  . . .",
 		".  .  . . .",
 	)
 	var b Bot
-	cell := b.Choose(g, Conqueror, 1, DefaultBudget)
+	cell := b.Choose(g, Raider, 1, DefaultBudget)
 	if c, r := g.Geo.Coords(cell); c != 4 || r != 2 {
 		t.Errorf("retreated to %d,%d, want the far corner 4,2", c, r)
 	}
 }
 
-// TestSentinelExplodesIntoProvoker: an enemy touches a's primed edge cell, so Sentinel explodes it.
-func TestSentinelExplodesIntoProvoker(t *testing.T) {
+// TestWardenExplodesIntoProvoker: an enemy touches a's primed edge cell, so Warden explodes it.
+func TestWardenExplodesIntoProvoker(t *testing.T) {
 	g := grid(t, 2, 0,
 		". a2 b1 . .",
 		". .  .  . .",
 		". .  .  . b1",
 	)
 	var b Bot
-	if cell := b.Choose(g, Sentinel, 1, DefaultBudget); cell != g.Geo.Index(1, 0) {
+	if cell := b.Choose(g, Warden, 1, DefaultBudget); cell != g.Geo.Index(1, 0) {
 		t.Errorf("chose %d, want the primed cell %d", cell, g.Geo.Index(1, 0))
 	}
 }
@@ -188,5 +189,311 @@ func TestInsertTop(t *testing.T) {
 	want := []scored{{9, 5}, {5, 1}, {5, 3}, {3, 2}}
 	if fmt.Sprint(list) != fmt.Sprint(want) {
 		t.Errorf("got %v, want %v", list, want)
+	}
+}
+
+func TestOpeningKeepsAFallback(t *testing.T) {
+	for s := range NumStrategies {
+		if s == Jester || s == Voyager {
+			continue
+		}
+		for _, budget := range []int{0, 1, DefaultBudget} {
+			for seed := range uint64(20) {
+				for _, first := range []bool{true, false} {
+					g := grid(t, 3, 0,
+						"a1 b2 . . .",
+						".  .  . . .",
+						".  .  . . c1",
+					)
+					if first {
+						g.Owner[0], g.Count[0], g.Orbs[0] = core.NoOwner, 0, 0
+						g.Played &^= 1
+					}
+					before := g.Hash()
+					var b Bot
+					cell := b.Choose(g, s, seed, budget)
+					if g.Hash() != before {
+						t.Fatal("Choose changed its input")
+					}
+					n := g.Clone()
+					if err := n.Simulate(cell); err != nil {
+						t.Fatal(err)
+					}
+					if !n.Over() && n.Turn == 1 {
+						// The next player can explode the edge cell and capture the corner.
+						if err := n.Simulate(g.Geo.Index(1, 0)); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if !n.Alive(0) {
+						t.Fatalf("%v budget %d seed %d first=%v: move %d loses its last foothold", s, budget, seed, first, cell)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestOpeningAvoidsNearbyUnprimedEnemies(t *testing.T) {
+	for s := range NumStrategies {
+		if s == Jester || s == Voyager {
+			continue
+		}
+		for seed := range uint64(20) {
+			g := grid(t, 2, 1,
+				"a1 . . . .",
+				".  . . . .",
+				".  . . . .",
+				".  . . . .",
+				".  . . . .",
+			)
+			g.Played &^= 1 << 1
+			var b Bot
+			cell := b.Choose(g, s, seed, DefaultBudget)
+			c, r := g.Geo.Coords(cell)
+			if c+r < 3 {
+				t.Errorf("%v seed %d: first orb at %d,%d is too close to the enemy with no backup", s, seed, c, r)
+			}
+		}
+	}
+}
+
+func TestTacticianRecognizesEliminationAtHorizon(t *testing.T) {
+	g := grid(t, 3, 0, "a1 b2 .", ". . .", ". . c1")
+	if err := g.Simulate(g.Geo.Index(0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Simulate(g.Geo.Index(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	// The corner was lost, but a's second cell also falls in the chain.
+	if g.Alive(0) || g.Over() {
+		t.Fatal("fixture must eliminate a while b and c remain")
+	}
+	b := Bot{me: 0}
+	tactic := tactic{b: &b}
+	if score, complete := tactic.minimax(g, 0, -1e12, 1e12, 2); !complete || score > -1e6 {
+		t.Errorf("eliminated player scored %v at the search horizon", score)
+	}
+}
+
+func TestOpeningFallbackSurvivesAChain(t *testing.T) {
+	for s := range NumStrategies {
+		if s == Jester || s == Voyager {
+			continue
+		}
+		for _, budget := range []int{0, 1, DefaultBudget} {
+			for seed := range uint64(20) {
+				g := grid(t, 3, 0,
+					"b1 b2 a2 . . . .",
+					".  .  .  . . . .",
+					".  .  .  . . . c1",
+				)
+				var b Bot
+				cell := b.Choose(g, s, seed, budget)
+				if err := g.Simulate(cell); err != nil {
+					t.Fatal(err)
+				}
+				if !g.Over() && g.Turn == 1 {
+					if err := g.Simulate(0); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if !g.Alive(0) {
+					t.Fatalf("%v budget %d seed %d: move %d leaves every base in the same enemy chain", s, budget, seed, cell)
+				}
+			}
+		}
+	}
+}
+
+func TestTacticianMinimaxMatchesFullSearch(t *testing.T) {
+	positions := []*core.Game{
+		grid(t, 2, 0, "a1 . b1", ". a2 .", ". . b1"),
+		grid(t, 3, 0, "a1 b2 .", ". . .", ". . c1"),
+		grid(t, 4, 1, "a1 b2 .", ". . .", "c1 . ."), // player d has already been eliminated
+	}
+	// Exhaustive reference: enumerate every legal move, with all other players opposing a.
+	var full func(*core.Game, *tactic, int, int) float64
+	full = func(g *core.Game, tactic *tactic, depth, ply int) float64 {
+		if depth == 0 || g.Over() || !g.Alive(int(tactic.b.me)) {
+			return tactic.evaluate(g, ply)
+		}
+		best := 1e12
+		if g.Turn == int(tactic.b.me) {
+			best = -1e12
+		}
+		for _, cell := range g.LegalMoves(nil) {
+			n := g.Clone()
+			if err := n.Simulate(cell); err != nil {
+				t.Fatal(err)
+			}
+			v := full(n, tactic, depth-1, ply+1)
+			if g.Turn == int(tactic.b.me) {
+				best = max(best, v)
+			} else {
+				best = min(best, v)
+			}
+		}
+		return best
+	}
+	for i, g := range positions {
+		for depth := 1; depth <= 3; depth++ {
+			b := Bot{me: 0, left: 100000}
+			tactic := tactic{b: &b, branch: g.Geo.Cells()}
+			want := full(g, &tactic, depth, 0)
+			got, complete := tactic.minimax(g, depth, -1e12, 1e12, 0)
+			if !complete || got != want {
+				t.Errorf("position %d depth %d: minimax = %v (complete=%v), exhaustive search = %v", i, depth, got, complete, want)
+			}
+		}
+	}
+}
+
+func TestTacticianKeepsLastCompleteDepth(t *testing.T) {
+	g := grid(t, 2, 0, "a1 . .", ". . .", ". . b1")
+	rootMoves := len(g.LegalMoves(nil))
+	var shallow, interrupted Bot
+	want := shallow.Choose(g, Tactician, 1, rootMoves)
+	got := interrupted.Choose(g, Tactician, 1, rootMoves+1)
+	if got != want {
+		t.Errorf("unfinished second depth changed move from %d to %d", want, got)
+	}
+}
+
+func TestTacticianTerminalScores(t *testing.T) {
+	var b Bot
+	tactic := tactic{b: &b}
+	g, _ := core.NewGame(5, 5, 3)
+	if err := g.Simulate(0); err != nil {
+		t.Fatal(err)
+	}
+	if v, complete := tactic.minimax(g, 0, -1e12, 1e12, 1); !complete || v > tacticWin/2 {
+		t.Fatalf("first move with unplayed opponents scored as a win: %v", v)
+	}
+	for _, winner := range []int8{0, 1} {
+		g.Winner = winner
+		v, complete := tactic.minimax(g, 0, -1e12, 1e12, 3)
+		want := tacticWin - 3
+		if winner != b.me {
+			want = -want
+		}
+		if !complete || v != want {
+			t.Errorf("winner %d at exhausted horizon: got %v, want %v", winner, v, want)
+		}
+	}
+}
+
+func TestCrowdedOpeningUsesASafeCellWithinTheBuffer(t *testing.T) {
+	g := grid(t, 3, 0, "a1 b2 .", ". . .", ". . c1")
+	var b Bot
+	// No cell is three steps from every enemy, but the bottom-left cell survives b's chain.
+	b.g, b.geo, b.me = g, g.Geo, 0
+	b.moves = g.LegalMoves(nil)
+	cell := b.openingMove(g.Geo.Index(0, 1))
+	if err := g.Simulate(cell); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Simulate(g.Geo.Index(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if !g.Alive(0) {
+		t.Fatalf("move %d lost a even though a safe retreat exists", cell)
+	}
+}
+
+func TestOpeningThreatsIncludeConvergingChains(t *testing.T) {
+	g := grid(t, 3, 0,
+		"b1 a2 . . .",
+		"a2 a2 . . .",
+		".  .  . . .",
+		".  .  . . .",
+		".  .  . . c1",
+	)
+	var b Bot
+	b.g, b.geo, b.me = g, g.Geo, 0
+	// Two branches each send one orb into a's centre, which explodes into the proposed reserve.
+	if !b.openingThreats(g, -1)[g.Geo.Index(1, 2)] {
+		t.Fatal("missed the threat from converging chains")
+	}
+}
+
+func TestOpeningSurvivalLimitedToOneCellTwoOrbs(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		rows []string
+		want bool
+	}{
+		{"first move", []string{". . .", ". . .", ". . b1"}, true},
+		{"one orb", []string{"a1 . .", ". . .", ". . b1"}, true},
+		{"one cell two orbs", []string{". . .", ". a2 .", ". . b1"}, true},
+		{"one cell three orbs", []string{". . .", ". a3 .", ". . b1"}, false},
+		{"two cells two orbs", []string{"a1 . .", "a1 . .", ". . b1"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			g := grid(t, 2, 0, test.rows...)
+			b := Bot{g: g, me: 0}
+			if got := b.fragileOpening(); got != test.want {
+				t.Errorf("survival eligible = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestOpeningThreatsScratchDoesNotAllocate(t *testing.T) {
+	g, _ := core.NewGame(core.MaxSize, core.MaxSize, 2)
+	if err := g.Simulate(0); err != nil {
+		t.Fatal(err)
+	}
+	b := Bot{geo: g.Geo, me: 1}
+	if allocations := testing.AllocsPerRun(10, func() { b.openingThreats(g, -1) }); allocations != 0 {
+		t.Errorf("threat detection allocated %v times after warming its existing buffers", allocations)
+	}
+}
+
+func TestJesterKeepsRandomOpening(t *testing.T) {
+	g := grid(t, 3, 0, "a1 b2 . . .", ". . . . .", ". . . . c1")
+	// Seed 3 selects an exposed cell; Jester must keep its random choice.
+	for _, budget := range []int{0, 1, DefaultBudget} {
+		var b Bot
+		if cell, want := b.Choose(g, Jester, 3, budget), g.Geo.Index(0, 1); cell != want {
+			t.Errorf("budget %d: chose %d, want original random move %d", budget, cell, want)
+		}
+	}
+}
+
+func TestVoyagerRewardsRespectTurnOrder(t *testing.T) {
+	g := grid(t, 2, 0, "a1 b2 . . .", ". . . . .", ". . . . .")
+	first := positionShares(g)
+	g.Turn = 1
+	second := positionShares(g)
+	if first[0] <= second[0] {
+		t.Errorf("ready corner scored %v moving first and %v moving second", first[0], second[0])
+	}
+}
+
+func TestVoyagerRewardBoundsAndOutcomes(t *testing.T) {
+	empty, _ := core.NewGame(5, 5, 3)
+	eliminated := grid(t, 3, 1, ". b1 .", ". . .", ". . c1")
+	won := grid(t, 3, 1, ". b1 .", ". . .", ". . c1")
+	won.Winner = 1
+	for _, g := range []*core.Game{empty, eliminated, won} {
+		values := positionShares(g)
+		total := 0.0
+		for p := 0; p < g.Players; p++ {
+			if math.IsNaN(values[p]) || values[p] < 0 || values[p] > 1 {
+				t.Fatalf("player %d has invalid MCTS reward %v", p, values[p])
+			}
+			total += values[p]
+		}
+		if math.Abs(total-1) > 1e-12 {
+			t.Errorf("rewards sum to %v", total)
+		}
+	}
+	if got := positionShares(eliminated)[0]; got != 0 {
+		t.Errorf("eliminated player received %v", got)
+	}
+	if got := positionShares(won); got[1] != 1 || got[0] != 0 || got[2] != 0 {
+		t.Errorf("terminal rewards = %v", got)
 	}
 }

@@ -8,23 +8,22 @@ import (
 	"orbitrix/core"
 )
 
-// Strategy is an AI personality. The order matches the prototype's AI_TYPES, which is also the start screen's
-// dropdown order.
+// Strategy is an AI personality, ordered from easiest to hardest for the setup dropdown.
 type Strategy uint8
 
 const (
 	Jester Strategy = iota
-	Gambler
-	Sentinel
-	Conqueror
+	Mason
+	Raider
+	Warden
 	Spy
-	Architect
-	Voyager
+	Gambler
 	Tactician
+	Voyager
 	NumStrategies
 )
 
-var names = [NumStrategies]string{"jester", "gambler", "sentinel", "conqueror", "spy", "architect", "voyager", "tactician"}
+var names = [NumStrategies]string{"jester", "mason", "raider", "warden", "spy", "gambler", "tactician", "voyager"}
 
 func (s Strategy) String() string {
 	if s < NumStrategies {
@@ -33,7 +32,7 @@ func (s Strategy) String() string {
 	return fmt.Sprintf("Strategy(%d)", s)
 }
 
-// Parse returns the strategy with the given prototype name.
+// Parse returns the strategy with the given name.
 func Parse(name string) (Strategy, bool) {
 	i := slices.Index(names[:], name)
 	return Strategy(i), i >= 0
@@ -69,7 +68,7 @@ type Bot struct {
 	bets  [3][]bet
 	cands []int
 
-	cluster  []int32 // Conqueror: enemy cluster id of each cell, -1 if none
+	cluster  []int32 // Raider: enemy cluster id of each cell, -1 if none
 	clusters []cluster
 
 	tree  []mctsNode // Voyager: search tree
@@ -94,22 +93,40 @@ func (b *Bot) Choose(g *core.Game, s Strategy, seed uint64, budget int) int {
 	}
 	b.g, b.geo, b.me, b.rng, b.left, b.boom = g, g.Geo, int8(g.Turn), core.NewRNG(seed), budget, 0
 	switch s {
-	case Gambler:
-		return b.gambler()
-	case Sentinel:
-		return b.sentinel()
-	case Conqueror:
-		return b.conqueror()
-	case Spy:
-		return b.spy()
-	case Architect:
-		return b.architect()
 	case Voyager:
 		return b.voyager()
 	case Tactician:
 		return b.tactician()
+	case Jester:
+		return b.jester()
 	}
-	return b.jester()
+	fragile := b.fragileOpening()
+	// Keep one simulation for checking an opening counterattack after the strategy spends its budget.
+	reserve := 0
+	if b.left > 0 && fragile {
+		reserve = 1
+		b.left--
+	}
+	var cell int
+	switch s {
+	case Gambler:
+		cell = b.gambler()
+	case Warden:
+		cell = b.warden()
+	case Raider:
+		cell = b.raider()
+	case Spy:
+		cell = b.spy()
+	case Mason:
+		cell = b.mason()
+	default:
+		return b.jester()
+	}
+	b.left += reserve
+	if fragile {
+		return b.openingMove(cell)
+	}
+	return cell
 }
 
 // tally returns every player's orbs after the player to move plays cell: the prototype's simulate_after_move,

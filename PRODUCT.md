@@ -35,8 +35,8 @@ have, fill empty seats with AI, and enjoy following a chain reaction as it plays
 
 - **Huge, chaotic games:** up to 12 players on boards up to 40×40, with long cascading chains that still resolve
   exactly and play back wave by wave.
-- **AI personalities:** eight bots with distinct play styles (jester, gambler, sentinel, conqueror, spy, architect,
-  voyager, tactician) that can take any seat or be played against alone.
+- **AI personalities:** eight bots with distinct play styles, listed easiest to hardest: Jester, Mason,
+  Raider, Warden, Spy, Gambler, Tactician, Voyager. They can take any seat or be played against alone.
 - **Play together anywhere:** same device, LAN with no internet, or online. Windows, Android and browser clients
   share one room, one rules engine and one protocol.
 - **Tactile feel:** orbs that orbit while idle and turn frantic just before exploding, with pentatonic sound

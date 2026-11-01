@@ -6,17 +6,17 @@ import (
 	"orbitrix/core"
 )
 
-// Conqueror claims corners and edges in the opening, retreats when its last cell is about to fall, and otherwise
+// Raider claims corners and edges in the opening, retreats when its last cell is about to fall, and otherwise
 // scores every move for pressure on the weakest opponent, flanking enemy clusters and comebacks.
 
 const (
-	conquerorSimMax        = 16
-	conquerorLossThreshold = 0.92 // behind the strongest opponent by more than this ratio: comeback mode
+	raiderSimMax        = 16
+	raiderLossThreshold = 0.92 // behind the strongest opponent by more than this ratio: comeback mode
 )
 
 type cluster struct{ total, size int32 }
 
-func (b *Bot) conqueror() int {
+func (b *Bot) raider() int {
 	g := b.g
 	var territory [core.MaxPlayers]int
 	owned, myCell := 0, -1
@@ -34,7 +34,7 @@ func (b *Bot) conqueror() int {
 	enemyDist := b.dist[0]
 
 	if myTerr == 1 && b.threats(myCell) >= 1 {
-		return b.conquerorRetreat(myCell, enemyDist)
+		return b.raiderRetreat(myCell, enemyDist)
 	}
 
 	// Opening. The prototype first looks up move counts on its Game, which keeps none, so this heuristic always decides.
@@ -55,9 +55,9 @@ func (b *Bot) conqueror() int {
 		opening = true
 	}
 	if opening {
-		return b.conquerorOpening()
+		return b.raiderOpening()
 	}
-	return b.conquerorAttack(territory)
+	return b.raiderAttack(territory)
 }
 
 // suicidal reports whether an orb at i would leave it one short of exploding (or exploding) next to two or more
@@ -66,9 +66,9 @@ func (b *Bot) suicidal(i int) bool {
 	return b.count(i)+1 >= b.capacity(i)-1 && b.threats(i) >= 2
 }
 
-// conquerorRetreat plays away from the enemy when our only cell is under threat: farthest from enemies first, then
+// raiderRetreat plays away from the enemy when our only cell is under threat: farthest from enemies first, then
 // empty cells over our own, then fuller cells; moves with no primed enemy neighbour before the rest.
-func (b *Bot) conquerorRetreat(dying int, enemyDist []int16) int {
+func (b *Bot) raiderRetreat(dying int, enemyDist []int16) int {
 	var safeKey, fallKey [3]int
 	safe, fall := -1, -1
 	for _, m := range b.moves {
@@ -99,8 +99,8 @@ func (b *Bot) conquerorRetreat(dying int, enemyDist []int16) int {
 	return b.pick(b.moves)
 }
 
-// conquerorOpening claims corners, then edges, then safe cells next to ours.
-func (b *Bot) conquerorOpening() int {
+// raiderOpening claims corners, then edges, then safe cells next to ours.
+func (b *Bot) raiderOpening() int {
 	list := b.list[:0]
 	for _, m := range b.moves {
 		if b.corner(m) {
@@ -164,10 +164,10 @@ func (b *Bot) conquerorOpening() int {
 	return b.pick(b.moves)
 }
 
-// conquerorAttack scores every reasonable move: preying on the weakest opponent, building next to our cells,
+// raiderAttack scores every reasonable move: preying on the weakest opponent, building next to our cells,
 // pressing nearby enemy mass, flanking between enemy clusters, and in comeback mode closing on the biggest cluster.
-// It simulates the first conquerorSimMax promising moves.
-func (b *Bot) conquerorAttack(territory [core.MaxPlayers]int) int {
+// It simulates the first raiderSimMax promising moves.
+func (b *Bot) raiderAttack(territory [core.MaxPlayers]int) int {
 	g, me := b.g, b.me
 	myTotal := g.Orbs[me]
 
@@ -205,7 +205,7 @@ func (b *Bot) conquerorAttack(territory [core.MaxPlayers]int) int {
 	}
 
 	b.findClusters()
-	losing := strongestTotal > 0 && float64(myTotal) < float64(strongestTotal)*conquerorLossThreshold
+	losing := strongestTotal > 0 && float64(myTotal) < float64(strongestTotal)*raiderLossThreshold
 	comeback := -1
 	if losing && len(b.clusters) > 0 {
 		// The biggest cluster by orbs, then by cells, then at random.
@@ -281,7 +281,7 @@ func (b *Bot) conquerorAttack(territory [core.MaxPlayers]int) int {
 		}
 
 		var gain, loss int32
-		if (!own || c >= cp-1 || score > 240 || enemies >= 1) && sims < conquerorSimMax {
+		if (!own || c >= cp-1 || score > 240 || enemies >= 1) && sims < raiderSimMax {
 			sims++
 			if t, ok := b.tally(m); ok {
 				if b.wins(t) {

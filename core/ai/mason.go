@@ -1,10 +1,10 @@
 package ai
 
-// Architect builds its own cells up towards capacity to set up chain reactions.
+// Mason builds its own cells up towards capacity to set up chain reactions.
 
-const architectMaxSims = 25
+const masonMaxSims = 25
 
-func (b *Bot) architect() int {
+func (b *Bot) mason() int {
 	// Candidates: up to 15 of our cells, then 10 empty cells next to ours or on the border, then 5 others. The
 	// prototype's enemy-cell options can't match a legal move.
 	cands := b.cands[:0]
@@ -34,7 +34,7 @@ func (b *Bot) architect() int {
 	b.cands = cands
 
 	me, orbs, othersBefore := b.me, b.g.Orbs, b.others(b.g.Orbs)
-	maxSims, sims := min(architectMaxSims, len(cands)), 0
+	maxSims, sims := min(masonMaxSims, len(cands)), 0
 	b.ties = b.ties[:0]
 	top := 0.0
 	for _, m := range cands {

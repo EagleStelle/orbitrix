@@ -56,7 +56,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		a.sc, a.set.Marks = &schemes[themeDark], true
 	}
 	a.set.Marks = a.set.Marks || c.marks
-	a.set.seats[1], _ = parseSeat("conqueror")
+	a.set.seats[1], _ = parseSeat("raider")
 	if c.cols > 0 {
 		a.set.Cols, a.set.Rows = c.cols, c.rows
 	}

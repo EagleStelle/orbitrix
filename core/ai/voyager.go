@@ -7,17 +7,17 @@ import (
 )
 
 // Voyager runs Monte Carlo tree search. Each iteration descends the tree by UCT, adds one node, plays a short
-// greedy-random rollout and backs up every player's orb share; with several players each node scores the player who
+// greedy-random rollout and backs up every player's position share; with several players each node scores the player who
 // moved into it (max^n style). Nodes only consider a shortlist of promising moves, so the tree grows deep instead of
 // wide on big boards. An iteration costs one budget unit (its board copy and shortlist scan, ~10 µs on 40×40) plus
 // the usual charge for chain explosions.
 
 const (
-	voyagerRootMoves  = 24  // root children
-	voyagerInnerMoves = 10  // children of deeper nodes
-	voyagerRollout    = 8   // plies played after leaving the tree
-	voyagerSamples    = 4   // random legal cells the rollout policy compares
-	voyagerExplore    = 0.5 // UCT exploration constant; rewards are orb shares in [0, 1]
+	voyagerRootMoves  = 24   // root children
+	voyagerInnerMoves = 10   // children of deeper nodes
+	voyagerRollout    = 4    // plies played after leaving the tree
+	voyagerSamples    = 4    // random legal cells compared in each rollout
+	voyagerExplore    = 0.25 // UCT exploration constant
 )
 
 type mctsNode struct {
@@ -66,21 +66,12 @@ func (b *Bot) voyager() int {
 		}
 
 		// Back up.
-		var total int32
-		for p := 0; p < sim.Players; p++ {
-			total += sim.Orbs[p]
-		}
+		values := positionShares(sim)
 		for _, k := range path {
 			n := &tree[k]
 			n.visits++
-			switch {
-			case k == 0: // the root needs only its visit count
-			case sim.Over():
-				if sim.Winner == n.mover {
-					n.reward++
-				}
-			default:
-				n.reward += float64(sim.Orbs[n.mover]) / float64(total)
+			if k != 0 { // the root needs only its visit count
+				n.reward += values[n.mover]
 			}
 		}
 		b.path = path
@@ -96,6 +87,59 @@ func (b *Bot) voyager() int {
 		}
 	}
 	return int(tree[best].cell)
+}
+
+// positionShares values a rollout cutoff by material, territory, readiness and exposure.
+// Finished games use exact win/loss rewards; eliminated players always receive zero.
+func positionShares(g *core.Game) (values [core.MaxPlayers]float64) {
+	if g.Over() {
+		values[g.Winner] = 1
+		return values
+	}
+	var order [core.MaxPlayers]int
+	for p := 0; p < g.Players; p++ {
+		order[p] = p - g.Turn
+		if order[p] < 0 {
+			order[p] += g.Players
+		}
+	}
+	for i, p := range g.Owner {
+		if p == core.NoOwner {
+			continue
+		}
+		c, cp := int(g.Count[i]), int(g.Geo.Cap[i])
+		value := 3*c + 4
+		if c+1 >= cp {
+			value += 3
+		}
+		if cp == 2 {
+			value += 2
+		}
+		for _, j := range g.Geo.Neighbours(i) {
+			if q := g.Owner[j]; q != core.NoOwner && q != p && g.Count[j]+1 >= g.Geo.Cap[j] {
+				// A ready cell can capture its attacker first when its owner's turn comes sooner.
+				if c+1 >= cp && order[p] < order[q] {
+					continue
+				}
+				value -= 2*c + 2
+			}
+		}
+		values[p] += float64(max(1, value))
+	}
+	total := 0.0
+	for p := 0; p < g.Players; p++ {
+		total += values[p]
+	}
+	if total == 0 {
+		for p := 0; p < g.Players; p++ {
+			values[p] = 1 / float64(g.Players)
+		}
+		return values
+	}
+	for p := 0; p < g.Players; p++ {
+		values[p] /= total
+	}
+	return values
 }
 
 // selectChild returns the first unvisited child of node (in shortlist order), or else the one with the best UCT score.
@@ -196,8 +240,7 @@ func (b *Bot) shortlist(g *core.Game, k int) []scored {
 	return list
 }
 
-// rolloutMove plays fast and roughly sensibly: the best of a few random legal cells, preferring an explosion next to
-// an enemy, then any explosion, then building on our own cell, then an empty cell.
+// rolloutMove compares a few random legal cells, preferring captures, explosions and building our cells.
 func (b *Bot) rolloutMove(g *core.Game) int {
 	p, n := int8(g.Turn), uint64(len(g.Owner))
 	best, bestScore, found := -1, -1, 0

@@ -2,17 +2,17 @@ package ai
 
 import "math"
 
-// Sentinel is defensive and reactive: it answers enemies that touch its cells, then prefers safe corners, then
+// Warden is defensive and reactive: it answers enemies that touch its cells, then prefers safe corners, then
 // edges, then a short simulated search.
 
 const (
-	sentinelSafeBuffer  = 2 // keep this far from enemies unless attacking
-	sentinelTopSim      = 8 // cheap-scored candidates to simulate in the fallback
-	sentinelPrimeDanger = 1 // most primed enemy neighbours a defensive prime may have
+	wardenSafeBuffer  = 2 // keep this far from enemies unless attacking
+	wardenTopSim      = 8 // cheap-scored candidates to simulate in the fallback
+	wardenPrimeDanger = 1 // most primed enemy neighbours a defensive prime may have
 )
 
-func (b *Bot) sentinel() int {
-	if cell, ok := b.sentinelReact(); ok {
+func (b *Bot) warden() int {
+	if cell, ok := b.wardenReact(); ok {
 		return cell
 	}
 
@@ -67,8 +67,8 @@ func (b *Bot) sentinel() int {
 		}
 		_, enemies, _ := b.around(m)
 		score += float64(enemies * 36)
-		if d := int(enemyDist[m]); d < sentinelSafeBuffer {
-			score -= float64(300 + (sentinelSafeBuffer-d)*120)
+		if d := int(enemyDist[m]); d < wardenSafeBuffer {
+			score -= float64(300 + (wardenSafeBuffer-d)*120)
 		}
 		if c+1 == cp-1 && b.threats(m) > 0 {
 			score -= 1000 // priming next to a cell that can pop us
@@ -80,14 +80,14 @@ func (b *Bot) sentinel() int {
 		return b.pick(b.ties)
 	}
 
-	return b.sentinelFallback(enemyDist)
+	return b.wardenFallback(enemyDist)
 }
 
-// sentinelReact answers enemy cells touching ours. The prototype has no move history, so every such cell counts
+// wardenReact answers enemy cells touching ours. The prototype has no move history, so every such cell counts
 // as provoking. Its options A and D target the enemy cell itself, which is never a legal move, so only these remain:
 // B, explode our primed neighbour into it (the prototype simulated first but played it either way), and C, prime a
 // neighbour to punish it if few enemies could pop that neighbour first.
-func (b *Bot) sentinelReact() (int, bool) {
+func (b *Bot) wardenReact() (int, bool) {
 	for e := range b.g.Owner {
 		if !b.enemy(e) {
 			continue
@@ -101,14 +101,14 @@ func (b *Bot) sentinelReact() (int, bool) {
 			}
 		}
 		b.ties = b.ties[:0]
-		low := sentinelPrimeDanger + 1
+		low := wardenPrimeDanger + 1
 		for _, n := range b.nbrs(e) {
 			i := int(n)
 			if !b.mine(i) || b.count(i)+1 != b.capacity(i)-1 {
 				continue
 			}
 			d := b.threats(i)
-			if d > sentinelPrimeDanger || d > low {
+			if d > wardenPrimeDanger || d > low {
 				continue
 			}
 			if d < low {
@@ -123,8 +123,8 @@ func (b *Bot) sentinelReact() (int, bool) {
 	return -1, false
 }
 
-// sentinelFallback cheaply scores every move, then simulates the best few.
-func (b *Bot) sentinelFallback(enemyDist []int16) int {
+// wardenFallback cheaply scores every move, then simulates the best few.
+func (b *Bot) wardenFallback(enemyDist []int16) int {
 	list := b.list[:0]
 	for _, m := range b.moves {
 		c, cp := b.count(m), b.capacity(m)
@@ -152,8 +152,8 @@ func (b *Bot) sentinelFallback(enemyDist []int16) int {
 				score -= 20
 			}
 		}
-		if d := int(enemyDist[m]); d < sentinelSafeBuffer {
-			score -= float64(220 + (sentinelSafeBuffer-d)*60)
+		if d := int(enemyDist[m]); d < wardenSafeBuffer {
+			score -= float64(220 + (wardenSafeBuffer-d)*60)
 		}
 		score += b.rng.Float64() * 0.001
 		list = append(list, scored{score, m})
@@ -164,7 +164,7 @@ func (b *Bot) sentinelFallback(enemyDist []int16) int {
 	me, orbs, othersBefore := b.me, b.g.Orbs, b.others(b.g.Orbs)
 	b.ties = b.ties[:0]
 	top := math.Inf(-1)
-	for _, s := range list[:min(sentinelTopSim, len(list))] {
+	for _, s := range list[:min(wardenTopSim, len(list))] {
 		var score float64
 		t, ok := b.tally(s.cell)
 		if !ok {

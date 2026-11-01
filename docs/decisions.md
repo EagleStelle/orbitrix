@@ -42,68 +42,44 @@ Choices made where the brief or the prototype left room. Newest last.
 
 ## Phase 2
 
-- **The prototype is a local, gitignored copy at `prototype/main.py`**, reference only; it is never pushed.
-- **API:** `ai.Bot.Choose(game, strategy, seed, budget)` returns a cell for the player to move. A `Bot` keeps
-  scratch buffers, so keep one per game or room; it isn't safe for concurrent use. Unknown strategies play like
-  Jester, as the prototype's fallback did. Strategy order follows the prototype's `AI_TYPES`.
-- **No move history.** The prototype's Game has no `move_history`, `last_move`, last mover or per-player move
-  counts, so Sentinel's and Conqueror's `getattr` lookups always fell through to their board-only fallbacks. The
-  port keeps only those fallbacks, which keeps every AI a pure function of the board.
-- **Simulations are exact** (`core.Simulate` on a scratch copy). A move that can't explode is scored without
-  simulating (the mover gains one orb), so only explosive moves cost anything.
-- **Budget = work units per move**, replacing every wall-clock limit. A full simulation (Tactician: a search node)
-  costs 1 unit plus 1 per 512 cells its chains explode (remainders carry over within the move, so many small
-  chains count as fully as one big one); `core.Game.Exploded` reports the count (not part of the hashed or
-  snapshotted state). A flat simulation count wasn't enough: late-game 40×40 chains average ~1,300
-  explosions (max 13,000+) per move, so 1,500 Tactician nodes took 118 ms on a desktop. Measured on a desktop: an
-  explosion costs ~21 ns and a Tactician evaluation of a 40×40 board ~10 µs, so 512 explosions ≈ one evaluation
-  and a unit costs at most ~21 µs. `ai.DefaultBudget` = 1200 units therefore caps a move at ~25 ms on a desktop,
-  which leaves 5–6× headroom for the 150 ms phone target. When the budget runs out, a strategy behaves as the
-  prototype did when `simulate_after_move` returned `None` (Tactician: as when time ran out, scoring the node as a
-  leaf and expanding no further). The prototype's own candidate limits (Sentinel 8, Conqueror 16, Spy 48,
-  Architect 25, Tactician's branch/depth table) are kept as personality.
-- **Dead branches dropped.** Legal moves are never enemy cells, so every "attack an enemy cell" branch is
-  unreachable (Sentinel's options A and D and its enemy-edge scoring, Gambler's attack risk, Architect's enemy
-  candidates, Conqueror's enemy scoring and in-cluster bonus, Tactician's attack scoring).
-  Orbs are conserved and only the mover's colour spreads, so a move's gain is always 1 + the enemy's loss and no
-  opponent ever grows: negative-gain penalties and Architect's trap bonus (`opp > self`)
-  never fire. Sentinel's option B simulated but played the move whatever the result, so it no
-  longer simulates.
-- **Bugs fixed:**
-  - Gambler never incremented `adjacent_enemies`, so exposing a nearly full cell added no risk.
-  - Architect's `limit and a or b or c` applied the simulation limit to the first condition only.
-  - Tactician: its own resolver destroyed leftover orbs and stopped after 100 waves (core rules now); minimax
-    used `(player + 1) % players`, so eliminated players kept moving (core turn order now); it alternated
-    max/min regardless of who moved, so with 3+ players some opponents played as allies (only our turns maximize
-    now); move shortlists for opponents used the root player's enemies, so opponents saw their own cells as
-    threats (enemies are now everyone but the mover); and it "won" on its first move whenever only its orbs were on
-    the board (real win check now).
-- **Voyager is real MCTS** (user request), replacing the prototype's one-ply "MCTS-inspired" scoring:
-  - UCT selection (exploration 0.5; rewards in [0, 1]). With several players each node scores the player who moved
-    into it (max^n style); a finished game rewards 1 to the winner, otherwise every player's orb share.
-  - Each node considers a shortlist of the best moves by a cheap prior (24 at the root, 10 deeper), so the tree
-    grows deep instead of 1,600 wide on 40×40. Unvisited children go in prior order, then UCT.
-  - Rollouts: 8 plies, each the best of 4 random legal cells (explode next to an enemy > explode > build > claim).
-  - An iteration costs one budget unit (board copy + shortlist scan ≈ one unit of work on 40×40) plus the chain
-    charge, so 1,200 iterations at the default budget. The final move is the most visited root child. A root
-    child that wins on the spot is played at once.
-  - No tree reuse between moves: it would make a move depend on the Bot's history, not just the position.
-  - Speed: an exact bound skips the shortlist's neighbour scan for cells that can't make the list (−24% late
-    game), lookup tables replace UCT's log/sqrt/divide, rollouts take four 16-bit samples per random draw, and a
-    salted Fibonacci hash breaks shortlist ties instead of a random draw per cell. 1.0–1.5 ms per move on 9×9,
-    2.2–3.6 ms on 40×40 (benchmark positions), no allocations once warm.
-- **Randomness** goes through the seeded `core.RNG`. Python's `sort(key=(…, random()))` tie-breaks became a
-  uniform choice among the tied moves (same distribution); stable sorts keep Python's tie order elsewhere.
-- **Distances** (Sentinel's buffer, Conqueror's network/enemy/comeback distances) come from one breadth-first
-  search from all source cells, which equals the prototype's all-pairs Manhattan minimum in O(cells).
-- **Tournament (desktop, `-workers 4`):** worst single move on 40×40 21.0 ms (Voyager; p99 14.8 ms, avg 6.8 ms),
-  Tactician 19.5 ms, Gambler 17.6 ms; everything else ≤ 6.1 ms. Overall win rates on 9×9 / 20×20 / 40×40:
-  Voyager 98 / 100 / 100 %, Tactician 81 / 43 / 50 %, Gambler 42 / 74 / 86 %, Spy 58 / 57 / 50 %, Conqueror
-  46 / 47 / 50 %, Sentinel 39 / 39 / 43 %, Architect 27 / 24 / 14 %, Jester 10 / 16 / 7 %. Windows' clock ticks in
-  ~0.5 ms steps, so sub-millisecond p99s read as 0 or 0.5; outliers of ~10 ms even for Jester are scheduler noise.
-- **Faithful quirks kept:** Tactician scores the whole search with the root position's density; Spy picks among its
-  top three 12% of the time; a Gambler on a hot streak with no big bet falls back to a random explosive cell;
-  Conqueror's opening mode ignores wins.
+- **Reference prototype:** `prototype/main.py` is a local, gitignored reference for rules and personality behaviour.
+- **AI dropdown order, easiest to hardest:** Jester, Mason, Raider, Warden, Spy, Gambler, Tactician, Voyager.
+  Strategy names are also the accepted API names and saved seat values.
+- **Deterministic AI API:** `ai.Bot.Choose(game, strategy, seed, budget)` returns a legal cell for the player to
+  move. The result depends on those inputs, so saved positions and seeded games are reproducible. A `Bot` reuses
+  scratch buffers; keep one per game or room and use it sequentially. Unknown strategies play like Jester.
+- **Shared rules engine:** search uses exact `core.Simulate` results on scratch copies. A heuristic move that cannot
+  explode has a known outcome of one added orb and needs no simulation.
+- **Bounded work:** all strategies use the same native budget of 1,200 units. Each full heuristic simulation,
+  Tactician search node or Voyager iteration costs one unit, plus one per 512 cell explosions. Explosion remainders
+  carry across the move so many small chains count fully. Work units keep the search deterministic and account for
+  the cost of long chains. Browser clients scale the same limit down on large boards to keep drawing responsive.
+- **Distinct heuristic personalities:** Gambler, Warden, Raider, Spy and Mason retain their own scoring,
+  candidate limits and seeded randomness. Shared survival protection applies only to the first placement or a
+  position with at most one cell and two orbs, so normal risk preferences determine the rest of their play.
+  Eligibility is checked once per move. The strategy proposes a cell, then the survival check may choose a safe
+  foothold at least three steps from enemies and outside their primed chains. One work unit is reserved to assess
+  an explosive counterattack with the rules engine.
+- **Jester chooses uniformly among legal moves.** Its random personality bypasses shared survival protection.
+- **Voyager uses Monte Carlo tree search:** UCT selection, expansion, stochastic rollouts and mean-reward
+  backpropagation. Its shortlist contains up to 24 root moves and 10 deeper moves to give large-board searches
+  useful depth. Rollouts cover four plies, each comparing four sampled legal cells, with UCT exploration 0.25.
+  Cutoff rewards value material, territory, readiness, corners and exposure in turn order. The most visited root
+  move is selected. Each search starts from the current board to preserve independence from earlier bot calls.
+- **Tactician uses alpha-beta minimax with iterative deepening:** its own turns maximize its score and every
+  opponent minimizes it, following the rules engine's turn order and eliminations. Search considers up to 24 root
+  candidates, eight inner candidates and sixteen plies. A completed depth supplies the answer if work runs out;
+  fully evaluated one-ply moves provide the initial fallback.
+- **Terminal outcomes outrank positional scores:** both searches use the rules engine's winner and player-liveness
+  state. Elimination is a loss even while other players continue. Opponents who have not placed their first orb
+  are still alive. MCTS terminal rewards are exactly one for the winner and zero for everyone else.
+- **Bounded scratch memory:** board copies, move lists, queues and search buffers are reused. Survival chain
+  estimates use a fixed local byte array to count incoming orbs, including converging branches, without allocating
+  a retained buffer on the bot. Each threatened cell propagates once, keeping the opening estimate bounded.
+- **Nearest-cell distances use multi-source breadth-first search.** A single grid traversal gives Manhattan
+  distances in O(cells), supporting the 40×40 board limit.
+- **Seeded randomness:** personality noise, rollout sampling and tie-breaking use `core.RNG`. Stable score ordering
+  preserves board order where a strategy has no random tie-break.
 
 ## Phase 3
 
@@ -419,5 +395,5 @@ Choices made where the brief or the prototype left room. Newest last.
   seconds, and the board clock stayed at 216 throughout pause before advancing to 936 after resume. This checks
   the Android runtime and rendering path, not a physical phone's GPU speed or thermal limits.
 - **Web AI budget:** Go in a browser has one thread, so an AI that is thinking holds up drawing. On web builds, boards
-  bigger than the largest preset (Floor, 234 cells) get `ai.DefaultBudget × 234 / cells` work units per move (192 on
+  bigger than the largest preset (Floor, 234 cells) get `ai.DefaultBudget × 234 / cells` work units per move (175 on
   40×40); preset boards keep the full budget.
