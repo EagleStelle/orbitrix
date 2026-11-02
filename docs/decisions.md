@@ -356,6 +356,47 @@ Choices made where the brief or the prototype left room. Newest last.
 - **Phases 5–8 rewritten** in CLAUDE.md: Phase 5 transports, hub, signaling and Docker; Phase 6 online screens and
   host safeguards; Phase 7 LAN on `ws`; Phase 8 NAS deploy, signed Android builds and downloads.
 
+## Host password and abuse guards (2026-11-02, before Phase 5)
+
+- **Online hosting needs a host password** (user decision). `HOST_PASSWORD` is one shared secret in the server's env,
+  with no accounts and no database. Without it, anyone who found the public URL could create rooms and get TURN
+  credentials, and TURN is the only metered Cloudflare service. If the variable is unset, hosting is refused.
+  Joining still needs only the room code and host approval, and LAN needs no password. This replaces the brief's
+  earlier "no accounts, passwords or invite codes" line.
+- **No lockouts** (user requirement, non-negotiable). CGNAT puts many people behind one public IP, so a stranger's
+  failures must never lock a friend out. A correct password or room code always passes. Brute force fails on the
+  password's length (random, 20+ characters, enforced at startup). Wrong attempts only slow their own socket and
+  close it after 3 failures, and per-IP caps exist only against raw floods. This replaces the first draft's limit of
+  5 failed passwords per IP per 10 minutes and its per-IP room cap.
+- **Abuse and cost guards written into CLAUDE.md §6:** session-length TURN TTLs, a per-room credential cap,
+  revocation on kick, leave, grace expiry and room close, room and pending-approval caps, socket limits, a
+  tunnel-only container with no published port, an Origin check, no secrets in logs, and a Cloudflare billing
+  alert.
+- **Rate limiting in two layers** (user request: standard practice, bots must neither flood signaling nor slow the
+  site). At the edge, Cloudflare's free plan gives automatic DDoS protection, Cache Rules that serve the website
+  from the edge, WAF custom rules that allow only known paths and methods, and one rate limiting rule on
+  `/signal`. Bot Fight Mode is off because it can't be skipped for a path and would challenge native clients. At the
+  origin, token buckets are keyed by trust (anonymous per IP, authenticated per room), with socket caps, load
+  shedding and `http.Server` timeouts. The no-lockout rule still holds at the origin. The one gap left is a bot
+  flooding from a friend's exact carrier IP: the edge then blocks new `/signal` connections from that IP while the
+  flood lasts. Closing it needs per-client counting (Cloudflare Business or Enterprise).
+- **Bot defences reviewed** (the user asked which industry techniques fit).
+  - **Adopted:**
+    - A Cloudflare WAF rule that keeps Tor and large datacenter ASNs off `/signal`.
+    - Adaptive proof of work in our own signaling protocol. It is the only challenge that works for native and web
+      clients alike, and it slows floods without blocking anyone.
+    - A strict signaling message order.
+  - **Rejected:**
+    - TLS (JA3/JA4) and HTTP/2 fingerprints. TLS ends at Cloudflare, and fingerprint rules need Enterprise Bot
+      Management.
+    - JS device fingerprinting, Turnstile and CAPTCHAs, which native clients can't run.
+    - Reputation feeds, which are paid.
+    - Behavioural bot scores, which would flag game clients that reach `/signal` without loading a page.
+- **Signaling reconnect:** the host pings every 20–30 s, because Cloudflare drops idle WebSockets after about 100 s,
+  and reclaims its room with `hostSecret` after a drop. The game itself doesn't depend on signaling.
+- **Joiners get `iceServers` only after approval.** The brief already ordered approval before the SDP/ICE exchange;
+  this makes the TURN side explicit.
+
 ## Board presets (2026-10-31)
 
 - **Three shapes, six sizes each** (user request; names and grouping chosen by the user). Portrait, Balanced and

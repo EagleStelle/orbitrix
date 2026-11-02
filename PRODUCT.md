@@ -48,7 +48,8 @@ have, fill empty seats with AI, and enjoy following a chain reaction as it plays
 - Local games on one device, passing it between players or playing alone against AIs.
 - LAN games: one Windows or Android device hosts; others join through discovery, by IP, or (in a browser) at
   `http://<host-ip>:7777`.
-- Online games hosted by any player's client, a browser tab included. The host shares a room code or
+- Online games hosted from any player's client, a browser tab included, by a player who has the server's host
+  password. The host shares a room code or
   `/join/<CODE>` link privately, approves each player, and can lock the room or kick. Players connect to the host
   over WebRTC, through a Cloudflare TURN relay when their networks block a direct connection. The Docker container
   on the developer's NAS only serves the website and signaling; no game traffic passes through it.
