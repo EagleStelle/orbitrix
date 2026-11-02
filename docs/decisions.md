@@ -136,6 +136,7 @@ New, not from the prototype; they use real search or learning instead of more he
   text.
 - **`Draw` returns early when no `Update` ran**, so displays above 60 Hz don't draw duplicate frames. Still screens
   (Setup, Settings, a paused game, results) redraw only on input or change, plus every 30 ticks as a backstop.
+  Not on Android, where skipped frames show stale buffers and flicker: there every screen draws once per tick.
 - **The board clock stops during pause**, so resuming doesn't jump ahead.
 
 ## Web and Android (Phase 4)

@@ -181,6 +181,11 @@ const stillRedraw = 30
 
 // still reports whether a screen has no animation left to draw.
 func still(s scene) bool {
+	// Android's GLSurfaceView flips buffers after every frame, even one Ebitengine leaves undrawn, and the undrawn
+	// buffer shows an older frame: a still screen there would flicker, so every screen draws every tick.
+	if runtime.GOOS == "android" {
+		return false
+	}
 	switch s := s.(type) {
 	case *setupScene, *settingsMenu:
 		return true
