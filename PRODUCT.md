@@ -35,9 +35,9 @@ have, fill empty seats with AI, and enjoy following a chain reaction as it plays
 
 - **Huge, chaotic games:** up to 12 players on boards up to 40×40, with long cascading chains that still resolve
   exactly and play back wave by wave.
-- **AI personalities:** eleven bots with distinct play styles, listed easiest to hardest: Jester, Mason,
-  Warden, Gambler, Nomad, Raider, Spy, Prodigy, Tactician, Voyager, Hunter. They can take any seat or be played
-  against alone.
+- **AI personalities:** twelve bots with distinct play styles, listed easiest to hardest: Jester, Mason,
+  Warden, Gambler, Nomad, Raider, Spy, Prodigy, Tactician, Voyager, Hunter, Sovereign. They can take any seat or be
+  played against alone.
 - **Play together anywhere:** same device, LAN with no internet, or online. Windows, Android and browser clients
   share one room, one rules engine and one protocol.
 - **Tactile feel:** orbs that orbit while idle and turn frantic just before exploding, with pentatonic sound
@@ -172,11 +172,32 @@ ORBITRIX_TRAIN_MINUTES=480 go test -tags train -run TestTrainProdigy -timeout 0 
 $env:ORBITRIX_TRAIN_MINUTES=480; go test -tags train -run TestTrainProdigy -timeout 0 -v ./core/ai
 ```
 
-Prodigy's matches against every other bot on the benchmark boards, with random first placements
-(`ORBITRIX_MATCH_SIZES`, `ORBITRIX_MATCH_FOES` and `ORBITRIX_MATCH_WEB=1` narrow the run):
+Sovereign's network is trained supervised, NNUE style. Each iteration plays games on 9×9, 20×20 and 40×40 with
+Hunter, Voyager, Tactician, Prodigy and Sovereign seats, labels the positions with the results and Sovereign's own
+deeper search, trains a fresh network on every position collected so far, and rewrites
+`core/ai/sovereign_weights.go` only when the new network wins at least 55% of the games either network wins, in duels
+and free-for-all tables against the current one. Positions accumulate in `%TEMP%\orbitrix-sovereign` (or
+`ORBITRIX_SOV_DATA`), so a new run continues from all earlier data. An iteration of the default 960 games takes
+about 1.5 hours; the other `ORBITRIX_SOV_*` settings are listed at the top of `core/ai/sovereign_train_test.go`:
 
 ```sh
-ORBITRIX_MATCH_GAMES=100 go test -tags train -run TestProdigyMatches -timeout 0 -v ./core/ai
+ORBITRIX_TRAIN_MINUTES=480 go test -tags train -run TestTrainSovereign -timeout 0 -v ./core/ai
+```
+
+```powershell
+$env:ORBITRIX_TRAIN_MINUTES=480; go test -tags train -run TestTrainSovereign -timeout 0 -v ./core/ai
+```
+
+A bot's matches against every other bot on the benchmark boards, with random first placements
+(`ORBITRIX_MATCH_BOT` picks the bot, default Prodigy; `ORBITRIX_MATCH_SIZES`, `ORBITRIX_MATCH_FOES`,
+`ORBITRIX_MATCH_DUELS=0` and `ORBITRIX_MATCH_WEB=1` narrow the run):
+
+```sh
+ORBITRIX_MATCH_BOT=sovereign ORBITRIX_MATCH_GAMES=100 go test -tags train -run TestMatches -timeout 0 -v ./core/ai
+```
+
+```powershell
+$env:ORBITRIX_MATCH_BOT="sovereign"; $env:ORBITRIX_MATCH_GAMES=100; go test -tags train -run TestMatches -timeout 0 -v ./core/ai
 ```
 
 ## Layout
@@ -184,7 +205,7 @@ ORBITRIX_MATCH_GAMES=100 go test -tags train -run TestProdigyMatches -timeout 0 
 | Path | Contents |
 |---|---|
 | `core/` | Pure game rules (board, moves, wave resolution, win/turn order, seeded RNG). No Ebitengine, net or OS imports. |
-| `core/ai/` | The eleven AI personalities, and Prodigy's training and match harness (build tag `train`). |
+| `core/ai/` | The twelve AI personalities, and Prodigy's and Sovereign's training and match harness (build tag `train`). |
 | `cmd/aitourney/` | Headless AI-vs-AI tournament. |
 | `cmd/webdist/` | Finishes a web build: loading-progress size and precompressed copies. |
 | `proto/` | Binary wire protocol. |

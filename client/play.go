@@ -302,7 +302,7 @@ func (p *playScene) thinkAI(a *app) {
 		seed := rng.Uint64()
 		p.aiBusy, p.aiDelay = true, aiDelayMin+a.rng.Intn(aiDelayMax-aiDelayMin+1)
 		g, bot, out := p.scratch, &p.bot, p.aiMove
-		budget := aiBudget(g.Geo.Cells())
+		budget := aiBudget(s, g.Geo.Cells())
 		go func() { out <- bot.Choose(g, s, seed, budget) }()
 		return
 	}
@@ -318,12 +318,12 @@ func (p *playScene) thinkAI(a *app) {
 	}
 }
 
-// aiBudget is the AI's work per move on a board of cells. Go in a browser runs on one thread, so a thinking AI holds
-// up drawing there; boards bigger than the largest preset get proportionally less work, keeping the pause about as
-// short as on that preset.
-func aiBudget(cells int) int {
+// aiBudget is strategy s's work per move on a board of cells. Go in a browser runs on one thread, so a thinking AI
+// holds up drawing there: every strategy gets the default budget, and boards bigger than the largest preset
+// proportionally less, keeping the pause about as short as on that preset.
+func aiBudget(s ai.Strategy, cells int) int {
 	if runtime.GOOS != "js" {
-		return ai.DefaultBudget
+		return s.Budget()
 	}
 	z := boardSizes[len(boardSizes)-1]
 	return min(ai.DefaultBudget, ai.DefaultBudget*z.short*z.long/cells)

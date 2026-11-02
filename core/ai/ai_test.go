@@ -109,7 +109,7 @@ func TestChooseOnFinishedGame(t *testing.T) {
 // TestTakesTheWin: exploding a's primed edge cell captures all of b. Spy (deliberate noise), Raider
 // (opening mode) and Jester can miss it, as in the prototype.
 func TestTakesTheWin(t *testing.T) {
-	for _, s := range []Strategy{Gambler, Warden, Mason, Voyager, Tactician, Hunter, Prodigy} {
+	for _, s := range []Strategy{Gambler, Warden, Mason, Voyager, Tactician, Hunter, Prodigy, Sovereign} {
 		for seed := range uint64(20) {
 			g := grid(t, 2, 0,
 				". a2 b2 . .",

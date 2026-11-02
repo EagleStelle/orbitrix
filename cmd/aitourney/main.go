@@ -96,7 +96,7 @@ func play(cols, rows int, job game, st *stats) {
 	for !g.Over() && g.Moves < maxMoves {
 		s := job.seats[g.Turn]
 		t0 := time.Now()
-		cell := bots[g.Turn].Choose(g, s, rng.Uint64(), ai.DefaultBudget)
+		cell := bots[g.Turn].Choose(g, s, rng.Uint64(), s.Budget())
 		times[g.Turn] = append(times[g.Turn], time.Since(t0))
 		if _, err := g.Apply(cell); err != nil {
 			log.Fatalf("%v played an illegal move: %v", s, err)

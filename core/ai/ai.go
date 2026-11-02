@@ -23,11 +23,13 @@ const (
 	Tactician
 	Voyager
 	Hunter
+	Sovereign
 	NumStrategies
 )
 
 var names = [NumStrategies]string{
 	"jester", "mason", "warden", "gambler", "nomad", "raider", "spy", "prodigy", "tactician", "voyager", "hunter",
+	"sovereign",
 }
 
 func (s Strategy) String() string {
@@ -48,6 +50,16 @@ func Parse(name string) (Strategy, bool) {
 // real work while staying deterministic. Moves that can't explode are scored without simulating and cost nothing.
 // Sized for the 150 ms target on a 40×40 board; measurements in docs/decisions.md.
 const DefaultBudget = 1200
+
+// Budget returns s's work limit per move where the AI thinks on its own thread (desktop and Android): DefaultBudget,
+// except Sovereign, which may think four times as long (≈60 ms on a desktop, about the 150 ms target on a mid-range
+// phone). In a browser, where thinking holds up drawing, every strategy gets the same budget.
+func (s Strategy) Budget() int {
+	if s == Sovereign {
+		return 4 * DefaultBudget
+	}
+	return DefaultBudget
+}
 
 // unitExplosions makes a unit cost about the same however it's spent: 512 explosions take roughly as long as one
 // Tactician evaluation of a 40×40 board (≈10 µs each on a desktop).
@@ -87,6 +99,9 @@ type Bot struct {
 	weights []float32  // Prodigy: network weights, nil for prodigyWeights; set by training
 	noise   float64    // Prodigy: share of root prior replaced by noise; training only
 	explore float64    // Prodigy: PUCT exploration, 0 for prodigyExplore; training only
+
+	sov      sovState // Sovereign: accumulators, transposition table, killer moves
+	sweights []int16  // Sovereign: network weights, nil for sovereignWeights; set by training
 }
 
 type scored struct {
@@ -103,6 +118,8 @@ func (b *Bot) Choose(g *core.Game, s Strategy, seed uint64, budget int) int {
 	}
 	b.g, b.geo, b.me, b.rng, b.left, b.boom = g, g.Geo, int8(g.Turn), core.NewRNG(seed), budget, 0
 	switch s {
+	case Sovereign:
+		return b.sovereign()
 	case Prodigy:
 		return b.prodigy()
 	case Voyager:

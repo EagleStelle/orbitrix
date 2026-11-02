@@ -44,10 +44,10 @@ Choices made where the brief or the prototype left room. Newest last.
 
 - **Reference prototype:** `prototype/main.py` is a local, gitignored reference for rules and personality behaviour.
 - **AI dropdown order, easiest to hardest:** Jester, Mason, Warden, Gambler, Nomad, Raider, Spy, Prodigy,
-  Tactician, Voyager, Hunter. Strategy names are also the accepted API names and saved seat values, so settings saved
-  before Hunter, Prodigy and Nomad existed, or before a reorder, still load. Gambler moved down from the top of the
-  heuristic bots on 2026-11-02: the Spy and Raider reworks overtook it, Raider beats it two-player on every size
-  (74/70/64% on 9×9/20×20/40×40, 400/200/200 games) and Nomad on 9×9 (70%).
+  Tactician, Voyager, Hunter, Sovereign. Strategy names are also the accepted API names and saved seat values, so
+  settings saved before Hunter, Prodigy, Nomad and Sovereign existed, or before a reorder, still load. Gambler moved
+  down from the top of the heuristic bots on 2026-11-02: the Spy and Raider reworks overtook it, Raider beats it
+  two-player on every size (74/70/64% on 9×9/20×20/40×40, 400/200/200 games) and Nomad on 9×9 (70%).
 - **Deterministic AI API:** `ai.Bot.Choose(game, strategy, seed, budget)` returns a legal cell for the player to
   move. The result depends on those inputs, so saved positions and seeded games are reproducible. A `Bot` reuses
   scratch buffers; keep one per game or room and use it sequentially. Unknown strategies play like Jester.
@@ -173,6 +173,62 @@ Choices made where the brief or the prototype left room. Newest last.
   the browser's budget (20 games a bot) against Tactician, Voyager and Hunter: 20×20 4, 2, 2; 40×40 2, 0, 1. It is
   the strongest bot on 9×9 duels and four-player tables only; the network has seen too little of big boards and crowded tables. Placed after the
   heuristic bots and before Tactician.
+- **Sovereign plays NNUE-style** (2026-11-02; `sovereign.go`): iterative-deepening alpha-beta with a transposition
+  table (65,536 entries, cleared every move so a move depends only on its position), two killer moves per ply,
+  Best-Reply Search between its own moves (the opponents share 16 replies, at least 3 each) and two plies of capture
+  quiescence (four captures a node), over a learned network. Nothing in it is hand-written knowledge: candidates and
+  their order come from the network's policy table (24 at the root, 8 per own node), captures are the rules' (a primed
+  cell exploding into an enemy), and leaves get the network's value.
+- **Sovereign's network.** Inputs are rules facts per cell: a cell's pattern is its fill for its capacity (primed,
+  one short, two short) and the multiset of its neighbours' states seen from a player (empty, or own or enemy, each
+  primed, one short or two short); 826 patterns of occupied cells, 322 of empty ones. Each player's accumulator sums
+  32-wide int16 rows for their own cells' patterns, so a move only swaps the rows of the cells its chain touched and
+  their neighbours (a full recompute when that is more rows than occupied cells), and adding players costs nothing per
+  evaluation. The value head divides the root player's accumulator and the per-channel maximum of the opponents'
+  (the strongest opponent per channel) by the occupied cells, so every board size and stage reads alike, adds whether
+  the root player moves now, next or later, the board's fullness and 1/alive players, and runs clipped ReLUs
+  (69→16→1) to the logit of the root player's winning chance. The policy is a learned logit per pattern seen by the
+  mover, cached per player and cell and updated with the accumulators (an undo log restores it). 28,781 int16 weights
+  (`sovereign_weights.go`, 144 KB of source); integer inference, so every platform gets the same moves. Tests check
+  the incremental accumulators, hash and caches against a full recompute, alpha-beta with the table and killers
+  against plain minimax, backpropagation against finite differences, and that a move allocates nothing.
+- **Sovereign's price and budget.** Work is charged in ticks of about 1.2 ns on the development desktop, fitted by
+  least squares to counted work: a scanned cell 1, a played move 384 plus one per 16 cells, a re-patterned cell 54,
+  an evaluation 384. At `DefaultBudget` and 10,240 ticks a unit a move took 13.5–15.6 ms on every benchmark
+  position, the other bots' worst case (Voyager on a late 40×40 position, 15.6 ms); 9,728 leaves 5% of margin. The
+  user then let Sovereign alone think longer where it runs on its own thread: `Strategy.Budget()` gives it 4×
+  `DefaultBudget` on desktop and Android (51–59 ms a move on the desktop, all six benchmark positions, so about the
+  150 ms target on a mid-range phone, assuming one is 2.5× slower; not yet measured on a phone). Every other bot
+  keeps `DefaultBudget`. In the browser, where thinking holds up drawing, every bot including Sovereign gets the same
+  scaled budget (`client/play.go` `aiBudget`). The 4× budget moved 9×9 duels from 56 to 75 wins in 100 against
+  Prodigy and from 64 to 85 against Hunter.
+- **Sovereign's training** (`go test -tags train -run TestTrainSovereign`): supervised, like Stockfish's NNUE, not
+  Prodigy's self-play reinforcement learning. Positions come from games with random first placements, 2–12 players
+  (40% duels, a quarter nine to twelve), seated from Hunter, Voyager, Tactician, Prodigy and later Sovereign, at most
+  100 a game; every alive player's result is a value target and the move played a policy target. Once Sovereign had
+  weights, its own search at twice the default budget labelled each position: the mover's value target became half
+  the result and half the search's winning chance, and its move the policy target. Every iteration trains a fresh
+  float network on all positions so far (AdamW, batch 256, a tenth of the games held out, the value and policy kept
+  separately at their best held-out epoch), quantises it (W1, biases and policy ×256, W2 and W3 ×1024) and gates it
+  against the current weights. Held-out losses matched after quantisation to within 0.0002. Steps so far: 960 games
+  on the three boards (96,000 positions, results only; the value overfit after one epoch, too few games), then 18,000
+  9×9 and 3,000 20×20 games (2.1 million positions) gave the kept weights (held-out value 0.565, policy 2.74; they beat
+  the first ones 58% in 150 duels). A third round, 4,200 games labelled by Sovereign's search with a quarter at nine
+  to twelve players (420,000 positions), scored only 52.7% against them in duels and was not kept. The gate first
+  played duels only; it now also seats both networks at four- and twelve-player tables among other bots and counts
+  the games either of them wins. All 2.6 million positions are in `%TEMP%\orbitrix-sovereign`, where the next run
+  continues.
+- **Sovereign's strength** (2026-11-02, kept weights, 4× budget, `TestMatches` with `ORBITRIX_MATCH_BOT=sovereign`,
+  random first placements; wins out of games). Duels: 9×9 Prodigy 75/100, Hunter 85/100; 20×20 Hunter 33/40;
+  40×40 Hunter 12/16, Voyager 10/16. At the default budget it had already won 9×9 Tactician 65/100 and Voyager
+  73/100, and 20×20 Prodigy 34/40, Tactician, Voyager and Hunter 28/40 each. Four players (wins/seats): 9×9 29/50,
+  the most per seat (Prodigy 10/18); 20×20 31/50 (next Prodigy 5/13). Twelve players: 20×20 10/50, the most
+  (Hunter 9/50); 9×9 25/200, behind Voyager 34/200 and Prodigy 33/200 and level with Hunter 25/200. Three search
+  changes for crowded tables did not help on 9×9 twelve players: one reply per opponent 14/200, depth one 18/200,
+  depth two 26/200. Not yet measured: the heuristic bots at 4×, 40×40 tables, the full 200/100/40 duel sets and the
+  browser budget. So Sovereign is the strongest bot in every duel and table measured except twelve players on 9×9,
+  where the bots that average over many simulated futures (Voyager, Prodigy) do better than both Best-Reply Search
+  bots. Placed last, as the user asked.
 - **Terminal outcomes outrank positional scores:** both searches use the rules engine's winner and player-liveness
   state. Elimination is a loss even while other players continue. Opponents who have not placed their first orb
   are still alive. MCTS terminal rewards are exactly one for the winner and zero for everyone else.

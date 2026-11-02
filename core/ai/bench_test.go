@@ -26,7 +26,7 @@ func position(b *testing.B, n int, fill float64) *core.Game {
 	}
 }
 
-// BenchmarkChoose times each strategy at its default budget, mid-game (0.5 orbs per cell) and late (1.2, where
+// BenchmarkChoose times each strategy at its native Budget, mid-game (0.5 orbs per cell) and late (1.2, where
 // most cells are close to exploding and chains are long).
 func BenchmarkChoose(b *testing.B) {
 	for _, n := range []int{9, 20, 40} {
@@ -42,7 +42,7 @@ func BenchmarkChoose(b *testing.B) {
 					seed := uint64(0)
 					for b.Loop() {
 						seed++
-						bot.Choose(g, s, seed, DefaultBudget)
+						bot.Choose(g, s, seed, s.Budget())
 					}
 				})
 			}

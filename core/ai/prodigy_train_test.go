@@ -293,18 +293,26 @@ func score(w []float32) float64 {
 	return total / float64(len(points))
 }
 
-// TestProdigyMatches plays Prodigy against the other bots on the benchmark boards, with random first placements so
-// bots without randomness still play varied games:
+// TestMatches plays a bot (ORBITRIX_MATCH_BOT, default prodigy) against the other bots on the benchmark boards, with
+// random first placements so bots without randomness still play varied games:
 //
-//	ORBITRIX_MATCH_GAMES=100 go test -tags train -run TestProdigyMatches -timeout 0 -v ./core/ai
+//	ORBITRIX_MATCH_BOT=sovereign ORBITRIX_MATCH_GAMES=100 go test -tags train -run TestMatches -timeout 0 -v ./core/ai
 //
-// Each duel opponent gets that many games per board, seats alternating. Free-for-all tables seat Prodigy with three
-// random other bots, and with all nine plus two random extras for twelve players, a quarter as many games each.
+// Each duel opponent gets that many games per board, seats alternating. Free-for-all tables seat the bot with three
+// random other bots, and with every other bot for twelve players, a quarter as many games each.
 // ORBITRIX_MATCH_SIZES (comma-separated), ORBITRIX_MATCH_FOES (comma-separated names: those duels only, no
-// free-for-all) and ORBITRIX_MATCH_WEB=1 (the browser's budget) narrow the run.
-func TestProdigyMatches(t *testing.T) {
+// free-for-all), ORBITRIX_MATCH_DUELS=0 (free-for-all only) and ORBITRIX_MATCH_WEB=1 (the browser's budget) narrow
+// the run.
+func TestMatches(t *testing.T) {
 	games := envInt("ORBITRIX_MATCH_GAMES", 40)
 	web := os.Getenv("ORBITRIX_MATCH_WEB") == "1"
+	me := Prodigy
+	if v := os.Getenv("ORBITRIX_MATCH_BOT"); v != "" {
+		var ok bool
+		if me, ok = Parse(v); !ok {
+			t.Fatalf("ORBITRIX_MATCH_BOT: no bot %q", v)
+		}
+	}
 	sizes := trainSizes[:]
 	if v := os.Getenv("ORBITRIX_MATCH_SIZES"); v != "" {
 		sizes = nil
@@ -316,32 +324,33 @@ func TestProdigyMatches(t *testing.T) {
 	foes := os.Getenv("ORBITRIX_MATCH_FOES")
 	for _, size := range sizes {
 		for foe := range NumStrategies {
-			if foe == Prodigy || foes != "" && !slices.Contains(strings.Split(foes, ","), foe.String()) {
+			if foe == me || os.Getenv("ORBITRIX_MATCH_DUELS") == "0" ||
+				foes != "" && !slices.Contains(strings.Split(foes, ","), foe.String()) {
 				continue
 			}
 			start := time.Now()
 			wins, _ := tables(games, size, web, func(i int, rng *core.RNG) []Strategy {
 				if i%2 == 0 {
-					return []Strategy{Prodigy, foe}
+					return []Strategy{me, foe}
 				}
-				return []Strategy{foe, Prodigy}
+				return []Strategy{foe, me}
 			})
-			t.Logf("%dx%d duel vs %-9v Prodigy %3d/%d (%.0f%%) %v", size, size, foe, wins[Prodigy], games,
-				100*float64(wins[Prodigy])/float64(games), time.Since(start).Round(time.Second))
+			t.Logf("%dx%d duel vs %-9v %v %3d/%d (%.0f%%) %v", size, size, foe, me, wins[me], games,
+				100*float64(wins[me])/float64(games), time.Since(start).Round(time.Second))
 		}
 		for _, players := range []int{4, 12} {
 			if foes != "" {
 				break
 			}
 			wins, seen := tables(max(1, games/4), size, web, func(i int, rng *core.RNG) []Strategy {
-				seats := []Strategy{Prodigy}
+				seats := []Strategy{me}
 				for _, s := range rngPerm(rng) {
-					if s != Prodigy && len(seats) < min(players, int(NumStrategies)) {
+					if s != me && len(seats) < min(players, int(NumStrategies)) {
 						seats = append(seats, s)
 					}
 				}
 				for len(seats) < players {
-					if s := Strategy(rng.Intn(int(NumStrategies))); s != Prodigy {
+					if s := Strategy(rng.Intn(int(NumStrategies))); s != me {
 						seats = append(seats, s)
 					}
 				}
@@ -391,14 +400,11 @@ func tables(n, size int, web bool, seats func(i int, rng *core.RNG) []Strategy) 
 }
 
 // match plays one game, each player's first placement at random, and returns the winning seat, or -1 if it hits the
-// move cap. Prodigy plays with weights w, or prodigyWeights when nil. web gives every bot the browser's budget.
-func match(seats []Strategy, size int, seed uint64, web bool, w []float32) int {
+// move cap. Prodigy plays with weights w, or prodigyWeights when nil, and Sovereign with sw[seat] when given, else
+// sovereignWeights. Each bot thinks with its Budget, or with the browser's budget when web is set.
+func match(seats []Strategy, size int, seed uint64, web bool, w []float32, sw ...[]int16) int {
 	g, _ := core.NewGame(size, size, len(seats))
 	rng := core.NewRNG(seed)
-	budget := DefaultBudget
-	if web {
-		budget = min(DefaultBudget, DefaultBudget*234/g.Geo.Cells()) // client/play.go aiBudget
-	}
 	bot := Bot{weights: w}
 	var legal []int
 	for !g.Over() && g.Moves < 50*g.Geo.Cells() {
@@ -407,6 +413,13 @@ func match(seats []Strategy, size int, seed uint64, web bool, w []float32) int {
 			legal = g.LegalMoves(legal[:0])
 			cell = legal[rng.Intn(len(legal))]
 		} else {
+			if sw != nil {
+				bot.sweights = sw[g.Turn]
+			}
+			budget := seats[g.Turn].Budget()
+			if web {
+				budget = min(DefaultBudget, DefaultBudget*234/g.Geo.Cells()) // client/play.go aiBudget
+			}
 			cell = bot.Choose(g, seats[g.Turn], rng.Uint64(), budget)
 		}
 		if err := g.Simulate(cell); err != nil {
