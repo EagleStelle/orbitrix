@@ -8,7 +8,7 @@ import "math"
 const (
 	wardenSafeBuffer  = 2 // keep this far from enemies unless attacking
 	wardenTopSim      = 8 // cheap-scored candidates to simulate in the fallback
-	wardenPrimeDanger = 1 // most primed enemy neighbours a defensive prime may have
+	wardenPrimeDanger = 0 // most primed enemy neighbours a defensive prime may have; the prototype's 1 let enemies pop it first
 )
 
 func (b *Bot) warden() int {
@@ -17,15 +17,22 @@ func (b *Bot) warden() int {
 	}
 
 	// Safe corners, taking a corner explosion at once if it wins (or if it can't be simulated, as the prototype did).
+	// Unlike the prototype, an explosion that captures nothing isn't a safe corner: re-popping our own corner every
+	// quiet turn kept Warden from ever building its edges.
 	b.ties = b.ties[:0]
 	enemyInCorner := false
+	others := b.others(b.g.Orbs)
 	for _, m := range b.moves {
 		if !b.corner(m) {
 			continue
 		}
 		if b.primed(m) {
-			if t, ok := b.tally(m); !ok || b.wins(t) {
+			t, ok := b.tally(m)
+			if !ok || b.wins(t) {
 				return m
+			}
+			if b.others(t) == others {
+				continue
 			}
 		}
 		if !(b.count(m)+1 == b.capacity(m)-1 && b.threats(m) > 0) {
@@ -86,7 +93,7 @@ func (b *Bot) warden() int {
 // wardenReact answers enemy cells touching ours. The prototype has no move history, so every such cell counts
 // as provoking. Its options A and D target the enemy cell itself, which is never a legal move, so only these remain:
 // B, explode our primed neighbour into it (the prototype simulated first but played it either way), and C, prime a
-// neighbour to punish it if few enemies could pop that neighbour first.
+// neighbour to punish it if no enemy could pop that neighbour first.
 func (b *Bot) wardenReact() (int, bool) {
 	for e := range b.g.Owner {
 		if !b.enemy(e) {

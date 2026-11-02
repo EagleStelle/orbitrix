@@ -17,11 +17,16 @@ const (
 type tactic struct {
 	b      *Bot
 	branch int
+	hunt   bool // Hunter: Best-Reply Search with quiescence, scored against prey
+	prey   int8
 }
 
-func (b *Bot) tactician() int {
-	t := tactic{b: b, branch: 8}
-	cands := t.candidates(b.g, b.me, 0)
+func (b *Bot) tactician() int { return tactic{b: b, branch: 8}.deepen() }
+
+// deepen runs the iterative-deepening root shared by Tactician and Hunter.
+func (t tactic) deepen() int {
+	b := t.b
+	cands := t.candidates(b.g, b.me, 0, 24)
 	best := cands[0].cell
 	for depth := 1; depth <= maxDepth; depth++ {
 		choice, value, complete := best, math.Inf(-1), true
@@ -64,14 +69,20 @@ func (b *Bot) tactician() int {
 // result cannot compete with another move that faced all of its opponent's replies.
 func (t *tactic) minimax(n *core.Game, depth int, alpha, beta float64, ply int) (float64, bool) {
 	b := t.b
-	if n.Over() || !n.Alive(int(b.me)) || depth == 0 {
+	if n.Over() || !n.Alive(int(b.me)) || depth == 0 && !t.hunt {
 		return t.evaluate(n, ply), true
+	}
+	if depth == 0 {
+		return t.quiesce(n, alpha, beta, ply, hunterQuiet)
 	}
 	if b.left <= 0 {
 		return 0, false
 	}
-	cands := t.candidates(n, int8(n.Turn), ply)
 	maximizing := int8(n.Turn) == b.me
+	if t.hunt && !maximizing {
+		return t.bestReply(n, depth, alpha, beta, ply)
+	}
+	cands := t.candidates(n, int8(n.Turn), ply, t.branch)
 	value := math.Inf(1)
 	if maximizing {
 		value = math.Inf(-1)
@@ -98,15 +109,11 @@ func (t *tactic) minimax(n *core.Game, depth int, alpha, beta float64, ply int) 
 	return value, true
 }
 
-// candidates orders captures, build-ups and safe expansion for the actual mover.
-// Root moves get a wider shortlist; dangerous moves stay available as counterattacks.
-func (t *tactic) candidates(n *core.Game, player int8, level int) []scored {
+// candidates orders captures, build-ups and safe expansion for player, keeping the best limit.
+// Dangerous moves stay available as counterattacks.
+func (t *tactic) candidates(n *core.Game, player int8, level, limit int) []scored {
 	geo := n.Geo
 	dst := t.b.levels[level][:0]
-	limit := t.branch
-	if level == 0 {
-		limit = 24
-	}
 	for i, o := range n.Owner {
 		if o != core.NoOwner && o != player {
 			continue
@@ -222,6 +229,9 @@ func (t *tactic) evaluate(n *core.Game, ply int) float64 {
 	}
 	if opponents == 0 {
 		return values[me]
+	}
+	if t.hunt && n.Alive(int(t.prey)) {
+		return values[me] - (3*values[t.prey]+sum/opponents)/4 // the prey counts three times the field
 	}
 	return values[me] - (strongest+sum/opponents)/2
 }

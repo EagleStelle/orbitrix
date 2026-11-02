@@ -35,8 +35,9 @@ have, fill empty seats with AI, and enjoy following a chain reaction as it plays
 
 - **Huge, chaotic games:** up to 12 players on boards up to 40×40, with long cascading chains that still resolve
   exactly and play back wave by wave.
-- **AI personalities:** eight bots with distinct play styles, listed easiest to hardest: Jester, Mason,
-  Raider, Warden, Spy, Gambler, Tactician, Voyager. They can take any seat or be played against alone.
+- **AI personalities:** eleven bots with distinct play styles, listed easiest to hardest: Jester, Mason,
+  Warden, Gambler, Nomad, Raider, Spy, Prodigy, Tactician, Voyager, Hunter. They can take any seat or be played
+  against alone.
 - **Play together anywhere:** same device, LAN with no internet, or online. Windows, Android and browser clients
   share one room, one rules engine and one protocol.
 - **Tactile feel:** orbs that orbit while idle and turn frantic just before exploding, with pentatonic sound
@@ -156,12 +157,33 @@ The AI tournament plays every pair of AI strategies and prints win rates and mov
 go run ./cmd/aitourney -games 20 -size 9x9      # -seed, -workers also available
 ```
 
+Prodigy's network is trained by self-play and by games against Tactician, Hunter and Voyager, and stored as
+generated Go source in `core/ai/prodigy_weights.go`. Training continues from the current weights and rewrites that
+file only when the weights beat the best score so far in duels against Hunter and Voyager and in four- and
+twelve-player tables. It uses every core; a generation takes about 3.5 minutes on a 16-thread desktop (bash, then
+PowerShell):
+
+```sh
+ORBITRIX_TRAIN_MINUTES=480 go test -tags train -run TestTrainProdigy -timeout 0 -v ./core/ai
+```
+
+```powershell
+$env:ORBITRIX_TRAIN_MINUTES=480; go test -tags train -run TestTrainProdigy -timeout 0 -v ./core/ai
+```
+
+Prodigy's matches against every other bot on the benchmark boards, with random first placements
+(`ORBITRIX_MATCH_SIZES`, `ORBITRIX_MATCH_FOES` and `ORBITRIX_MATCH_WEB=1` narrow the run):
+
+```sh
+ORBITRIX_MATCH_GAMES=100 go test -tags train -run TestProdigyMatches -timeout 0 -v ./core/ai
+```
+
 ## Layout
 
 | Path | Contents |
 |---|---|
 | `core/` | Pure game rules (board, moves, wave resolution, win/turn order, seeded RNG). No Ebitengine, net or OS imports. |
-| `core/ai/` | The eight AI personalities. |
+| `core/ai/` | The eleven AI personalities, and Prodigy's training and match harness (build tag `train`). |
 | `cmd/aitourney/` | Headless AI-vs-AI tournament. |
 | `cmd/webdist/` | Finishes a web build: loading-progress size and precompressed copies. |
 | `proto/` | Binary wire protocol. |

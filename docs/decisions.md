@@ -43,15 +43,20 @@ Choices made where the brief or the prototype left room. Newest last.
 ## Phase 2
 
 - **Reference prototype:** `prototype/main.py` is a local, gitignored reference for rules and personality behaviour.
-- **AI dropdown order, easiest to hardest:** Jester, Mason, Raider, Warden, Spy, Gambler, Tactician, Voyager.
-  Strategy names are also the accepted API names and saved seat values.
+- **AI dropdown order, easiest to hardest:** Jester, Mason, Warden, Gambler, Nomad, Raider, Spy, Prodigy,
+  Tactician, Voyager, Hunter. Strategy names are also the accepted API names and saved seat values, so settings saved
+  before Hunter, Prodigy and Nomad existed, or before a reorder, still load. Gambler moved down from the top of the
+  heuristic bots on 2026-11-02: the Spy and Raider reworks overtook it, Raider beats it two-player on every size
+  (74/70/64% on 9×9/20×20/40×40, 400/200/200 games) and Nomad on 9×9 (70%).
 - **Deterministic AI API:** `ai.Bot.Choose(game, strategy, seed, budget)` returns a legal cell for the player to
   move. The result depends on those inputs, so saved positions and seeded games are reproducible. A `Bot` reuses
   scratch buffers; keep one per game or room and use it sequentially. Unknown strategies play like Jester.
 - **Shared rules engine:** search uses exact `core.Simulate` results on scratch copies. A heuristic move that cannot
   explode has a known outcome of one added orb and needs no simulation.
 - **Bounded work:** all strategies use the same native budget of 1,200 units. Each full heuristic simulation,
-  Tactician search node or Voyager iteration costs one unit, plus one per 512 cell explosions. Explosion remainders
+  Tactician or Hunter search node or Voyager iteration costs one unit, and a Prodigy network evaluation one plus one
+  per 16 cells it recomputes through all four layers (≈0.73 µs a cell on a desktop) and one per 1,024 cells for its
+  whole-board passes (≈10 ns a cell), plus one per 512 cell explosions. Explosion remainders
   carry across the move so many small chains count fully. Work units keep the search deterministic and account for
   the cost of long chains. Browser clients scale the same limit down on large boards to keep drawing responsive.
 - **Distinct heuristic personalities:** Gambler, Warden, Raider, Spy and Mason retain their own scoring,
@@ -60,6 +65,45 @@ Choices made where the brief or the prototype left room. Newest last.
   Eligibility is checked once per move. The strategy proposes a cell, then the survival check may choose a safe
   foothold at least three steps from enemies and outside their primed chains. One work unit is reserved to assess
   an explosive counterattack with the rules engine.
+- **Warden departs from the prototype in two places:** it explodes its own primed corner only when that captures
+  orbs, because re-popping corners on every quiet turn kept it off its edges, and a defensive prime may have no
+  primed enemy neighbour (the prototype allowed one, which let the enemy pop it first). Exploding before priming
+  across every enemy made it as strong as Spy at the time, so it was left out.
+- **Raider scores every move from its neighbourhood and simulates its 16 best explosions.** The prototype simulated
+  the first 16 promising moves in board order, so on big boards it never saw a capture away from the top-left corner.
+  Its scoring keeps the prototype's aggression (stacking against enemies, the pull of enemy fill within two steps, a
+  bonus for wedging between enemy groups, captures, preying on the weakest) and avoids suicidal cells, but each part
+  costs O(1) per move: the enemy fill is spread once per move instead of gathered per move, the flank test looks at
+  the cell diagonal between two enemy neighbours instead of labelling every enemy group, and an explosion that can't
+  chain or capture is scored without simulating. Dropped as not worth their cost: the comeback cluster target, the
+  distance-to-our-network penalty, the distance-gated opening and the last-cell retreat (shared survival protection
+  covers it; without it Raider won more). It is 233 lines against the port's 394.
+- **Spy stays heuristic but reads danger off the board.** Each shortlist group starts at a random move (board order
+  had the same top-left bias). Without simulating replies, `openingThreats` marks the cells enemy chains could reach
+  next turn: Spy loses 2 lead per orb of its own there. Placements share one reading; explosions read their own
+  board, at most 8, best lead first, until no lead can beat the best score. A two-ply reply search was tried and
+  rejected for being search; so were 4 or 2 reads (3–7 points of win rate lost), skipping the simulation of
+  explosions that can't capture (no faster) and capping explosions at half the shortlist (5 points lost on 20×20).
+  The shortlist stops filling at 48 and the best three are kept without sorting every candidate, which changes no
+  move.
+- **Spy infiltrates like a spy:** out of enemy reach, it gains 1 lead per orb of each enemy neighbour it would explode
+  before, the race Nomad runs. It used to count only cells one short of exploding at 0.5; the race and the higher
+  weight together won 4–9 more points of free-for-all games. A penalty for races it would lose cost win rate.
+- **Nomad is the sparse opposite of Mason.** It spreads single orbs over open ground, 30 points per step from its
+  nearest cell up to 3, never where `openingThreats` says an enemy chain can reach next turn. Each enemy neighbour is
+  a race: our cell explodes after cap−count−1 more of our moves, theirs after cap−count of theirs, and they move first.
+  A won race scores 40 per enemy orb, a lost one costs 40 per orb we'd leave. Stacking scores low, so it builds only
+  to win a race or on a crowded board. Of the explosions that can capture, it simulates the 2 with the most enemy
+  orbs next to them and takes the one that captures most (60 a captured orb). With 4 simulations it outscored Spy on
+  20×20; 2 bring it level with Raider at two thirds of Raider's cost.
+- **Heuristic bot strength** (2026-11-02, random first placements, seed 7, `nomad` in the pool): two-player win rate
+  against the other five, 9×9/20×20/40×40 (400/200/40 games a pair): Mason 28/17/16%, Warden 36/18/17%, Gambler
+  39/64/73%, Nomad 62/63/65%, Raider 52/70/68%, Spy 84/69/63%. Five players, 9×9/20×20 (500/300 games): Mason 11/5%,
+  Warden 13/11%, Gambler 12/20%, Nomad 30/18%, Raider 15/30%, Spy 40/35%. Twelve players, two seats each,
+  9×9/20×20/40×40 (300/120/36 games): Mason 4/4/4%, Warden 5/3/0%, Gambler 7/7/11%, Nomad 11/13/14%, Raider
+  7/11/10%, Spy 15/12/11%. Against the same five bots as before the Spy changes, Spy went from 84/72/58% to 87/69/59% in
+  two-player games and from 41/32% to 45/39% in five-player games. Time per move in real games on a desktop,
+  9×9/20×20/40×40: Nomad 3.4/14/57 µs, Raider 4.2/21/85 µs, Spy 9.5/44/166 µs (12.4/48/172 before).
 - **Jester chooses uniformly among legal moves.** Its random personality bypasses shared survival protection.
 - **Voyager uses Monte Carlo tree search:** UCT selection, expansion, stochastic rollouts and mean-reward
   backpropagation. Its shortlist contains up to 24 root moves and 10 deeper moves to give large-board searches
@@ -70,6 +114,65 @@ Choices made where the brief or the prototype left room. Newest last.
   opponent minimizes it, following the rules engine's turn order and eliminations. Search considers up to 24 root
   candidates, eight inner candidates and sixteen plies. A completed depth supplies the answer if work runs out;
   fully evaluated one-ply moves provide the initial fallback.
+- **Hunter uses Best-Reply Search** (Schadd & Winands 2011) on Tactician's iterative-deepening alpha-beta, root,
+  candidates and evaluation. Between two of its own moves only the single most damaging reply from any one opponent
+  is searched, played out of turn (`Game.Turn` set on a scratch copy), so a round costs one opponent ply at any
+  player count. Each opponent offers `max(3, 16/opponents)` candidates. Leaves extend through captures
+  (quiescence: two plies, the four biggest hauls per node, stand-pat allowed); four plies with four captures
+  blew up on big boards and lost to Voyager on 20×20. Its prey is the opponent with the most orbs at the root,
+  weighted three times the field in the evaluation, so it goes after the leader. With two players the best reply
+  and the prey weighting both match Tactician, so a duel Hunter is Tactician plus quiescence. Measured with random first placements (wins out of games played): two
+  players 9×9 60/100 against Tactician and 58/100 against Voyager, 20×20 25/40 against Tactician and 26/40 against
+  Voyager, 40×40 11/16 against Voyager; four players 9×13 (with Tactician, Voyager, Gambler) 54/120 wins against
+  Voyager's 34. Three players on 9×9 favour Voyager (65/150 against Hunter's 40), the cost of chasing the leader.
+  Placed after Voyager, as the hardest.
+- **Prodigy plays AlphaZero-style:** PUCT search (exploration 0.4; an unvisited child takes its parent's network
+  value; 32 root and 8 inner children, the network's top cells) guided by a 1,893-weight network: four graph
+  convolutions of 16 channels over each cell and the sum of its orthogonal neighbours (one weight for all four
+  directions, so every board size, rotation and reflection plays alike), a per-cell policy logit and a logistic
+  value head over the mean-pooled channels plus the mover's orb share, 1/alive players and Voyager's position
+  share. The value replaces rollouts; other players split the rest of the winning chance (max^n backup, any
+  player count). Before searching it tries its primed cells next to enemies for an outright win with the rules
+  engine, using at most half the budget. Weights are generated Go source (`prodigy_weights.go`), not an asset.
+- **Prodigy evaluates incrementally.** A cell's output depends only on cells up to four steps away, so in each move
+  the first position each player is to move in gets a full pass and becomes that player's base; every later
+  position recomputes, at layer l, only the cells within l steps of a cell that differs from the base, and reads the
+  rest from it (a test checks this against a full pass). The convolution keeps eight output channels in registers
+  and skips zero inputs; Go has no SIMD, so a full pass stays near the scalar limit at ≈0.73 µs a cell. Evaluations
+  per move went from about 200/46/11 to 340–440/210–330/120–220 on 9×9/20×20/40×40 (late/mid game), at 14.6–16.8 ms
+  a move on a desktop against 17–20 ms before; Voyager's worst case is 17.1 ms. No allocations after the first move.
+  At the browser's 40×40 budget (175 units) one full pass costs about 103, so Prodigy there plays its policy.
+- **Prodigy's search settings were re-tuned on the same weights** (100 two-player 9×9 games each against Voyager
+  and Hunter): exploration 1.5 to 0.4 (0.3–0.7 alike, 2.5 much worse), first-play urgency 0.1 to none (0.3 much
+  worse), root children 16 to 32 (24–48 alike, 10 worse); 5 or 12 inner children did worse than 8. Wins went from
+  31 and 21 to 59 and 54.
+- **Prodigy's training** (`go test -tags train -run TestTrainProdigy`, build-tagged like the client's perf test)
+  imitates Tactician, Hunter and Voyager when starting from zero weights. Each generation then plays 192 games on
+  9×9, 20×20 and 40×40, a third each, biggest first so no long game runs alone at the end, with 2–12 players (10%
+  with 9–12): half self-play, half league games against those three bots, whose moves become one-hot policy
+  samples. Dirichlet(1) root noise at 25% and exploration 1.5 (the setting the weights were trained with) widen
+  the visit shares. Like KataGo's playout cap randomisation, a quarter of Prodigy's moves search the full budget
+  and become samples, the rest an eighth. The value target averages the winner with the search's root value, at
+  most 100 evenly spaced positions per game, AdamW. Every ten generations it plays 96 duels against Hunter and
+  Voyager on all three boards and 16 tables on 9×9 and 20×20 (four players with Hunter, Voyager and Tactician;
+  twelve with every other bot and a second Hunter), with fixed random first placements, and writes the weights only
+  when they beat the best score so far. A finite-difference test checks backpropagation.
+- **Training has not yet improved on the kept weights** (2026-11-02). They came from the first 75-minute run on
+  5×5 to 9×13. Every continuation lowered the score: all boards 0.328 to 0.078 in five generations, and to 0.125 in
+  three with or without league games; 9×9 alone 0.625 to 0.39–0.53 in three to six generations at learning rate
+  1e-3 or 1e-4, and with the original trainer's settings. They look like a lucky peak of a noisy process, further
+  selected by the search tuning, so the gate was doubled and saves only on a strict improvement. A 32-unit hidden
+  value layer was tried and dropped: its fresh head reached only 0.06 in ten generations. A long run is the
+  remaining test; it costs about 3.5 minutes a generation on a 16-thread desktop.
+- **Prodigy's strength** (2026-11-02, `TestProdigyMatches`, random first placements, two players unless noted;
+  wins out of games): 9×9 (100 games a bot): Jester, Mason, Warden, Gambler, Nomad, Raider 100, Spy 99, Tactician
+  66, Voyager 59, Hunter 54; four players 12/25 wins, the most per seat (Voyager 4/10, Hunter 3/10); twelve players
+  1/25, behind Nomad 6/28, Voyager 6/27 and Hunter 5/27. 20×20 (40 a bot): the heuristic bots 40 except Spy 31,
+  Tactician 10, Voyager 9, Hunter 3; four players 3/10, twelve 0/10. 40×40 (20 a bot): Jester, Mason, Warden 20,
+  Gambler and Raider 16, Spy 15, Nomad 13, Tactician 3, Voyager 2, Hunter 0; four and twelve players 0/5 each. At
+  the browser's budget (20 games a bot) against Tactician, Voyager and Hunter: 20×20 4, 2, 2; 40×40 2, 0, 1. It is
+  the strongest bot on 9×9 duels and four-player tables only; the network has seen too little of big boards and crowded tables. Placed after the
+  heuristic bots and before Tactician.
 - **Terminal outcomes outrank positional scores:** both searches use the rules engine's winner and player-liveness
   state. Elimination is a loss even while other players continue. Opponents who have not placed their first orb
   are still alive. MCTS terminal rewards are exactly one for the winner and zero for everyone else.

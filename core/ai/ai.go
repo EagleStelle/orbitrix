@@ -14,16 +14,21 @@ type Strategy uint8
 const (
 	Jester Strategy = iota
 	Mason
-	Raider
 	Warden
-	Spy
 	Gambler
+	Nomad
+	Raider
+	Spy
+	Prodigy
 	Tactician
 	Voyager
+	Hunter
 	NumStrategies
 )
 
-var names = [NumStrategies]string{"jester", "mason", "raider", "warden", "spy", "gambler", "tactician", "voyager"}
+var names = [NumStrategies]string{
+	"jester", "mason", "warden", "gambler", "nomad", "raider", "spy", "prodigy", "tactician", "voyager", "hunter",
+}
 
 func (s Strategy) String() string {
 	if s < NumStrategies {
@@ -68,15 +73,20 @@ type Bot struct {
 	bets  [3][]bet
 	cands []int
 
-	cluster  []int32 // Raider: enemy cluster id of each cell, -1 if none
-	clusters []cluster
+	frontier []float64 // Raider: enemy fill within two steps of each cell
 
 	tree  []mctsNode // Voyager: search tree
 	path  []int32    // Voyager: nodes visited this iteration
 	legal []int      // Voyager: rollout fallback
 
-	nodes  [maxDepth]core.Game // Tactician: one board per search depth
-	levels [maxDepth][]scored  // Tactician: candidates per search depth
+	nodes  [maxDepth]core.Game // Tactician, Hunter: one board per search depth
+	levels [maxDepth][]scored  // Tactician, Hunter: candidates per search depth
+
+	ptree   []puctNode // Prodigy: search tree
+	net     prodigyNet // Prodigy: network evaluations
+	weights []float32  // Prodigy: network weights, nil for prodigyWeights; set by training
+	noise   float64    // Prodigy: share of root prior replaced by noise; training only
+	explore float64    // Prodigy: PUCT exploration, 0 for prodigyExplore; training only
 }
 
 type scored struct {
@@ -93,8 +103,12 @@ func (b *Bot) Choose(g *core.Game, s Strategy, seed uint64, budget int) int {
 	}
 	b.g, b.geo, b.me, b.rng, b.left, b.boom = g, g.Geo, int8(g.Turn), core.NewRNG(seed), budget, 0
 	switch s {
+	case Prodigy:
+		return b.prodigy()
 	case Voyager:
 		return b.voyager()
+	case Hunter:
+		return b.hunter()
 	case Tactician:
 		return b.tactician()
 	case Jester:
@@ -119,6 +133,8 @@ func (b *Bot) Choose(g *core.Game, s Strategy, seed uint64, budget int) int {
 		cell = b.spy()
 	case Mason:
 		cell = b.mason()
+	case Nomad:
+		cell = b.nomad()
 	default:
 		return b.jester()
 	}

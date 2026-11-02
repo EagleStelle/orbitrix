@@ -109,7 +109,7 @@ func TestChooseOnFinishedGame(t *testing.T) {
 // TestTakesTheWin: exploding a's primed edge cell captures all of b. Spy (deliberate noise), Raider
 // (opening mode) and Jester can miss it, as in the prototype.
 func TestTakesTheWin(t *testing.T) {
-	for _, s := range []Strategy{Gambler, Warden, Mason, Voyager, Tactician} {
+	for _, s := range []Strategy{Gambler, Warden, Mason, Voyager, Tactician, Hunter, Prodigy} {
 		for seed := range uint64(20) {
 			g := grid(t, 2, 0,
 				". a2 b2 . .",
@@ -154,17 +154,67 @@ func TestOpensInACorner(t *testing.T) {
 	}
 }
 
-// TestRaiderRetreats: a's only cell is next to b's primed cell, so Raider plays as far from b as it can.
-func TestRaiderRetreats(t *testing.T) {
+// TestRaiderSurvivesThreat: a's only cell is next to b's primed cell, so Raider founds a cell out of b's reach.
+func TestRaiderSurvivesThreat(t *testing.T) {
 	g := grid(t, 2, 0,
 		"a1 b2 . . .",
 		".  .  . . .",
 		".  .  . . .",
 	)
+	for seed := range uint64(20) {
+		var b Bot
+		c, r := g.Geo.Coords(b.Choose(g, Raider, seed, DefaultBudget))
+		if d := max(c-1, 1-c) + r; d < 3 {
+			t.Errorf("seed %d: played %d,%d, %d steps from b's primed cell; want at least 3", seed, c, r, d)
+		}
+	}
+}
+
+// TestNomadSpreadsOutOfReach: b's primed cell can explode next turn, so Nomad founds a cell out of its reach and
+// away from its own cells.
+func TestNomadSpreadsOutOfReach(t *testing.T) {
+	g := grid(t, 2, 0,
+		". .  . .  . .  .",
+		". a1 . .  . b3 .",
+		". .  . .  . .  .",
+		". .  . .  . .  .",
+		". .  . a1 . .  .",
+	)
+	steps := func(i, c, r int) int {
+		ic, ir := g.Geo.Coords(i)
+		return max(ic-c, c-ic) + max(ir-r, r-ir)
+	}
+	for seed := range uint64(20) {
+		var b Bot
+		cell := b.Choose(g, Nomad, seed, DefaultBudget)
+		if g.Owner[cell] != core.NoOwner || steps(cell, 5, 1) < 2 || steps(cell, 1, 1) < 2 || steps(cell, 3, 4) < 2 {
+			t.Errorf("seed %d: played %v, want an empty cell 2+ steps from b's primed cell and from a's cells", seed,
+				[]int{cell / g.Geo.Rows, cell % g.Geo.Rows})
+		}
+	}
+}
+
+// TestNomadContestsWhenItExplodesFirst: on the edge above b's cell, a's orb explodes after two more moves and b's
+// after three, so a wins that race; beside it, both need three and b moves first.
+func TestNomadContestsWhenItExplodesFirst(t *testing.T) {
+	g := grid(t, 2, 0,
+		".  . .  . .",
+		".  . b1 . .",
+		".  . .  . .",
+		"a1 . .  . a1",
+	)
+	for seed := range uint64(10) {
+		var b Bot
+		if cell := b.Choose(g, Nomad, seed, DefaultBudget); cell != g.Geo.Index(2, 0) {
+			t.Errorf("seed %d: chose %d, want the edge cell above b, %d", seed, cell, g.Geo.Index(2, 0))
+		}
+	}
+
 	var b Bot
-	cell := b.Choose(g, Raider, 1, DefaultBudget)
-	if c, r := g.Geo.Coords(cell); c != 4 || r != 2 {
-		t.Errorf("retreated to %d,%d, want the far corner 4,2", c, r)
+	b.Choose(g, Spy, 1, DefaultBudget) // sets up the bot for a's turn
+	danger, exposed := b.spyDanger(g)
+	if win, lose := b.spyPlace(g.Geo.Index(2, 0), danger, exposed), b.spyPlace(g.Geo.Index(1, 1), danger, exposed); win <= lose {
+		t.Errorf("Spy scores the race it wins %v, the one it loses %v; want the win higher", win, lose)
 	}
 }
 
@@ -358,6 +408,30 @@ func TestTacticianKeepsLastCompleteDepth(t *testing.T) {
 	got := interrupted.Choose(g, Tactician, 1, rootMoves+1)
 	if got != want {
 		t.Errorf("unfinished second depth changed move from %d to %d", want, got)
+	}
+}
+
+// TestHunterQuiescenceSeesCaptures: at the horizon b can explode its corner into both of a's cells next to it, so
+// Hunter's leaf score must fall below the static evaluation.
+func TestHunterQuiescenceSeesCaptures(t *testing.T) {
+	g := grid(t, 2, 1,
+		"b1 a1 . .",
+		"a1 .  . .",
+		".  .  . a1",
+	)
+	b := Bot{me: 0, left: 1000}
+	hunt := tactic{b: &b, hunt: true, prey: 1}
+	static := hunt.evaluate(g, 0)
+	if got, complete := hunt.minimax(g, 0, -1e12, 1e12, 0); !complete || got >= static {
+		t.Errorf("leaf scored %v (complete=%v), static evaluation %v", got, complete, static)
+	}
+}
+
+func TestHunterPreysOnTheLeader(t *testing.T) {
+	g := grid(t, 4, 0, "a1 b1 c2 .", ". . . .", "d1 . . c1")
+	b := Bot{g: g, me: 0}
+	if got := b.prey(); got != 2 {
+		t.Errorf("prey = %d, want c, who has the most orbs", got)
 	}
 }
 

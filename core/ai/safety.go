@@ -73,8 +73,9 @@ func (b *Bot) openingThreats(g *core.Game, added int) []bool {
 	danger := b.marks()
 	var incoming [core.MaxSize * core.MaxSize]uint8
 	q := b.queue[:0]
+	count, capacity := g.Count[:len(g.Owner)], g.Geo.Cap[:len(g.Owner)] // lets the compiler drop bounds checks
 	for i, o := range g.Owner {
-		if o != core.NoOwner && o != b.me && g.Count[i]+1 >= g.Geo.Cap[i] {
+		if o != core.NoOwner && o != b.me && count[i]+1 >= capacity[i] {
 			danger[i] = true
 			incoming[i] = 1
 			q = append(q, int16(i))
