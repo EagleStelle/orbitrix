@@ -52,7 +52,7 @@ have, fill empty seats with AI, and enjoy following a chain reaction as it plays
   password. The host shares a room code or
   `/join/<CODE>` link privately, approves each player, and can lock the room or kick. Players connect to the host
   over WebRTC, through a Cloudflare TURN relay when their networks block a direct connection. The Docker container
-  on the developer's NAS only serves the website and signaling; no game traffic passes through it.
+  only serves the website and signaling; no game traffic passes through it.
 - Codes and names are typed on a keypad drawn in the game on every platform, because mobile has no on-screen
   keyboard.
 
@@ -76,7 +76,7 @@ have, fill empty seats with AI, and enjoy following a chain reaction as it plays
   in either mode's neutrals; blue appears only as the Blue and Sky player inks.
 - The 12 player inks (colour-blind tuned, first eight from the Okabe–Ito set) and their order are fixed, each with a
   shape mark: Vermilion (dot), Blue (bar), Green (plus), Orange (cross), Mauve (triangle), Sky (square), Yellow
-  (diamond), Charcoal/Chalk (stem), Violet (pair), Brown (ring), Lime (chevron), Magenta (frame).
+  (diamond), Charcoal/Chalk (stem), Violet (pair), Brown (ring), Plum/Mint (chevron), Maroon (frame).
 - Type: Unbounded for display, Archivo for UI.
 - Orb motion (idle orbit, frantic before exploding, per-cell variation) is ported exactly from the prototype and
   stays binding; only how orbs look follows the design system. Board cells are rounded square tiles with gutters.
@@ -86,9 +86,9 @@ have, fill empty seats with AI, and enjoy following a chain reaction as it plays
 ## Evidence on Hand
 
 - `prototype/main.py`: the pygame prototype, used as reference for rules, AI and orb motion only (its UI was
-  replaced). It is gitignored in this repo; the original lives on SynologyDrive.
+  replaced). It is gitignored in this repo; the original lives outside the repo.
 - `go run ./cmd/aitourney`: AI-versus-AI win rates and move times.
-- Benchmarks and design choices: `docs/decisions.md`.
+- Design choices and AI budget sizing: `docs/decisions.md`.
 - No players outside the friend group, no testimonials, no screenshots or store listings, and no usage data exist.
   Do not invent any of them.
 

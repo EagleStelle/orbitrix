@@ -628,12 +628,12 @@ func (p *playScene) draw(dst *ebiten.Image, a *app) {
 	if p.over && !p.b.playing {
 		turn = -1
 	}
-	boardDst := p.boardView.clip(dst)
+	// The board always fits its view, so it draws unclipped and burst rings at the edges spill onto the mat as on Home.
 	// The board's tick clock stops during pause and resumes without jumping ahead.
-	p.b.draw(boardDst, sc, p.b.clock*(1000.0/60), turn, a.set.Marks)
+	p.b.draw(dst, sc, p.b.clock*(1000.0/60), turn, a.set.Marks)
 	if !p.b.playing && !p.over && !p.paused && p.seats[p.game.Turn] == seatHuman {
 		if cell := p.cellAt(a.in.x, a.in.y); cell >= 0 && p.game.Legal(cell) {
-			p.b.drawHover(boardDst, cell, sc.players[p.game.Turn], u)
+			p.b.drawHover(dst, cell, sc.players[p.game.Turn], u)
 		}
 	}
 	p.boardView.drawScrollbar(dst, a)

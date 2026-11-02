@@ -23,10 +23,10 @@ colors:
   player-sky: "#56B4E9"
   player-yellow: "#E8D21D"
   player-charcoal: "#2E2C2A"
-  player-violet: "#7B4FD6"
+  player-violet: "#901CFC"
   player-brown: "#8B5A2B"
-  player-lime: "#9BCB00"
-  player-magenta: "#E8418C"
+  player-plum: "#440048"
+  player-maroon: "#641404"
   player-vermilion-night: "#E86A1A"
   player-blue-night: "#3A9BE0"
   player-green-night: "#1FB88C"
@@ -35,10 +35,10 @@ colors:
   player-sky-night: "#7CC6F0"
   player-yellow-night: "#F0E442"
   player-chalk-night: "#F4F4F4"
-  player-violet-night: "#9C7BF0"
+  player-violet-night: "#844CFC"
   player-brown-night: "#C98B4E"
-  player-lime-night: "#B4E61E"
-  player-magenta-night: "#FF5FA8"
+  player-mint-night: "#B4FC84"
+  player-maroon-night: "#B85450"
 typography:
   display:
     fontFamily: "Unbounded"
@@ -242,7 +242,7 @@ The palette is two quiet neutral sets (a light vinyl mat and a night mat) that c
 - **Press Ink** (`ink`, light mode) / **Chalk Ink** (`chalk`, dark mode): all text, outlines, the PLAY dot, the Start and Resume buttons, toggles that are on, slider fills, the spinner pointer and orb-count badges. Hover lifts them to **Worn Press Ink** / **Worn Chalk Ink**.
 
 ### Secondary
-- **The twelve player inks**, in fixed seat order: Vermilion, Blue, Green, Orange, Mauve, Sky, Yellow, Charcoal (Chalk in dark mode), Violet, Brown, Lime, Magenta. The first eight follow Okabe–Ito. Each mode has its own tuned set (the `-night` tokens). They are used only for orbs, seat dots, spinner wedges, the 30% turn tint on tiles, burst rings, the chain callout and the winner flood.
+- **The twelve player inks**, in fixed seat order: Vermilion, Blue, Green, Orange, Mauve, Sky, Yellow, Charcoal (Chalk in dark mode), Violet, Brown, Plum (Mint in dark mode), Maroon. The first eight follow Okabe–Ito. Violet, Plum/Mint and Maroon were searched for under simulated protan, deutan and tritan vision: no pair of inks is closer than the Okabe–Ito set's own closest pair (Orange/Yellow), each clears 3:1 contrast against the tile and the mat, and none is a second shade of another ink. Each mode has its own tuned set (the `-night` tokens). They are used only for orbs, seat dots, spinner wedges, the 30% turn tint on tiles, burst rings, the chain callout and the winner flood.
 
 ### Neutral
 - **Vinyl White** (`mat-vinyl`) / **Charcoal Mat** (`mat-night`): the ground of every screen. It is also the fill of quiet controls that sit on a tile block, and the rim colour around every orb.
