@@ -54,8 +54,8 @@ have, fill empty seats with AI, and enjoy following a chain reaction as it plays
   `/join/<CODE>` link privately, approves each player, and can lock the room or kick. Players connect to the host
   over WebRTC, through a Cloudflare TURN relay when their networks block a direct connection. The Docker container
   only serves the website and signaling; no game traffic passes through it.
-- Codes and names are typed on a keypad drawn in the game on every platform, because mobile has no on-screen
-  keyboard.
+- Codes and passwords are typed on the device's own keyboard: a physical one, or the on-screen keyboard Android
+  and phone browsers show.
 
 ## Capabilities and Constraints
 
@@ -145,6 +145,11 @@ bash scripts/build.sh [check|desktop|web|server|image|android|all]     # bash / 
 | `android` | `dist/orbitrix.aar` (the Go game, arm64 + x86_64) and `dist/orbitrix.apk` (installable) |
 | `all` | check, desktop, web and server (default); `image` and `android` are separate because they need Docker and the SDK |
 
+Native clients (`desktop`, `android`) play online through the server named in `ORBITRIX_SERVER` when they are built
+(e.g. `https://orbitrix.example.com`); without it they offer no Online. The web build always uses the server it was
+loaded from. For testing, the desktop client also reads `ORBITRIX_SERVER` when it starts, so
+`ORBITRIX_SERVER=http://localhost:1212 go run ./cmd/orbitrix` plays against a local server.
+
 Run the desktop client directly with `go run ./cmd/orbitrix`. F3 toggles the frame-rate overlay (`-fps` starts
 with it on).
 
@@ -233,6 +238,7 @@ $env:ORBITRIX_MATCH_BOT="sovereign"; $env:ORBITRIX_MATCH_GAMES=100; go test -tag
 | `cmd/webdist/` | Finishes a web build: loading-progress size and precompressed copies. |
 | `proto/` | Binary wire protocol. |
 | `client/` | Ebitengine game: scenes, rendering, input, audio, settings. `client/fonts/` holds the two OFL fonts and their licences. |
+| `client/online/` | A client's side of an online room: hosting (signaling, the hub, a WebRTC channel per joiner, reconnects) and joining. |
 | `cmd/orbitrix/` | Desktop and web entry point. |
 | `mobile/`, `android/` | `ebitenmobile` binding and the Gradle project that wraps it (one activity in Java). |
 | `web/` | The game's loader page (`index.html`) and the landing page (`landing.html`). |

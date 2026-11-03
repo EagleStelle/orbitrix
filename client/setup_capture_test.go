@@ -3,14 +3,26 @@
 package client
 
 import (
+	"context"
 	"image"
 	"image/png"
+	"io"
+	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
+
+	"orbitrix/client/online"
+	"orbitrix/core"
+	"orbitrix/proto"
+	"orbitrix/server/signal"
+	"orbitrix/server/transport/loopback"
 )
 
 type setupCaptureCase struct {
@@ -26,6 +38,7 @@ type setupCaptureCase struct {
 	count       int     // synthetic indicator stress count; 0 keeps the actual empty-board values
 	marks       bool
 	turn        int
+	screen      string // "home", "settings", "pause" or "results"; empty draws Setup, or the game with play
 }
 
 type setupCaptureGame struct {
@@ -86,7 +99,98 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 	out := ebiten.NewImage(int(c.w), int(c.h))
 	defer out.Deallocate()
 	out.Fill(a.sc.ground)
-	if c.play {
+	switch c.screen {
+	case "home":
+		h := newHome()
+		h.layout(a)
+		for range 120 {
+			h.demo.tick()
+		}
+		h.draw(out, a)
+	case "settings":
+		m := newSettingsMenu(newHome())
+		m.layout(a)
+		m.draw(out, a)
+	case "modes":
+		h := newHome()
+		h.choosing = true
+		h.layout(a)
+		h.draw(out, a)
+	case "online":
+		o := newOnline(a, "K7Q")
+		if c.hover == "waiting" {
+			o.code.set("K7QX3M")
+			o.joining, o.code.focused = true, false
+			o.waiting.Store(true)
+		}
+		o.layout(a)
+		o.draw(out, a)
+	case "password":
+		p := newPassword(newHostSetup(), c.hover == "wrong")
+		p.pw.set("correct-horse")
+		p.layout(a)
+		p.draw(out, a)
+	case "lobby-host", "lobby-joiner", "pause-online", "gone-prompt":
+		n := captureSession(c.screen != "lobby-joiner")
+		n.lobby.Seats = []proto.Seat{{State: proto.SeatHere, Ready: true, Name: "Human"}, {State: proto.SeatHere, Name: "Human"},
+			{State: proto.SeatOpen}, {State: proto.SeatAI, AI: 6}}
+		if c.screen == "lobby-joiner" {
+			n.seat = 1
+		}
+		if strings.HasPrefix(c.screen, "lobby") {
+			l := newLobby(n)
+			if c.screen == "lobby-host" {
+				l.reqs = []online.Request{{Peer: "p1", Name: "Human"}}
+			}
+			l.layout(a)
+			l.draw(out, a)
+			break
+		}
+		n.lobby.Seats[2] = proto.Seat{State: proto.SeatGone, Name: "Human"}
+		g, _ := core.NewGame(9, 9, 4)
+		p := newPlayOn(a, g, n.seats(), n.labels(), pauseOnline)
+		p.net = n
+		p.paused = c.screen == "pause-online"
+		p.askGone()
+		p.tickRail()
+		p.layout(a)
+		p.draw(out, a)
+	case "gone":
+		g := newGone(&session{end: "Connection lost", lost: true, code: "K7QX3M"})
+		g.layout(a)
+		g.draw(out, a)
+	case "settings-online":
+		m := newSettingsMenu(newHome())
+		m.tab = tabOnline
+		m.layout(a)
+		m.draw(out, a)
+	case "pause", "results":
+		p, err := newPlay(a, a.set.Cols, a.set.Rows, a.set.seats)
+		if err != nil {
+			g.err = err
+			return
+		}
+		for c.screen == "results" && !p.game.Over() {
+			_ = p.game.Simulate(p.game.LegalMoves(nil)[0])
+		}
+		p.b = newBoard(p.game)
+		p.settle()
+		p.paused, p.overT = c.screen == "pause", wipeTicks+60
+		if c.hover == "confirm" {
+			p.confirm, p.confirmT = pauseRestart, confirmTicks
+		}
+		if c.hover == "flash" {
+			p.paused = false
+			_ = p.game.Simulate(0)
+			p.b = newBoard(p.game)
+			p.settle()
+			p.flash, p.flashT = 0, flashTicks
+		}
+		p.tickRail()
+		p.layout(a)
+		p.draw(out, a)
+	}
+	if c.screen == "" && c.play {
 		p, err := newPlay(a, a.set.Cols, a.set.Rows, a.set.seats)
 		if err != nil {
 			g.err = err
@@ -107,7 +211,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		}
 		p.layoutScrolled(a)
 		p.draw(out, a)
-	} else {
+	} else if c.screen == "" {
 		s.draw(out, a)
 	}
 	pixels := image.NewRGBA(image.Rect(0, 0, int(c.w), int(c.h)))
@@ -124,6 +228,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 }
 
 func TestCaptureSetup(t *testing.T) {
+	origin = "https://orbitrix.example.com" // so the online entries show
 	dir := os.Getenv("ORBITRIX_CAPTURE_DIR")
 	if dir == "" {
 		t.Skip("set ORBITRIX_CAPTURE_DIR to capture setup viewports")
@@ -132,6 +237,38 @@ func TestCaptureSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := &setupCaptureGame{dir: dir, cases: []setupCaptureCase{
+		{name: "home-desktop", w: 1440, h: 900, players: 4, screen: "home"},
+		{name: "home-dark-1040", w: 1040, h: 640, players: 4, screen: "home", dark: true},
+		{name: "home-mobile", w: 390, h: 844, players: 4, screen: "home"},
+		{name: "home-landscape", w: 844, h: 390, players: 4, screen: "home"},
+		{name: "settings-desktop", w: 1440, h: 900, players: 2, screen: "settings"},
+		{name: "settings-mobile-dark", w: 390, h: 844, players: 2, screen: "settings", dark: true},
+		{name: "pause-desktop", w: 1440, h: 900, players: 4, screen: "pause"},
+		{name: "pause-mobile", w: 390, h: 844, players: 4, screen: "pause", dark: true},
+		{name: "results-desktop", w: 1440, h: 900, players: 4, screen: "results"},
+		{name: "results-mobile", w: 390, h: 844, players: 4, screen: "results", dark: true},
+		{name: "results-landscape", w: 844, h: 390, players: 4, screen: "results"},
+		{name: "p6-home-modes", w: 1440, h: 900, players: 4, screen: "modes"},
+		{name: "p6-home-modes-mobile", w: 390, h: 844, players: 4, screen: "modes", dark: true},
+		{name: "p6-online", w: 1440, h: 900, players: 2, screen: "online"},
+		{name: "p6-online-1040-waiting", w: 1040, h: 640, players: 2, screen: "online", hover: "waiting"},
+		{name: "p6-online-mobile", w: 390, h: 844, players: 2, screen: "online", dark: true},
+		{name: "p6-online-landscape", w: 844, h: 390, players: 2, screen: "online"},
+		{name: "p6-password", w: 1040, h: 640, players: 2, screen: "password", hover: "wrong"},
+		{name: "p6-password-mobile", w: 390, h: 844, players: 2, screen: "password"},
+		{name: "p6-lobby-host", w: 1440, h: 900, players: 4, screen: "lobby-host"},
+		{name: "p6-lobby-host-mobile", w: 390, h: 844, players: 4, screen: "lobby-host", dark: true},
+		{name: "p6-lobby-joiner", w: 1040, h: 640, players: 4, screen: "lobby-joiner"},
+		{name: "p6-pause-online", w: 1040, h: 640, players: 4, screen: "pause-online"},
+		{name: "p6-gone-prompt", w: 1040, h: 640, players: 4, screen: "gone-prompt"},
+		{name: "p6-gone", w: 1040, h: 640, players: 2, screen: "gone"},
+		{name: "p6-gone-mobile", w: 390, h: 844, players: 2, screen: "gone", dark: true},
+		{name: "p6-settings-online", w: 1040, h: 640, players: 2, screen: "settings-online"},
+		{name: "fix-pause-confirm", w: 1040, h: 640, players: 4, screen: "pause", hover: "confirm"},
+		{name: "fix-pause-confirm-mobile", w: 390, h: 844, players: 4, screen: "pause", hover: "confirm", dark: true},
+		{name: "fix-flash", w: 1040, h: 640, players: 2, screen: "pause", hover: "flash"},
+		{name: "fix-results-marks", w: 1040, h: 640, players: 4, screen: "results", marks: true},
+		{name: "fix-results-dark", w: 1040, h: 640, players: 3, screen: "results", dark: true},
 		{name: "desktop", w: 1440, h: 900, players: 2},
 		{name: "setup-all-shapes", w: 1440, h: 1080, players: 2},
 		{name: "setup-desktop-12p", w: 1440, h: 900, players: 12},
@@ -197,4 +334,25 @@ func TestCaptureSetup(t *testing.T) {
 	if err := ebiten.RunGame(g); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// captureSession is an online room for the lobby and online game captures: a real one on a local signaling server
+// when host, so the host's controls show.
+func captureSession(host bool) *session {
+	origin = "https://orbitrix.example.com"
+	if !host {
+		mine, _ := loopback.Pipe()
+		n := newSession(online.NewLink(mine))
+		n.code, n.got = "K7QX3M", true
+		return n
+	}
+	srv := httptest.NewServer(signal.New(signal.Config{STUN: []string{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	h, err := online.Open(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), "", false, hubConfig(setupTestApp(800, 600, 1, 4)))
+	if err != nil {
+		panic(err)
+	}
+	n := &session{host: h, link: h.Me, seat: 0, got: true}
+	return n
 }

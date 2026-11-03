@@ -17,6 +17,12 @@ type Host interface {
 	Leave()
 	// Rotate holds the screen in landscape, or lets it turn freely again.
 	Rotate(landscape bool)
+	// KeepScreenOn keeps the screen awake while the player hosts an online room.
+	KeepScreenOn(on bool)
+	// Share opens the share sheet with text: a room's join link.
+	Share(text string)
+	// Keyboard sets up the on-screen keyboard for the next field: a password's (secret) or a room code's.
+	Keyboard(secret bool)
 }
 
 var start sync.Once
@@ -28,6 +34,9 @@ func Start(dataDir string, host Host) {
 		platform.SetDataDir(dataDir)
 		platform.Leave = host.Leave
 		platform.Rotate = host.Rotate
+		platform.Hosting = host.KeepScreenOn
+		platform.ShareSheet = host.Share
+		platform.Keyboard = host.Keyboard
 		ebitenmobile.SetGame(client.New())
 	})
 }

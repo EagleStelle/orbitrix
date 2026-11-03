@@ -23,6 +23,11 @@ var Leave = func() {}
 // stays nil where the app can't turn the screen itself (desktop, web).
 var Rotate func(landscape bool)
 
+// Keyboard sets up the on-screen keyboard for the field taking the focus: a password's (secret), which the keyboard
+// neither suggests nor learns, or a room code's (capitals, no suggestions). The mobile wrapper sets it; it stays nil
+// elsewhere.
+var Keyboard func(secret bool)
+
 // PressBack reports a press of Android's back button.
 func PressBack() { back.Store(true) }
 

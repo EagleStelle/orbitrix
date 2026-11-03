@@ -5,6 +5,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 out=dist
+# ORBITRIX_SERVER (https://your.site) is the server native clients play online through; without it they offer no Online.
+stamp="-X orbitrix/client/platform.origin=${ORBITRIX_SERVER:-}"
 
 check() {
 	unformatted=$(gofmt -l .)
@@ -18,7 +20,7 @@ check() {
 }
 
 desktop() {
-	go build -trimpath -o "$out/orbitrix$(go env GOEXE)" ./cmd/orbitrix
+	go build -trimpath -ldflags="$stamp" -o "$out/orbitrix$(go env GOEXE)" ./cmd/orbitrix
 }
 
 web() {
@@ -54,9 +56,10 @@ android() {
 		fi
 		export ANDROID_HOME
 	fi
-	# arm64 for phones, x86_64 for emulators and Chromebooks.
+	# arm64 for phones, x86_64 for emulators and Chromebooks. -checklinkname=0: pion's Android interface lookup
+	# (github.com/wlynxg/anet) links to a net internal that Go's linker otherwise refuses.
 	go tool ebitenmobile bind -target android/arm64,android/amd64 -androidapi 24 -javapkg com.orbitrix \
-		-trimpath -ldflags="-s -w" -o "$out/orbitrix.aar" ./mobile
+		-trimpath -ldflags="-s -w -checklinkname=0 $stamp" -o "$out/orbitrix.aar" ./mobile
 	(cd android && sh ./gradlew -q assembleRelease)
 	cp -f android/build/outputs/apk/release/orbitrix-release.apk "$out/orbitrix.apk"
 }

@@ -16,11 +16,11 @@ import (
 func TestPair(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	host, offer, err := rtc.Offer(ctx, nil)
+	host, offer, err := rtc.Offer(ctx, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	joiner, answer, err := rtc.Answer(ctx, nil, offer)
+	joiner, answer, err := rtc.Answer(ctx, nil, offer, false)
 	if err != nil {
 		t.Fatal(err)
 	}

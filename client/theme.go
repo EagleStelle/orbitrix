@@ -415,6 +415,11 @@ func textWidth(s string, face text.Face) float64 {
 // drawMark draws seat p's shape mark centred in a dot of radius r filled with c, in black or white for contrast.
 // The mark comes from a sprite rendered once per seat and size.
 func drawMark(dst *ebiten.Image, p int, x, y, r float64, c color.RGBA) {
+	drawMarkIn(dst, p, x, y, r, inkOn(c))
+}
+
+// drawMarkIn draws seat p's shape mark in ink.
+func drawMarkIn(dst *ebiten.Image, p int, x, y, r float64, ink color.RGBA) {
 	sr := max(1, math.Ceil(r))
 	k := spriteKey{mark: p + 1, c: int(sr)}
 	img, ok := sprites[k]
@@ -426,7 +431,7 @@ func drawMark(dst *ebiten.Image, p int, x, y, r float64, c color.RGBA) {
 	imageOp.GeoM.Translate(-spritePad-sr, -spritePad-sr)
 	imageOp.GeoM.Scale(r/sr, r/sr)
 	imageOp.GeoM.Translate(x, y)
-	tint(&imageOp.ColorScale, inkOn(c))
+	tint(&imageOp.ColorScale, ink)
 	dst.DrawImage(img, &imageOp)
 }
 

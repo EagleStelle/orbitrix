@@ -122,15 +122,15 @@ func TestPlayLayout(t *testing.T) {
 							t.Fatalf("pause panel %+v leaves the screen", p.pausePanel)
 						}
 						pause := map[string]rect{}
-						for i, r := range p.pauseBtn {
-							pause[pauseItems[i]] = r
+						for k, i := range p.items {
+							pause[pauseItems[i]] = p.pauseBtn[k]
 						}
 						checkParts(t, p.pausePanel, pause)
 						results := map[string]rect{"again": p.again, "home": p.toHome, "exit": p.exit,
 							"dot": {p.winX - p.winDotR, p.winDotY - p.winDotR, 2 * p.winDotR, 2 * p.winDotR}}
 						checkParts(t, v, results)
-						for _, s := range p.seats {
-							if textWidth(winTitles[s], p.winFace) > v.w {
+						for _, l := range p.labels {
+							if textWidth(l+" wins!", p.winFace) > v.w {
 								t.Fatal("result title must fit the screen")
 							}
 						}

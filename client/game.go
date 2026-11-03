@@ -34,8 +34,10 @@ type app struct {
 	in    input
 	epoch time.Time
 
-	next    scene // scene to switch to after this update
-	pointer bool  // a clickable thing is under the pointer this update
+	next    scene    // scene to switch to after this update
+	pointer bool     // a clickable thing is under the pointer this update
+	net     *session // the online room this player is in, so closing the app can leave it
+	typing  *field   // the text field that has the device's keyboard, if any
 }
 
 // safe is the part of the screen clear of the display's cutout. Every layout goes in it; only fills that cover the
@@ -233,12 +235,26 @@ func New() *Game {
 	a.f = newFonts(1)
 	a.in.finger = true // no pointer until the mouse moves or a finger lands
 	g.scene = newHome()
+	if code := platform.JoinCode(); code != "" && origin != "" { // opened from a /join/ link
+		g.scene = newOnline(a, code)
+	}
+	// Closing the window while hosting closes the room first, so the other players hear why.
+	ebiten.SetWindowClosingHandled(true)
 	return g
 }
 
 // Update advances the game by one tick.
 func (g *Game) Update() error {
 	a := &g.a
+	if ebiten.IsWindowBeingClosed() {
+		if a.net != nil {
+			a.net.leave(a)
+			// shortcut: the players' Bye messages go out on their own goroutines; the app waits a moment for them
+			// instead of tracking each send. Track them if players on slow links miss the message.
+			time.Sleep(500 * time.Millisecond)
+		}
+		return ebiten.Termination
+	}
 	x, y, down := a.in.x, a.in.y, a.in.down
 	a.in.read(a.u)
 	changed := a.in.x != x || a.in.y != y || a.in.down != down || a.in.clicked || a.in.wheel != 0 || a.in.esc
@@ -247,7 +263,7 @@ func (g *Game) Update() error {
 	case inpututil.IsKeyJustPressed(ebiten.KeyF3):
 		g.ShowFPS = !g.ShowFPS
 		changed = true
-	case inpututil.IsKeyJustPressed(ebiten.KeyM):
+	case a.typing == nil && inpututil.IsKeyJustPressed(ebiten.KeyM): // M types into a field instead
 		a.toggleMute()
 		changed = true // Settings shows the Sound switch
 	}
@@ -260,6 +276,9 @@ func (g *Game) Update() error {
 		g.fresh, g.idle = true, 0
 	}
 	if a.next != nil {
+		if a.typing != nil {
+			a.typing.focus(a, false) // the on-screen keyboard closes with its page
+		}
 		g.scene, a.next = a.next, nil
 		if l := wantsLandscape(g.scene); platform.Rotate != nil && l != g.landscape {
 			g.landscape = l

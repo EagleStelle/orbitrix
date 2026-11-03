@@ -12,12 +12,21 @@ import (
 )
 
 // Settings tabs and their rows. New groups get a tab; new options get a row.
-var settingsTabs = [...]string{"Video", "Audio"}
+var settingsTabs = [...]string{"Video", "Audio", "Online"}
 
 const (
 	tabVideo = iota
 	tabAudio
+	tabOnline // last, so builds that can't play online drop it (tabCount)
 )
+
+// tabCount is how many tabs show: Online only where the game can play online.
+func tabCount() int {
+	if origin == "" {
+		return tabOnline
+	}
+	return len(settingsTabs)
+}
 
 type rowKind int
 
@@ -39,6 +48,7 @@ const (
 	optTheme
 	optFullscreen
 	optMarks
+	optRelay
 )
 
 var settingRows = [len(settingsTabs)][]settingRow{
@@ -47,7 +57,8 @@ var settingRows = [len(settingsTabs)][]settingRow{
 		{"Colorblind mode", rowToggle, optMarks}}, func(r settingRow) bool {
 		return r.id == optFullscreen && !platform.CanFullscreen
 	}),
-	tabAudio: {{"Sound", rowToggle, optSound}, {"Volume", rowSlider, optVolume}},
+	tabAudio:  {{"Sound", rowToggle, optSound}, {"Volume", rowSlider, optVolume}},
+	tabOnline: {{"Force relay", rowToggle, optRelay}},
 }
 
 // settingsMenu is the Settings page: tabs over one block of rows, each a label and its control. It returns to the
@@ -91,7 +102,7 @@ func (s *settingsMenu) layout(a *app) {
 	s.titleX, s.titleY = s.backBtn.right()+16*u, s.backBtn.cy()
 
 	ty := s.backBtn.bottom() + tabGap
-	for i := range s.tabs {
+	for i := range tabCount() {
 		s.tabs[i] = rect{x + float64(i)*136*u, ty, 124 * u, 44 * u}
 	}
 	n := len(settingRows[s.tab])
@@ -116,6 +127,8 @@ func (s *settingsMenu) get(a *app, id int) bool {
 		return ebiten.IsFullscreen() // a browser also leaves fullscreen on its own Esc
 	case optMarks:
 		return a.set.Marks
+	case optRelay:
+		return a.set.Relay
 	}
 	return false
 }
@@ -129,6 +142,8 @@ func (s *settingsMenu) flip(a *app, id int) {
 		ebiten.SetFullscreen(a.set.Fullscreen)
 	case optMarks:
 		a.set.Marks = !a.set.Marks
+	case optRelay:
+		a.set.Relay = !a.set.Relay
 	}
 	a.set.save()
 }
@@ -149,11 +164,14 @@ func (s *settingsMenu) themeOptions(a *app, r rect) [2]rect {
 
 func (s *settingsMenu) update(a *app) error {
 	s.layout(a)
+	if a.net != nil {
+		a.net.pump(a) // an online game goes on meanwhile; the game scene plays what came in on return
+	}
 	if a.in.esc || a.clicked(compactHit(s.backBtn, a.u)) {
 		s.close(a)
 		return nil
 	}
-	for i, t := range s.tabs {
+	for i, t := range s.tabs[:tabCount()] {
 		if a.clicked(t) {
 			s.tab = i
 			s.layout(a)
@@ -203,7 +221,7 @@ func (s *settingsMenu) draw(dst *ebiten.Image, a *app) {
 	drawText(dst, "Settings", f.title, s.titleX, s.titleY, text.AlignStart, sc.ink)
 
 	// The chosen tab is outlined in ink; the others are quiet pills on the mat.
-	for i, t := range s.tabs {
+	for i, t := range s.tabs[:tabCount()] {
 		style := btnTile
 		if i == s.tab {
 			style = btnChosen

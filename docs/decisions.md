@@ -260,3 +260,62 @@ New, not from the prototype; they use real search or learning instead of more he
   the earlier rule that hosting needs a password, and a short-lived published default password.
 - **Race detector in CI:** the Windows development box has no cgo, so CI runs `go test -race` on the server,
   protocol and rules packages.
+
+## Design review before online play (Phase 6)
+
+- **Review:** the impeccable critique of the Phase 3–4 screens scored 24/40 (`.impeccable/critique/`). The user took
+  every fix but the first:
+  - **Seats keep their type as their name** (user choice), not P# tags, even though DESIGN.md had specified them.
+    Players will name themselves later, as in .io games; until then a human is "Human" and a bot its AI's name.
+  - **Restart and Main menu ask for a second tap**, in place: the pill turns solid ink and reads "Restart?" for 3 s.
+  - **A tap the mover can't make flashes that tile's outline** in the mover's ink, instead of doing nothing.
+  - **AI difficulty shows as five pips**: the twelve AIs in their measured order, five even steps.
+  - **Results:** a solid winner's dot, so it can't read as an out seat's ring, and the biggest chain only from ×2.
+
+## Online play in the client (Phase 6)
+
+- **Ways to play** (user choice): PLAY swaps itself and its buttons for This Device, Online (and Same Wi-Fi in Phase
+  7), then Back, on Home itself. "Local multiplayer" was avoided because games use it for couch co-op; This Device
+  covers playing alone against bots as well as passing one device round.
+- **One Online page** (user choice): hosting (Set up a room) above joining (six code slots), create before join as
+  on Meet, Zoom and Discord, in one centred column (at most 640 px) on every target. A `/join/<code>` address opens
+  it with the code filled in, as does a seat this player may rejoin.
+- **The device's own keyboard, not a drawn one** (user choice, replacing the drawn keypad and keyboard): Ebitengine
+  v2.10's `exp/textinput` opens the on-screen keyboard on Android (a hidden edit text inside EbitenView) and in phone
+  browsers (a hidden textarea), and takes physical typing on desktop. A browser opens its keyboard only during a
+  touch, so a field takes the focus when the pointer goes down on it, not on release. The Android activity sets the
+  hidden edit text's input type per field (`platform.Keyboard`): capitals without suggestions for a code, the password
+  variation with no personalised learning for the host password, keeping Ebitengine's multi-line flag so Return
+  still reaches the game. M types instead of muting while a field has the focus.
+- **The lobby is laid out like Setup** (user choice): a Room block and a Players block, with the action along the
+  bottom.
+- **Native builds learn their server at build time** (user choice): `ORBITRIX_SERVER` is stamped in by the build
+  scripts; without it a build offers no Online. The desktop build also reads it at start, for local testing. The web
+  build uses the address it was loaded from.
+- **Players send the name "Human"** until they can name themselves. A seat's own row reads "(you)", so online players
+  can find their colour.
+- **The host is ready as soon as the room opens.** Start fills open seats with bots (Setup's default AI for that
+  seat), so a host never waits for a friend who didn't come.
+- **Join requests are answered for the host when no seat is open**: they are refused rather than shown.
+- **Seat left:** the host is asked at once, in a dialog, whether a bot plays the seat or its turns are skipped. Kick
+  is in the lobby only.
+- **Moves are paced on each screen, not on the host:** the hub waits 400 ms before an AI move (so a browser host
+  draws between thoughts), and each client plays a bot's move 300–600 ms after the last one finished, as locally.
+  Moves that arrive while a chain plays wait their turn.
+- **Hash check:** each `MoveApplied` is played on the client's board and its hash compared; any mismatch, gap or
+  move that doesn't fit drops what is queued and asks for a `Snapshot`.
+- **Online pause** is only a menu: the game goes on for everyone else, and moves wait until it closes. Esc on an
+  online game's result does nothing (the host's Esc would close the room for everyone).
+- **The hub ignores room codes online** (`Config.Code` empty): signaling already admits only approved players, and a
+  host whose room the server lost gets a new code that seated players' Hellos would no longer match.
+- **Rejoin:** a joiner saves the room code and the hub's token on Welcome and forgets them when the room ends or they
+  leave; a dropped connection keeps them and offers Rejoin. A rejoin is approved by the host's hub without asking.
+- **Closing the desktop window while hosting** closes the room, then waits half a second for the Bye messages
+  (shortcut). A browser tab asks before closing (`beforeunload`) and holds a screen wake lock; Android keeps the
+  screen on while hosting.
+- **Share link:** Android opens the share sheet, browsers their share sheet or the clipboard, Windows the clipboard
+  ("Copied").
+- **Android needs `-checklinkname=0`:** pion's interface lookup there (`github.com/wlynxg/anet`) links to a `net`
+  internal that Go's linker refuses otherwise. The app now asks for `INTERNET`.
+- **Size:** pion added 7.3 MB to the APK (now 18.1 MB) and 1.7 MB brotli to the web build (33.6 MB raw, 5.6 MB
+  brotli).

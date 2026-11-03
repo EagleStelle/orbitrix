@@ -13,6 +13,7 @@ CLAUDE.md
 *.wasm
 *.aar
 *.apk
+*.test
 
 # Android / Gradle
 .gradle/

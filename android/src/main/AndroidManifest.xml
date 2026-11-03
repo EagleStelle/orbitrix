@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Online play: signaling over WebSocket, the game over WebRTC. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:enableOnBackInvokedCallback="true"
         android:label="Orbitrix"

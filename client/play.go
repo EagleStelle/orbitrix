@@ -17,28 +17,25 @@ import (
 	"orbitrix/client/platform"
 	"orbitrix/core"
 	"orbitrix/core/ai"
+	"orbitrix/proto"
 )
 
 // AI moves wait aiDelayMin..aiDelayMax ticks (300–600 ms) so people can follow them. Presentation only: the
 // move itself depends on the position, strategy, seed and budget alone.
 const (
-	aiDelayMin  = 18
-	aiDelayMax  = 36
-	calloutHold = 90 // ticks a finished chain's callout stays up
-	wipeTicks   = 40 // the winner's ink flooding the screen
+	aiDelayMin   = 18
+	aiDelayMax   = 36
+	calloutHold  = 90  // ticks a finished chain's callout stays up
+	wipeTicks    = 40  // the winner's ink flooding the screen
+	confirmTicks = 180 // a pause button that throws the game away waits this long for its second tap
+	flashTicks   = 30  // a tapped cell the player can't use flashes its outline
 )
-
-// winTitles are "Human wins!", "Jester wins!", ... for each seat type.
-var winTitles = func() []string {
-	w := make([]string, len(seatLabels))
-	for i, label := range seatLabels {
-		w[i] = label + " wins!"
-	}
-	return w
-}()
 
 // The pause menu, in order.
 var pauseItems = [...]string{"Resume", "Restart", "Settings", "Main menu"}
+
+// pauseConfirm is what a button that waits for its second tap reads.
+var pauseConfirm = [len(pauseItems)]string{pauseRestart: "Restart?", pauseMainMenu: "Main menu?"}
 
 const (
 	pauseResume = iota
@@ -52,6 +49,8 @@ const (
 type playScene struct {
 	cols, rows int
 	seats      []int
+	labels     []string // what each seat is called: its type, or an online player's name
+	items      []int    // the pause menu's buttons, from pauseItems
 	game       *core.Game
 	b          *board
 	seed       uint64 // per game; AI seeds derive from it
@@ -75,10 +74,28 @@ type playScene struct {
 	chainN           int
 	biggest          int // longest chain this game, in waves
 
-	paused  bool
-	over    bool
-	overT   int // ticks since the game ended
-	results string
+	paused   bool
+	confirm  int // pause button waiting for its second tap, or -1
+	confirmT int
+	flash    int // cell flashing after a tap the mover can't play there
+	flashT   int
+	over     bool
+	overT    int // ticks since the game ended
+	results  string
+	winTitle string
+
+	// Online: the room this game is played in. Moves arrive from the host instead of being made here.
+	net      *session
+	seq      uint32 // moves played on this board
+	sent     bool   // this player's move is on its way to the host
+	resync   bool   // the board went wrong; waiting for the host's snapshot
+	pace     int    // ticks before an AI's move plays, or -1 before the wait starts
+	lobbyN   int    // the room update the seats were last read from
+	goneP    int    // host: the seat whose player left, asking Bot or Skip; -1 when none
+	goneB    [2]rect
+	goneD    rect
+	goneN    int // the seat goneText names
+	goneText string
 
 	// Layout in device px, recomputed when the screen size changes.
 	lv                          rect
@@ -111,9 +128,26 @@ func newPlay(a *app, cols, rows int, seats []int) (*playScene, error) {
 	if err != nil {
 		return nil, fmt.Errorf("new game: %w", err)
 	}
+	labels := make([]string, len(seats))
+	for i, s := range seats {
+		labels[i] = seatLabels[s]
+	}
+	return newPlayOn(a, g, seats, labels, pauseLocal), nil
+}
+
+// The pause menu of a local game, and of an online one, where only the host could restart and nobody can stop the
+// clock for everyone.
+var (
+	pauseLocal  = []int{pauseResume, pauseRestart, pauseSettings, pauseMainMenu}
+	pauseOnline = []int{pauseResume, pauseSettings, pauseMainMenu}
+)
+
+// newPlayOn shows game g, which may be under way.
+func newPlayOn(a *app, g *core.Game, seats []int, labels []string, items []int) *playScene {
 	p := &playScene{
-		cols: cols, rows: rows, seats: append([]int(nil), seats...), game: g, b: newBoard(g),
-		seed: a.rng.Uint64(), scratch: g.Clone(), aiMove: make(chan int, 1),
+		cols: g.Geo.Cols, rows: g.Geo.Rows, seats: append([]int(nil), seats...), labels: labels, items: items, game: g,
+		b: newBoard(g), seed: a.rng.Uint64(), scratch: g.Clone(), aiMove: make(chan int, 1), confirm: -1, pace: -1,
+		goneP: -1, goneN: -1,
 	}
 	// Every orb of a settled board sits in a cell below its capacity, and a player can't own more than all of them.
 	most := 0
@@ -123,7 +157,7 @@ func newPlay(a *app, cols, rows int, seats []int) (*playScene, error) {
 	p.orbsMax = strings.Repeat("8", len(strconv.Itoa(most)))
 	p.settle()
 	p.spin = p.wedgeAngle(p.shown)
-	return p, nil
+	return p
 }
 
 // settle runs when a move has finished playing: the turn passes and the rail catches up.
@@ -134,7 +168,11 @@ func (p *playScene) settle() {
 	}
 	if p.game.Over() && !p.over {
 		p.over, p.shown, p.paused = true, int(p.game.Winner), false
-		p.results = strconv.Itoa(p.game.Moves) + " moves  ·  biggest chain ×" + strconv.Itoa(p.biggest)
+		p.winTitle = p.labels[p.shown] + " wins!"
+		p.results = strconv.Itoa(p.game.Moves) + " moves"
+		if p.biggest >= 2 { // a chain only counts from two waves, as the callout does
+			p.results += "  ·  biggest chain ×" + strconv.Itoa(p.biggest)
+		}
 	}
 }
 
@@ -157,20 +195,35 @@ func (p *playScene) move(a *app, cell int) {
 }
 
 func (p *playScene) restartGame(a *app) {
+	if p.net != nil { // the host's room goes back to its lobby, and the room update takes everyone there
+		if err := p.net.host.Room.Rematch(); err != nil {
+			log.Printf("rematch: %v", err)
+		}
+		return
+	}
 	if np, err := newPlay(a, p.cols, p.rows, p.seats); err == nil {
 		a.next = np
 	}
 }
 
 func (p *playScene) update(a *app) error {
+	if p.net != nil && p.pumpNet(a) {
+		return nil
+	}
 	p.layout(a)
 	if p.paused {
 		return p.updatePause(a)
 	}
+	if p.goneP >= 0 {
+		p.updateGone(a)
+		return nil
+	}
 	if a.in.esc {
-		if p.over && !p.b.playing {
+		switch {
+		case p.over && !p.b.playing && p.net != nil: // leaving a finished room is a button, not a slip
+		case p.over && !p.b.playing:
 			a.next = newHome()
-		} else {
+		default:
 			p.paused = true
 		}
 		return nil
@@ -186,16 +239,21 @@ func (p *playScene) update(a *app) error {
 	if wasPlaying && !p.b.playing {
 		p.settle()
 	}
+	if p.net != nil {
+		p.playNet(a)
+	}
 
 	if p.over && !p.b.playing {
 		p.overT++
 		switch {
 		case p.resultsAlpha() == 0: // the buttons have not faded in yet
-		case a.clicked(p.again):
+		case p.canAgain() && a.clicked(p.again):
 			p.restartGame(a)
 		case a.clicked(p.toHome):
+			p.leave(a)
 			a.next = newHome()
 		case platform.CanExit && a.clicked(p.exit):
+			p.leave(a)
 			return ebiten.Termination
 		}
 		return nil
@@ -211,30 +269,79 @@ func (p *playScene) update(a *app) error {
 		}
 		return nil
 	}
-	if p.seats[p.game.Turn] == seatHuman {
-		if cell := p.cellAt(a.in.x, a.in.y); cell >= 0 && p.game.Legal(cell) {
-			a.pointer = true
-			if a.in.clicked {
-				p.move(a, cell)
-			}
-		}
-		return nil
+	if p.flashT > 0 {
+		p.flashT--
 	}
-	p.thinkAI(a)
+	cell := p.cellAt(a.in.x, a.in.y)
+	mine := p.mine()
+	switch {
+	case cell < 0:
+	case mine && p.game.Legal(cell):
+		a.pointer = true
+		if a.in.clicked {
+			p.play(a, cell)
+			return nil
+		}
+	case a.in.clicked: // someone else's cell, or someone else's turn: say so instead of ignoring the tap
+		p.flash, p.flashT = cell, flashTicks
+	}
+	if p.net == nil && p.seats[p.game.Turn] != seatHuman {
+		p.thinkAI(a)
+	}
 	return nil
+}
+
+// mine reports whether the player at this screen may move now: any human seat in a local game, their own online.
+func (p *playScene) mine() bool {
+	if p.net != nil {
+		return p.myTurn()
+	}
+	return p.seats[p.game.Turn] == seatHuman
+}
+
+// play makes this player's move: at once in a local game, through the host online.
+func (p *playScene) play(a *app, cell int) {
+	if p.net == nil {
+		p.move(a, cell)
+		return
+	}
+	c, r := p.game.Geo.Coords(cell)
+	p.net.link.Send(proto.Move{C: uint8(c), R: uint8(r)})
+	p.sent = true
+}
+
+// canAgain reports whether Play again is offered: always locally, and online only to the host, whose room goes back
+// to its lobby for everyone.
+func (p *playScene) canAgain() bool { return p.net == nil || p.net.host != nil }
+
+// leave lets go of an online room on the way out: a host closes it, a joiner gives up the seat.
+func (p *playScene) leave(a *app) {
+	if p.net != nil {
+		p.net.leave(a)
+		a.net = nil
+	}
 }
 
 // updatePause runs the pause menu. The game stands still behind it: no animation ticks, and an AI move that is
 // ready waits.
 func (p *playScene) updatePause(a *app) error {
+	if p.confirmT--; p.confirmT <= 0 {
+		p.confirm = -1
+	}
 	if a.in.esc {
-		p.paused = false
+		p.paused, p.confirm = false, -1
 		return nil
 	}
-	for i, r := range p.pauseBtn {
-		if !a.clicked(r) {
+	for k, i := range p.items {
+		if !a.clicked(p.pauseBtn[k]) {
 			continue
 		}
+		// Restart and Main menu throw the game away, so they ask for a second tap.
+		if (i == pauseRestart || i == pauseMainMenu) && p.confirm != i {
+			p.confirm, p.confirmT = i, confirmTicks
+			return nil
+		}
+		p.confirm = -1
 		switch i {
 		case pauseResume:
 			p.paused = false
@@ -243,12 +350,13 @@ func (p *playScene) updatePause(a *app) error {
 		case pauseSettings:
 			a.next = newSettingsMenu(p)
 		case pauseMainMenu:
+			p.leave(a)
 			a.next = newHome()
 		}
 		return nil
 	}
 	if a.in.clicked && !p.pausePanel.contains(a.in.x, a.in.y) {
-		p.paused = false
+		p.paused, p.confirm = false, -1
 	}
 	return nil
 }
@@ -351,6 +459,7 @@ func (p *playScene) layout(a *app) {
 	p.revealSeat(a)
 	p.layoutPause(a, v)
 	p.layoutResults(a, v)
+	p.layoutGone(a, v)
 }
 
 // tableRows is how many rows the seats take in p.tableCols columns.
@@ -431,16 +540,16 @@ func (p *playScene) seatInsets(a *app) (in, sp, gap, dot float64) {
 func (p *playScene) seatTableWidth(a *app) float64 {
 	name, bold := p.seatFaces(a)
 	in, sp, gap, dot := p.seatInsets(a)
-	row := 2*in + 2*dot + sp + widestLabel(p.seats, name) + gap + max(textWidth(p.orbsMax, bold), textWidth("out", name))
+	row := 2*in + 2*dot + sp + widestLabel(p.labels, name) + gap + max(textWidth(p.orbsMax, bold), textWidth("out", name))
 	cols := float64(p.tableCols)
 	return cols*row + (cols-1)*8*a.u
 }
 
-// widestLabel is the width of the widest type among seats, set in face.
-func widestLabel(seats []int, face *text.GoTextFace) float64 {
+// widestLabel is the width of the widest of labels, set in face.
+func widestLabel(labels []string, face *text.GoTextFace) float64 {
 	w := 0.0
-	for _, s := range seats {
-		w = max(w, textWidth(seatLabels[s], face))
+	for _, l := range labels {
+		w = max(w, textWidth(l, face))
 	}
 	return w
 }
@@ -553,7 +662,7 @@ func (p *playScene) layoutPause(a *app, v rect) {
 	u := a.u
 	bw, bh, gap := min(300*u, v.w-32*u-56*u), quietButtonHeight*u, 12*u
 	cols := 1
-	rows := func() float64 { return float64((len(pauseItems) + cols - 1) / cols) }
+	rows := func() float64 { return float64((len(p.items) + cols - 1) / cols) }
 	ph := func() float64 { return 28*u + 40*u + 24*u + rows()*bh + (rows()-1)*gap + 28*u }
 	if ph() > v.h-32*u {
 		cols = 2
@@ -561,7 +670,7 @@ func (p *playScene) layoutPause(a *app, v rect) {
 	}
 	pw := float64(cols)*bw + float64(cols-1)*gap + 56*u
 	p.pausePanel = rect{v.x + (v.w-pw)/2, v.y + (v.h-ph())/2, pw, ph()}
-	for i := range p.pauseBtn {
+	for i := range p.items {
 		p.pauseBtn[i] = rect{p.pausePanel.x + 28*u + float64(i%cols)*(bw+gap),
 			p.pausePanel.y + 92*u + float64(i/cols)*(bh+gap), bw, bh}
 	}
@@ -575,8 +684,8 @@ func (p *playScene) layoutResults(a *app, v rect) {
 	size := max(56*u, min(120*u, v.w*0.075, v.h*0.13))
 	// Whoever wins, the title fits across the screen.
 	face, tw := newFace(srcDisplay, size, 800), 0.0
-	for _, s := range p.seats {
-		tw = max(tw, textWidth(winTitles[s], face))
+	for _, l := range p.labels {
+		tw = max(tw, textWidth(l+" wins!", face))
 	}
 	if tw > v.w-32*u {
 		size *= (v.w - 32*u) / tw
@@ -586,6 +695,9 @@ func (p *playScene) layoutResults(a *app, v rect) {
 	n := 2
 	if platform.CanExit {
 		n = 3
+	}
+	if !p.canAgain() {
+		n--
 	}
 	if v.w >= v.h {
 		bw = min(bw, (v.w-32*u-float64(n-1)*gap)/float64(n))
@@ -610,11 +722,20 @@ func (p *playScene) layoutResults(a *app, v rect) {
 		p.again = rect{x, p.statsY + 32*u, bw, bh}
 		p.toHome = rect{p.again.right() + gap, p.again.y, bw, bh}
 		p.exit = rect{p.toHome.right() + gap, p.again.y, bw, bh}
+		p.dropAgain()
 		return
 	}
 	p.again = rect{p.winX - bw/2, p.statsY + 44*u, bw, bh}
 	p.toHome = rect{p.winX - bw/2, p.again.bottom() + gap, bw, bh}
 	p.exit = rect{p.winX - bw/2, p.toHome.bottom() + gap, bw, bh}
+	p.dropAgain()
+}
+
+// dropAgain moves the other result buttons up into Play again's place when it isn't offered.
+func (p *playScene) dropAgain() {
+	if !p.canAgain() {
+		p.again, p.toHome, p.exit = rect{}, p.again, p.toHome
+	}
 }
 
 func (p *playScene) draw(dst *ebiten.Image, a *app) {
@@ -631,10 +752,13 @@ func (p *playScene) draw(dst *ebiten.Image, a *app) {
 	// The board always fits its view, so it draws unclipped and burst rings at the edges spill onto the mat as on Home.
 	// The board's tick clock stops during pause and resumes without jumping ahead.
 	p.b.draw(dst, sc, p.b.clock*(1000.0/60), turn, a.set.Marks)
-	if !p.b.playing && !p.over && !p.paused && p.seats[p.game.Turn] == seatHuman {
+	if !p.b.playing && !p.over && !p.paused && p.mine() {
 		if cell := p.cellAt(a.in.x, a.in.y); cell >= 0 && p.game.Legal(cell) {
 			p.b.drawHover(dst, cell, sc.players[p.game.Turn], u)
 		}
+	}
+	if p.flashT > 0 && !p.over && !p.b.playing {
+		p.b.drawHover(dst, p.flash, withAlpha(sc.players[p.game.Turn], float64(p.flashT)/flashTicks), u)
 	}
 	p.boardView.drawScrollbar(dst, a)
 	p.drawRail(dst, a)
@@ -643,6 +767,8 @@ func (p *playScene) draw(dst *ebiten.Image, a *app) {
 		p.drawResults(dst, a)
 	case p.paused:
 		p.drawPause(dst, a)
+	case p.goneP >= 0:
+		p.drawGone(dst, a)
 	}
 }
 
@@ -674,7 +800,7 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 	name, bold := p.seatFaces(a)
 	in, sp, gap, dot := p.seatInsets(a)
 	seatsDst := p.seatView.clip(dst)
-	for i, seat := range p.seats {
+	for i, label := range p.labels {
 		r := p.rowRect[i]
 		alive, current := p.alive[i], i == p.shown && !p.over
 		if current {
@@ -686,9 +812,9 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 		if !alive {
 			ink = sc.dim
 		}
-		drawText(seatsDst, seatLabels[seat], name, r.x+in+2*dr+sp, r.cy(), text.AlignStart, ink)
+		drawText(seatsDst, label, name, r.x+in+2*dr+sp, r.cy(), text.AlignStart, ink)
 		if alive {
-			room := r.w - 2*in - 2*dr - sp - textWidth(seatLabels[seat], name) - gap
+			room := r.w - 2*in - 2*dr - sp - textWidth(label, name) - gap
 			scale := min(1, room/max(1, textWidth(p.orbS[i], bold)))
 			drawScaledText(seatsDst, p.orbS[i], bold, r.right()-in, r.cy(), text.AlignEnd, scale, ink)
 		} else {
@@ -778,13 +904,21 @@ func (p *playScene) drawPause(dst *ebiten.Image, a *app) {
 	sc, u := a.sc, a.u
 	fillRound(dst, rect{0, 0, a.w, a.h}, 0, withAlpha(sc.ground, 0.8))
 	fillRound(dst, p.pausePanel, 28*u, sc.tile)
-	drawText(dst, "Paused", a.f.title, p.pausePanel.cx(), p.pausePanel.y+28*u+20*u, text.AlignCenter, sc.ink)
-	for i, r := range p.pauseBtn {
-		style := btnGround
-		if i == pauseResume {
+	title := "Paused"
+	if p.net != nil {
+		title = "Menu" // the game goes on for everyone else
+	}
+	drawText(dst, title, a.f.title, p.pausePanel.cx(), p.pausePanel.y+28*u+20*u, text.AlignCenter, sc.ink)
+	for k, i := range p.items {
+		r := p.pauseBtn[k]
+		style, label := btnGround, pauseItems[i]
+		switch {
+		case p.confirm == i:
+			style, label = btnInk, pauseConfirm[i]
+		case i == pauseResume:
 			style = btnInk
 		}
-		drawButton(dst, a, r, pauseItems[i], "", style, true)
+		drawButton(dst, a, r, label, "", style, true)
 	}
 }
 
@@ -805,23 +939,23 @@ func (p *playScene) drawResults(dst *ebiten.Image, a *app) {
 	if alpha == 0 {
 		return
 	}
-	// The winner's dot at mat scale, then the title at poster size.
+	// The winner's dot, solid in the contrasting ink so it can't read as an out seat's ring, then the title at poster
+	// size.
 	x := p.winX
 	fillCircle(dst, x, p.winDotY, p.winDotR, withAlpha(ink, alpha))
-	if alpha == 1 {
-		fillCircle(dst, x, p.winDotY, p.winDotR-8*u, w)
-		if a.set.Marks {
-			drawMark(dst, p.shown, x, p.winDotY, p.winDotR-8*u, w)
-		}
+	if alpha == 1 && a.set.Marks {
+		drawMarkIn(dst, p.shown, x, p.winDotY, p.winDotR, w)
 	}
-	drawText(dst, winTitles[p.seats[p.shown]], p.winFace, x, p.winTitleY, text.AlignCenter, withAlpha(ink, alpha))
+	drawText(dst, p.winTitle, p.winFace, x, p.winTitleY, text.AlignCenter, withAlpha(ink, alpha))
 	face := f.body
 	if textWidth(p.results, face) > p.lv.w-32*u { // a phone held upright
 		face = f.label
 	}
 	drawText(dst, p.results, face, x, p.statsY, text.AlignCenter, withAlpha(ink, alpha))
 
-	resultButton(dst, a, p.again, "Play again", w, ink, true, alpha)
+	if p.canAgain() {
+		resultButton(dst, a, p.again, "Play again", w, ink, true, alpha)
+	}
 	resultButton(dst, a, p.toHome, "Main menu", w, ink, false, alpha)
 	if platform.CanExit {
 		resultButton(dst, a, p.exit, "Exit", w, ink, false, alpha)

@@ -30,12 +30,13 @@ type Peer struct {
 }
 
 // Offer starts the host's side and returns its description, ICE candidates included, for signaling to send to the
-// joiner. iceServers is the list signaling issued, as JSON.
+// joiner. iceServers is the list signaling issued, as JSON; relay limits the connection to TURN relays (the Force relay
+// setting, iceTransportPolicy=relay).
 //
 // shortcut: candidates are gathered before the description is sent instead of trickled, which adds the gathering
 // time (well under a second with reachable STUN/TURN) to each join; trickle them if joins feel slow.
-func Offer(ctx context.Context, iceServers json.RawMessage) (*Peer, string, error) {
-	p, err := newPeer(iceServers)
+func Offer(ctx context.Context, iceServers json.RawMessage, relay bool) (*Peer, string, error) {
+	p, err := newPeer(iceServers, relay)
 	if err != nil {
 		return nil, "", err
 	}
@@ -61,8 +62,8 @@ func (p *Peer) Accept(answer string) error {
 }
 
 // Answer starts the joiner's side from the host's offer and returns the answer for signaling to send back.
-func Answer(ctx context.Context, iceServers json.RawMessage, offer string) (*Peer, string, error) {
-	p, err := newPeer(iceServers)
+func Answer(ctx context.Context, iceServers json.RawMessage, offer string, relay bool) (*Peer, string, error) {
+	p, err := newPeer(iceServers, relay)
 	if err != nil {
 		return nil, "", err
 	}
@@ -88,8 +89,11 @@ func (p *Peer) Conn(ctx context.Context) (*Conn, error) {
 	}
 }
 
-func newPeer(iceServers json.RawMessage) (*Peer, error) {
+func newPeer(iceServers json.RawMessage, relay bool) (*Peer, error) {
 	var cfg webrtc.Configuration
+	if relay {
+		cfg.ICETransportPolicy = webrtc.ICETransportPolicyRelay
+	}
 	if len(iceServers) > 0 {
 		if err := json.Unmarshal(iceServers, &cfg.ICEServers); err != nil {
 			return nil, fmt.Errorf("rtc: ICE servers: %w", err)

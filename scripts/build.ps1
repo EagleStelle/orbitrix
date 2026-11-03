@@ -6,6 +6,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $out = 'dist'
+# ORBITRIX_SERVER (https://your.site) is the server native clients play online through; without it they offer no Online.
+$stamp = "-X orbitrix/client/platform.origin=$env:ORBITRIX_SERVER"
 
 # Native commands don't throw on failure in Windows PowerShell 5.1, so check the exit code.
 function Invoke-Native([string]$Command) {
@@ -22,7 +24,7 @@ function Invoke-Check {
 
 function Build-Desktop {
     $exe = go env GOEXE
-    Invoke-Native go build -trimpath -o "$out/orbitrix$exe" ./cmd/orbitrix
+    Invoke-Native go build -trimpath "-ldflags=$stamp" -o "$out/orbitrix$exe" ./cmd/orbitrix
 }
 
 function Build-Web {
@@ -64,8 +66,10 @@ function Build-Image {
 function Build-Android {
     if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk" }
     # arm64 for phones, x86_64 for emulators and Chromebooks. Quoted: PowerShell would split the comma into two arguments.
+    # -checklinkname=0: pion's Android interface lookup (github.com/wlynxg/anet) links to a net internal that Go's linker
+    # otherwise refuses.
     Invoke-Native go tool ebitenmobile bind -target 'android/arm64,android/amd64' -androidapi 24 -javapkg com.orbitrix `
-        -trimpath '-ldflags=-s -w' -o "$out/orbitrix.aar" ./mobile
+        -trimpath "-ldflags=-s -w -checklinkname=0 $stamp" -o "$out/orbitrix.aar" ./mobile
     Push-Location android
     try {
         Invoke-Native .\gradlew.bat -q assembleRelease

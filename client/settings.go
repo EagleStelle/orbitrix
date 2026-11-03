@@ -25,8 +25,19 @@ type settings struct {
 	// Fullscreen is the desktop/browser window mode; Marks draws each player's shape mark on their orbs and dots.
 	Fullscreen bool `json:"fullscreen"`
 	Marks      bool `json:"marks"`
+	// Online: the host password this device hosts with (cleared when the server refuses it), the Force relay debug
+	// switch, and the seat a joiner can take back after the app was closed. Joiners save no password.
+	Password string  `json:"password,omitempty"`
+	Relay    bool    `json:"relay,omitempty"`
+	Rejoin   *rejoin `json:"rejoin,omitempty"`
 
 	seats []int // parsed Seats
+}
+
+// rejoin is a joiner's seat in an online room: its room code and the hub's rejoin token, hex.
+type rejoin struct {
+	Code  string `json:"code"`
+	Token string `json:"token"`
 }
 
 var themeNames = [2]string{themeLight: "light", themeDark: "dark"}

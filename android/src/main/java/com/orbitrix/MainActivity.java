@@ -1,9 +1,11 @@
 package com.orbitrix;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.os.Build;
 import android.os.Bundle;
+import android.text.InputType;
 import android.view.DisplayCutout;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -11,6 +13,8 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
+import android.widget.EditText;
 import android.window.OnBackInvokedDispatcher;
 
 import com.orbitrix.mobile.EbitenView;
@@ -130,6 +134,47 @@ public final class MainActivity extends Activity implements Host {
     @Override
     public void leave() {
         runOnUiThread(() -> moveTaskToBack(true));
+    }
+
+    // Hosting an online room keeps the screen on; the game pauses if the app goes to the background.
+    @Override
+    public void keepScreenOn(boolean on) {
+        runOnUiThread(() -> {
+            if (on) {
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            } else {
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            }
+        });
+    }
+
+    @Override
+    public void share(String text) {
+        runOnUiThread(() -> {
+            Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text);
+            startActivity(Intent.createChooser(send, null));
+        });
+    }
+
+    // The game's fields type with the phone's keyboard, through the hidden edit text inside EbitenView. A room code
+    // wants capitals and no suggestions; a password must be neither suggested nor learned by the keyboard. The line
+    // flag stays, as Ebitengine set it, so Return still reaches the game.
+    @Override
+    public void keyboard(boolean secret) {
+        int type = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                | (secret ? InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
+        runOnUiThread(() -> {
+            for (int i = 0; i < view.getChildCount(); i++) {
+                if (view.getChildAt(i) instanceof EditText) {
+                    EditText e = (EditText) view.getChildAt(i);
+                    if (e.getInputType() != type) {
+                        e.setImeOptions(e.getImeOptions() | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
+                        e.setInputType(type); // restarts the keyboard's input
+                    }
+                }
+            }
+        });
     }
 
     // A game on a board with more columns than rows holds the screen on its side (either way up); leaving it hands

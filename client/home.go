@@ -17,7 +17,8 @@ import (
 // dots above it, PLAY and the buttons below it. The button stack is a list so the Local, LAN and Online entries
 // can join it later.
 type homeScene struct {
-	demo *demo
+	demo     *demo
+	choosing bool // PLAY was pressed: the column offers the ways to play instead
 
 	// Layout in device px, recomputed when the screen size changes.
 	lv                  rect
@@ -28,6 +29,7 @@ type homeScene struct {
 	playX, playY, playR float64
 	playFace            *text.GoTextFace
 	items               []homeItem
+	modes               []homeItem // the ways to play, then Back, where PLAY and its buttons were
 	mat                 rect
 }
 
@@ -94,6 +96,17 @@ func (s *homeScene) layout(a *app) {
 		y += bh + gap
 	}
 
+	// The ways to play stand where PLAY and its buttons stood, centred on them.
+	labels = append(playModes(), "Back")
+	modesH := float64(len(labels))*(bh+gap) - gap
+	my := (s.playY - s.playR + y - gap - modesH) / 2
+	modeW := min(s.w, max(buttonW, 220*u))
+	s.modes = s.modes[:0]
+	for _, l := range labels {
+		s.modes = append(s.modes, homeItem{l, rect{s.playX - modeW/2, my, modeW, bh}})
+		my += bh + gap
+	}
+
 	rows := 7
 	cols := max(5, min(12, int(math.Round(float64(rows)*s.mat.w/s.mat.h))))
 	if s.demo == nil || s.demo.cols != cols {
@@ -141,12 +154,20 @@ func (s *homeScene) playRect() rect {
 func (s *homeScene) update(a *app) error {
 	s.layout(a)
 	s.demo.tick()
+	if s.choosing {
+		s.updateModes(a)
+		return nil
+	}
 	if a.in.esc {
 		platform.Leave() // Android's back button on the first screen; Esc on desktop and web does nothing here
 		return nil
 	}
 	if a.clicked(s.playRect()) {
-		a.next = newSetup()
+		if len(playModes()) == 1 {
+			a.next = newSetup() // nothing to choose between
+		} else {
+			s.choosing = true
+		}
 		return nil
 	}
 	for _, it := range s.items {
@@ -177,6 +198,16 @@ func (s *homeScene) draw(dst *ebiten.Image, a *app) {
 		seatDot(dst, sc, p, s.x+s.dotR+float64(p)*step, s.dotsY, s.dotR, false, a.set.Marks)
 	}
 
+	if s.choosing {
+		for _, it := range s.modes {
+			style := btnInk
+			if it.label == "Back" {
+				style = btnTile
+			}
+			drawButton(dst, a, it.r, it.label, "", style, true)
+		}
+		return
+	}
 	fill := sc.ink
 	if a.over(s.playRect()) {
 		fill = sc.inkHi
@@ -257,6 +288,36 @@ func (d *demo) tick() {
 		d.wait = 24
 		if d.game.Over() {
 			d.wait = 150
+		}
+	}
+}
+
+// playModes are the ways to play this build offers: on this device always (alone against bots, or passing it round),
+// Online where it has a server. Same Wi-Fi joins them in Phase 7.
+func playModes() []string {
+	if origin == "" {
+		return []string{"This Device"}
+	}
+	return []string{"This Device", "Online"}
+}
+
+// updateModes runs the ways to play; Back (or Esc) brings PLAY, Settings and Exit back.
+func (s *homeScene) updateModes(a *app) {
+	if a.in.esc {
+		s.choosing = false
+		return
+	}
+	for _, it := range s.modes {
+		if !a.clicked(it.r) {
+			continue
+		}
+		switch it.label {
+		case "This Device":
+			a.next = newSetup()
+		case "Online":
+			a.next = newOnline(a, "")
+		case "Back":
+			s.choosing = false
 		}
 	}
 }

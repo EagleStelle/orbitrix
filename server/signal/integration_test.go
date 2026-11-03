@@ -86,7 +86,7 @@ func hostSignaling(ctx context.Context, t *testing.T, hc *Client, room *hub.Room
 		case "request":
 			_ = hc.Send(ctx, Msg{T: "approve", Peer: m.Peer})
 		case "approved":
-			p, offer, err := rtc.Offer(ctx, ice)
+			p, offer, err := rtc.Offer(ctx, ice, false)
 			if err != nil {
 				t.Error(err)
 				return
@@ -131,7 +131,7 @@ func joinOnline(ctx context.Context, url, code string) (hub.Conn, error) {
 		case m.T == "approved":
 			ice = m.ICE
 		case m.T == "signal":
-			p, answer, err := rtc.Answer(ctx, ice, m.SDP)
+			p, answer, err := rtc.Answer(ctx, ice, m.SDP, false)
 			if err != nil {
 				return nil, err
 			}

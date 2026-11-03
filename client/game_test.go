@@ -110,3 +110,37 @@ func TestOpaqueResultsSkipBoard(t *testing.T) {
 		t.Fatal("the board must remain visible until the results wipe finishes")
 	}
 }
+
+// TestPauseConfirm checks that Restart and Main menu need a second tap within the confirm window.
+func TestPauseConfirm(t *testing.T) {
+	a := setupTestApp(1040, 640, 1, 2)
+	p, err := newPlay(a, 9, 9, a.set.seats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.paused = true
+	p.layout(a)
+	tap := func(i int) {
+		r := p.pauseBtn[i]
+		a.in = input{x: r.cx(), y: r.cy(), clicked: true}
+		if err := p.updatePause(a); err != nil {
+			t.Fatal(err)
+		}
+		a.in = input{x: offScreen, y: offScreen}
+	}
+	tap(pauseRestart)
+	if a.next != nil || p.confirm != pauseRestart {
+		t.Fatal("the first tap on Restart must only ask")
+	}
+	for range confirmTicks {
+		_ = p.updatePause(a)
+	}
+	tap(pauseRestart)
+	if a.next != nil {
+		t.Fatal("a tap after the confirm window must ask again")
+	}
+	tap(pauseRestart)
+	if _, ok := a.next.(*playScene); !ok {
+		t.Fatal("the second tap must restart")
+	}
+}

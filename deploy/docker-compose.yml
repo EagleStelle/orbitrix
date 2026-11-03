@@ -12,7 +12,6 @@ services:
     restart: unless-stopped
     ports: ["127.0.0.1:1212:1212"]
     environment:
-      LISTEN: ":1212"
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
       HOST_PASSWORD: ${HOST_PASSWORD:-}
       CF_TURN_KEY_ID: ${CF_TURN_KEY_ID:-}
