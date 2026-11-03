@@ -17,12 +17,16 @@ type Host interface {
 	Leave()
 	// Rotate holds the screen in landscape, or lets it turn freely again.
 	Rotate(landscape bool)
-	// KeepScreenOn keeps the screen awake while the player hosts an online room.
+	// KeepScreenOn keeps the screen awake while the player hosts a room, online or on the LAN.
 	KeepScreenOn(on bool)
 	// Share opens the share sheet with text: a room's join link.
 	Share(text string)
 	// Keyboard sets up the on-screen keyboard for the next field: a password's (secret) or a room code's.
 	Keyboard(secret bool)
+	// Discover holds the Wi-Fi multicast lock while the player looks for LAN rooms, so hosts' broadcasts get through.
+	Discover(on bool)
+	// DeviceName is the name the user gave the phone, which other players see its LAN rooms listed under.
+	DeviceName() string
 }
 
 var start sync.Once
@@ -37,6 +41,8 @@ func Start(dataDir string, host Host) {
 		platform.Hosting = host.KeepScreenOn
 		platform.ShareSheet = host.Share
 		platform.Keyboard = host.Keyboard
+		platform.Discover = host.Discover
+		platform.DeviceName = host.DeviceName
 		ebitenmobile.SetGame(client.New())
 	})
 }

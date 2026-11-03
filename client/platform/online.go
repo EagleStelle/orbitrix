@@ -20,7 +20,7 @@ func Origin() string {
 // JoinCode is the room code the app was opened with (a /join/<code> link), or "". Only the web build has one.
 func JoinCode() string { return "" }
 
-// Hosting keeps the device awake while this player hosts an online room (on), and lets it sleep again (off). The
+// Hosting keeps the device awake while this player hosts a room (on), and lets it sleep again (off). The
 // mobile wrapper sets it.
 var Hosting = func(on bool) {}
 

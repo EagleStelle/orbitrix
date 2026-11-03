@@ -10,10 +10,8 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
 	"orbitrix/client/platform"
+	"orbitrix/proto"
 )
-
-// codeAlphabet is the characters room codes use: no 0/O/1/I, which read alike.
-const codeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 // field takes text from the device's own keyboard: a physical one, or the on-screen keyboard Android and phone
 // browsers show while the field has the focus (Ebitengine's exp/textinput). The page draws the text.
@@ -52,8 +50,8 @@ func newField(max int, secret bool, keep func(rune) rune) *field {
 
 // codeField takes a room code: the code alphabet, in capitals.
 func codeField() *field {
-	return newField(codeLen, false, func(r rune) rune {
-		if r = unicode.ToUpper(r); strings.ContainsRune(codeAlphabet, r) {
+	return newField(proto.CodeLen, false, func(r rune) rune {
+		if r = unicode.ToUpper(r); strings.ContainsRune(proto.CodeAlphabet, r) {
 			return r
 		}
 		return 0

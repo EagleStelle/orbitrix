@@ -308,6 +308,63 @@ func TestKickAndTurnTimer(t *testing.T) {
 	}
 }
 
+// TestConfigure changes a lobby's board and seats under its players: a seat that turns into an AI lets its player go,
+// the others keep theirs, a new seat opens, and a new code applies to new players only.
+func TestConfigure(t *testing.T) {
+	room := newRoom(t, hub.Config{Seats: humans(3)})
+	a, b := join(t, room, "", proto.Token{}), join(t, room, "", proto.Token{})
+	if err := room.Configure(5, 6, []hub.Seat{{Human: true}, {AI: ai.Jester}, {Human: true}, {Human: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if bye := waitFor[proto.Bye](b); bye.Reason != proto.ReasonKicked || room.Rejoins(b.token) {
+		t.Fatalf("a seat turned AI: %v", bye.Reason)
+	}
+	l := a.lobbyWhere(func(l proto.Lobby) bool { return len(l.Seats) == 4 })
+	if l.Cols != 5 || l.Rows != 6 || l.Seats[0].State != proto.SeatHere || l.Seats[1].State != proto.SeatAI ||
+		l.Seats[3].State != proto.SeatOpen {
+		t.Fatalf("lobby: %+v", l)
+	}
+	room.SetCode("XYZ789")
+	c := connect(t, room)
+	c.send(proto.Hello{Code: "ABC234"})
+	if bye := waitFor[proto.Bye](c); bye.Reason != proto.ReasonBadCode {
+		t.Fatalf("the old code: %v", bye.Reason)
+	}
+	if err := room.Configure(2, 2, humans(5)); err == nil {
+		t.Fatal("a board too small for its players")
+	}
+	if err := room.Configure(5, 6, []hub.Seat{{Human: true}, {AI: ai.Jester}}); err != nil {
+		t.Fatal(err)
+	}
+	start(t, room, a)
+	if room.Configure(5, 5, humans(2)) != hub.ErrState {
+		t.Fatal("configured mid-game")
+	}
+}
+
+// TestRemoveSeat takes a middle seat out of a lobby: its player is let go, and the one behind it moves up and is told
+// its new seat.
+func TestRemoveSeat(t *testing.T) {
+	room := newRoom(t, hub.Config{Seats: humans(3)})
+	a, b, c := join(t, room, "", proto.Token{}), join(t, room, "", proto.Token{}), join(t, room, "", proto.Token{})
+	if err := room.RemoveSeat(1); err != nil {
+		t.Fatal(err)
+	}
+	if bye := waitFor[proto.Bye](b); bye.Reason != proto.ReasonKicked {
+		t.Fatalf("the removed seat's player: %v", bye.Reason)
+	}
+	if w := waitFor[proto.Welcome](c); w.Seat != 1 || w.Token != c.token {
+		t.Fatalf("the moved player: seat %d", w.Seat)
+	}
+	l := a.lobbyWhere(func(l proto.Lobby) bool { return len(l.Seats) == 2 })
+	if l.Seats[0].State != proto.SeatHere || l.Seats[1].State != proto.SeatHere {
+		t.Fatalf("lobby: %+v", l.Seats)
+	}
+	if room.RemoveSeat(0) != hub.ErrSeat {
+		t.Fatal("a room keeps its two seats")
+	}
+}
+
 func TestRejects(t *testing.T) {
 	room := newRoom(t, hub.Config{Seats: humans(1, hub.Seat{AI: ai.Jester})})
 	for name, tc := range map[string]struct {

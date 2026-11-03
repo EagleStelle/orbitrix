@@ -35,7 +35,7 @@ const (
 var pauseItems = [...]string{"Resume", "Restart", "Settings", "Main menu"}
 
 // pauseConfirm is what a button that waits for its second tap reads.
-var pauseConfirm = [len(pauseItems)]string{pauseRestart: "Restart?", pauseMainMenu: "Main menu?"}
+var pauseConfirm = [len(pauseItems)]string{pauseRestart: "Restart?"}
 
 const (
 	pauseResume = iota
@@ -196,7 +196,7 @@ func (p *playScene) move(a *app, cell int) {
 
 func (p *playScene) restartGame(a *app) {
 	if p.net != nil { // the host's room goes back to its lobby, and the room update takes everyone there
-		if err := p.net.host.Room.Rematch(); err != nil {
+		if err := p.net.room.Rematch(); err != nil {
 			log.Printf("rematch: %v", err)
 		}
 		return
@@ -312,7 +312,7 @@ func (p *playScene) play(a *app, cell int) {
 
 // canAgain reports whether Play again is offered: always locally, and online only to the host, whose room goes back
 // to its lobby for everyone.
-func (p *playScene) canAgain() bool { return p.net == nil || p.net.host != nil }
+func (p *playScene) canAgain() bool { return p.net == nil || p.net.room != nil }
 
 // leave lets go of an online room on the way out: a host closes it, a joiner gives up the seat.
 func (p *playScene) leave(a *app) {
@@ -336,8 +336,8 @@ func (p *playScene) updatePause(a *app) error {
 		if !a.clicked(p.pauseBtn[k]) {
 			continue
 		}
-		// Restart and Main menu throw the game away, so they ask for a second tap.
-		if (i == pauseRestart || i == pauseMainMenu) && p.confirm != i {
+		// Restart throws the game away, so it asks for a second tap.
+		if i == pauseRestart && p.confirm != i {
 			p.confirm, p.confirmT = i, confirmTicks
 			return nil
 		}
@@ -540,7 +540,7 @@ func (p *playScene) seatInsets(a *app) (in, sp, gap, dot float64) {
 func (p *playScene) seatTableWidth(a *app) float64 {
 	name, bold := p.seatFaces(a)
 	in, sp, gap, dot := p.seatInsets(a)
-	row := 2*in + 2*dot + sp + widestLabel(p.labels, name) + gap + max(textWidth(p.orbsMax, bold), textWidth("out", name))
+	row := 2*in + 2*dot + sp + widestLabel(p.labels, name) + gap + max(textWidth(p.orbsMax, bold), chipWidth(a, "Out", p.chipH(a)))
 	cols := float64(p.tableCols)
 	return cols*row + (cols-1)*8*a.u
 }
@@ -584,6 +584,11 @@ func (p *playScene) seatRowPitch(a *app) float64 {
 		}
 	}
 	return pitch
+}
+
+// chipH is the Out chip's height: the standard one, or less on rows too short to fit it inside their 4 px inset.
+func (p *playScene) chipH(a *app) float64 {
+	return min(chipHeight*a.u, p.seatRowPitch(a)-12*a.u)
 }
 
 func (p *playScene) seatTableHeight(a *app) float64 {
@@ -818,7 +823,7 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 			scale := min(1, room/max(1, textWidth(p.orbS[i], bold)))
 			drawScaledText(seatsDst, p.orbS[i], bold, r.right()-in, r.cy(), text.AlignEnd, scale, ink)
 		} else {
-			drawText(seatsDst, "out", name, r.right()-in, r.cy(), text.AlignEnd, sc.dim)
+			drawChip(seatsDst, a, chip{"Out", chipDanger}, r.right()-in, r.cy(), p.chipH(a))
 		}
 	}
 

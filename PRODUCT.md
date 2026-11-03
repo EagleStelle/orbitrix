@@ -47,11 +47,11 @@ have, fill empty seats with AI, and enjoy following a chain reaction as it plays
 ## Operating Context
 
 - Local games on one device, passing it between players or playing alone against AIs.
-- LAN games: one Windows or Android device hosts; others join through discovery, by IP, or (in a browser) at
-  `http://<host-ip>:7777`.
+- LAN games (Same Wi-Fi): one Windows or Android device hosts and the others, apps on the same network, find it in
+  the list of rooms they hear (public) or by its code (private). Browsers don't play on the LAN.
 - Online games hosted from any player's client, a browser tab included, by a player who has the server's host
-  password. The host shares a room code or
-  `/join/<CODE>` link privately, approves each player, and can lock the room or kick. Players connect to the host
+  password. A public room is listed for anyone; a private one is reached by its room code or `/join/<CODE>` link,
+  shared privately. Either way the host approves each player, and can kick. Players connect to the host
   over WebRTC, through a Cloudflare TURN relay when their networks block a direct connection. The Docker container
   only serves the website and signaling; no game traffic passes through it.
 - Codes and passwords are typed on the device's own keyboard: a physical one, or the on-screen keyboard Android
@@ -244,7 +244,7 @@ $env:ORBITRIX_MATCH_BOT="sovereign"; $env:ORBITRIX_MATCH_GAMES=100; go test -tag
 | `server/hub/` | The room engine every host runs, online and on LAN: lobby, seats, rejoin, the authoritative game. |
 | `server/transport/` | The hub's connections: `ws` (LAN), `rtc` (WebRTC data channel, online), `loopback` (the host's own player). |
 | `server/signal/` | Signaling: rooms, join approval, SDP relay, TURN credentials, abuse guards; `pow/` is its proof of work. |
-| `server/lan/` | LAN discovery and host (Phase 7). |
+| `server/lan/` | Same Wi-Fi rooms: UDP discovery, the LAN host (hub behind `ws` on private networks), joining. |
 | `deploy/` | Multi-stage Dockerfile, docker-compose, local override, `.env.example`. |
 | `magefile.go` | Build targets (`go tool mage -l`). |
 | `docs/decisions.md` | Choices made where the brief left room. |

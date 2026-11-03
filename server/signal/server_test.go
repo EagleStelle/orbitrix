@@ -16,6 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"orbitrix/proto"
 	"orbitrix/server/signal/pow"
 )
 
@@ -204,6 +205,20 @@ func TestTURNDownFallsBackToSTUN(t *testing.T) {
 	}
 }
 
+// TestRequestedCode: a host gets the code it asks for (a private room shows it before it opens) unless that code is
+// taken or malformed, when it gets a fresh one.
+func TestRequestedCode(t *testing.T) {
+	_, url := setup(t, testPassword)
+	for _, tc := range []struct{ ask, want string }{{"abcdef", "ABCDEF"}, {"ABCDEF", ""}, {"ABC0EF", ""}, {"", ""}} {
+		c := dial(t, url)
+		send(t, c, Msg{T: "host.create", Password: testPassword, Humans: 2, Code: tc.ask})
+		got := expect(t, c, "room").Code
+		if tc.want != "" && got != tc.want || tc.want == "" && (got == "ABCDEF" || len(got) != proto.CodeLen) {
+			t.Fatalf("asked %q, got %q", tc.ask, got)
+		}
+	}
+}
+
 // TestOpenHosting: with no password, anyone hosts without one, and neither hosts nor joiners get TURN even when a key
 // is configured. One IP may hold only a few rooms.
 func TestOpenHosting(t *testing.T) {
@@ -330,31 +345,39 @@ func TestReclaim(t *testing.T) {
 	}
 }
 
-func TestPendingCapAndLock(t *testing.T) {
+func TestPendingCapAndPublicList(t *testing.T) {
 	_, url := setup(t, testPassword)
 	h, rm := host(t, url, 6)
-	var waiting []*Client
 	for i := 0; i < maxPending; i++ {
-		j, _ := joinRoom(t, url, h, rm.Code)
-		waiting = append(waiting, j)
+		joinRoom(t, url, h, rm.Code)
 	}
 	extra := dial(t, url)
 	send(t, extra, Msg{T: "join", Code: rm.Code, Name: "Bo"})
 	expect(t, extra, "error")
 
-	send(t, h, Msg{T: "lock", On: true})
-	for _, j := range waiting {
-		expect(t, j, "error")
+	// A private room isn't listed; once the host makes it public, anyone sees it, with its code.
+	looker := dial(t, url)
+	send(t, looker, Msg{T: "list"})
+	if m := expect(t, looker, "rooms"); len(m.Rooms) != 0 {
+		t.Fatalf("a private room was listed: %+v", m.Rooms)
 	}
-	late := dial(t, url)
-	send(t, late, Msg{T: "join", Code: rm.Code, Name: "Cy"})
-	expect(t, late, "error")
-	// A rejoin carries its hub token, which the host checks, so it passes the lock.
+	send(t, h, Msg{T: "update", Public: true, Humans: 3, Listed: &Listed{Code: "FAKE00", Cols: 9, Rows: 13, Open: 2}})
+	send(t, h, Msg{T: "ping"}) // the update has landed once the pong comes back
+	expect(t, h, "pong")
+	send(t, looker, Msg{T: "list"})
+	if m := expect(t, looker, "rooms"); len(m.Rooms) != 1 ||
+		m.Rooms[0] != (Listed{Code: rm.Code, Cols: 9, Rows: 13, Open: 2}) {
+		t.Fatalf("listed %+v", m.Rooms)
+	}
+	// A rejoin carries its hub token, which the host checks.
 	back := dial(t, url)
 	send(t, back, Msg{T: "rejoin", Code: rm.Code, Name: "Bo", Token: strings.Repeat("ab", tokenLen)})
-	expect(t, back, "wait")
-	if m := expect(t, h, "request"); m.Token != strings.Repeat("ab", tokenLen) {
-		t.Fatalf("request %+v", m)
+	expect(t, back, "error") // the approval queue is still full
+
+	bad := Msg{T: "update", Humans: 3, Listed: &Listed{Cols: 99, Rows: 9}}
+	send(t, h, bad)
+	if _, err := h.Receive(context.Background()); err == nil {
+		t.Fatal("a host describing an impossible room must be closed")
 	}
 }
 

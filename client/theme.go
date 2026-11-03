@@ -25,6 +25,7 @@ type scheme struct {
 	ink     color.RGBA // text and primary controls
 	inkHi   color.RGBA // hovered primary controls
 	dim     color.RGBA // secondary text, dashed outlines
+	danger  color.RGBA // a destructive choice (Remove player), apart from every player ink
 	players [core.MaxPlayers]color.RGBA
 }
 
@@ -36,7 +37,7 @@ const (
 var schemes = [2]scheme{
 	themeLight: {
 		ground: hex(0xF4F3F0), tile: hex(0xE0DED9), tileHi: hex(0xD1CEC8),
-		ink: hex(0x171615), inkHi: hex(0x3B3936), dim: hex(0x65615B),
+		ink: hex(0x171615), inkHi: hex(0x3B3936), dim: hex(0x65615B), danger: hex(0xC21D3A),
 		players: [core.MaxPlayers]color.RGBA{
 			hex(0xD55E00), hex(0x0072B2), hex(0x009E73), hex(0xE69F00), hex(0xCC79A7), hex(0x56B4E9),
 			hex(0xE8D21D), hex(0x2E2C2A), hex(0x901CFC), hex(0x8B5A2B), hex(0x440048), hex(0x641404),
@@ -44,7 +45,7 @@ var schemes = [2]scheme{
 	},
 	themeDark: {
 		ground: hex(0x1C1A18), tile: hex(0x2D2A27), tileHi: hex(0x3B3733),
-		ink: hex(0xF5F2EE), inkHi: hex(0xD4CEC6), dim: hex(0xA39C92),
+		ink: hex(0xF5F2EE), inkHi: hex(0xD4CEC6), dim: hex(0xA39C92), danger: hex(0xFF6B7A),
 		players: [core.MaxPlayers]color.RGBA{
 			hex(0xE86A1A), hex(0x3A9BE0), hex(0x1FB88C), hex(0xF0AA1A), hex(0xDD8DB8), hex(0x7CC6F0),
 			hex(0xF0E442), hex(0xF4F4F4), hex(0x844CFC), hex(0xC98B4E), hex(0xB4FC84), hex(0xB85450),

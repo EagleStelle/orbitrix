@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +27,8 @@ import (
 	"github.com/coder/websocket"
 	"golang.org/x/time/rate"
 
+	"orbitrix/core"
+	"orbitrix/proto"
 	"orbitrix/server/signal/pow"
 )
 
@@ -54,8 +57,6 @@ const (
 	roomBurst       = 100
 	outQueue        = 32
 	challengeTTL    = 30 * time.Second
-	codeAlphabet    = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no 0/O/1/I
-	codeLen         = 6
 	tokenLen        = 16 // bytes in a hub rejoin token
 
 	// Proof-of-work difficulty follows the anonymous connection rate over a sliding window, globally and per IP. It
@@ -133,7 +134,8 @@ type room struct {
 	humans       int
 	host         *sock // nil while the host is reconnecting
 	gone         *time.Timer
-	locked       bool
+	public       bool   // listed for anyone
+	listed       Listed // how the list shows it, as the host last said
 	closed       bool
 	joiners      map[string]*sock  // pending and approved, by peer id
 	creds        map[string]string // live joiner credentials: peer id → TURN username ("" without TURN)
@@ -306,6 +308,9 @@ func (k *sock) handle(m Msg) bool {
 			return k.create(m)
 		case "host.reclaim":
 			return k.reclaim(m)
+		case "list":
+			k.list()
+			return true
 		case "join", "rejoin":
 			return k.join(m)
 		}
@@ -345,8 +350,13 @@ func (k *sock) create(m Msg) bool {
 		s.mu.Unlock()
 		return false
 	}
-	rm := &room{code: s.newCode(), secret: random(32), hostIP: k.ip, humans: m.Humans, host: k, joiners: map[string]*sock{},
-		creds: map[string]string{}, lim: rate.NewLimiter(roomRate, roomBurst), issuing: 1}
+	code := normCode(m.Code)
+	if len(code) != proto.CodeLen || strings.IndexFunc(code, func(r rune) bool { return !strings.ContainsRune(proto.CodeAlphabet, r) }) >= 0 || s.rooms[code] != nil {
+		code = s.newCode()
+	}
+	rm := &room{code: code, secret: random(32), hostIP: k.ip, humans: m.Humans, public: m.Public, host: k,
+		joiners: map[string]*sock{},
+		creds:   map[string]string{}, lim: rate.NewLimiter(roomRate, roomBurst), issuing: 1}
 	s.rooms[rm.code] = rm
 	k.room, k.state = rm, stHost
 	s.mu.Unlock()
@@ -409,8 +419,8 @@ func (k *sock) reclaim(m Msg) bool {
 	return true
 }
 
-// join asks a room's host to let k in. A rejoin carries its hub token, so the host approves it without asking, and
-// it passes a lock. A wrong code, a locked room and a full queue all look the same to the caller.
+// join asks a room's host to let k in. A rejoin carries its hub token, so the host approves it without asking. A
+// wrong code and a full queue look the same to the caller.
 func (k *sock) join(m Msg) bool {
 	rejoin := m.T == "rejoin"
 	if !validName(m.Name) || rejoin != (m.Token != "") || rejoin && !validToken(m.Token) {
@@ -419,7 +429,7 @@ func (k *sock) join(m Msg) bool {
 	s := k.s
 	s.mu.Lock()
 	rm := s.rooms[normCode(m.Code)]
-	ok := rm != nil && (rejoin || !rm.locked) && rm.pending() < maxPending
+	ok := rm != nil && rm.pending() < maxPending
 	if ok {
 		s.nextPeer++
 		k.id, k.name, k.token = "p"+strconv.FormatUint(s.nextPeer, 36), m.Name, m.Token
@@ -435,6 +445,22 @@ func (k *sock) join(m Msg) bool {
 		return k.fail()
 	}
 	return true
+}
+
+// list answers with the public rooms whose host is connected and has described them, in code order. Joining one is
+// a join like any other: the host still answers it.
+func (k *sock) list() {
+	s := k.s
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var rooms []Listed
+	for _, rm := range s.rooms {
+		if rm.public && rm.host != nil && !rm.closed && rm.listed.Cols != 0 {
+			rooms = append(rooms, rm.listed)
+		}
+	}
+	slices.SortFunc(rooms, func(a, b Listed) int { return strings.Compare(a.Code, b.Code) })
+	k.send(Msg{T: "rooms", Rooms: rooms})
 }
 
 func (rm *room) pending() int {
@@ -496,13 +522,14 @@ func (k *sock) hostMsg(m Msg) bool {
 		if j := rm.joiners[m.Peer]; j != nil && j.state == stPending {
 			s.refuse(j)
 		}
-	case "lock":
-		rm.locked = m.On
-		for _, j := range rm.joiners {
-			if m.On && j.state == stPending && j.token == "" {
-				s.refuse(j)
-			}
+	case "update":
+		l := m.Listed
+		if m.Humans < 1 || m.Humans > maxHumans || l == nil || l.Cols < core.MinSize || l.Cols > core.MaxSize ||
+			l.Rows < core.MinSize || l.Rows > core.MaxSize || l.Open < 0 || l.Open > maxHumans {
+			return false
 		}
+		rm.public, rm.humans, rm.listed = m.Public, m.Humans, *l
+		rm.listed.Code = rm.code
 	case "signal":
 		if j := rm.joiners[m.Peer]; j != nil && j.state == stApproved && m.SDP != "" {
 			j.send(Msg{T: "signal", SDP: m.SDP})
@@ -697,12 +724,7 @@ func (k *sock) ping(ctx context.Context) {
 // newCode returns an unused room code. Server.mu must be held.
 func (s *Server) newCode() string {
 	for {
-		var b [codeLen]byte
-		_, _ = rand.Read(b[:]) // never fails
-		for i := range b {
-			b[i] = codeAlphabet[b[i]%byte(len(codeAlphabet))]
-		}
-		if code := string(b[:]); s.rooms[code] == nil {
+		if code := proto.NewCode(); s.rooms[code] == nil {
 			return code
 		}
 	}

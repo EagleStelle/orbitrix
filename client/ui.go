@@ -177,6 +177,49 @@ func pillLabel(dst *ebiten.Image, a *app, r rect, label, note string, ink color.
 	drawText(dst, note, f.small, x+lw+gap, r.cy(), text.AlignStart, ink)
 }
 
+// chipHeight is a status chip's height in logical px; rows too short for it pass a smaller one.
+const chipHeight = 24
+
+// A chip's kind codes its state by weight: solid ink, a faded fill, or a dim outline. The one hue it takes is the
+// danger ink, for a state that is bad news for a player.
+type chipKind uint8
+
+const (
+	chipOn     chipKind = iota // solid ink: the way is open (Open, Ready, Joining)
+	chipBusy                   // faded fill: something is under way (Playing)
+	chipOff                    // dim outline: nobody is in it or can get in (Full, Away, an empty seat)
+	chipDanger                 // danger outline: a player is out, or holding the start up (Out, Not ready)
+)
+
+// chip is a status word drawn as a small pill at the end of a row.
+type chip struct {
+	word string
+	kind chipKind
+}
+
+// chipWidth is how wide c's pill is at height h.
+func chipWidth(a *app, word string, h float64) float64 { return textWidth(word, a.f.smallBold) + 0.8*h }
+
+// drawChip draws c as a pill h tall, its right end at right and centred on cy.
+func drawChip(dst *ebiten.Image, a *app, c chip, right, cy, h float64) {
+	sc := a.sc
+	r := rect{right - chipWidth(a, c.word, h), cy - h/2, chipWidth(a, c.word, h), h}
+	ink := sc.ground
+	switch c.kind {
+	case chipOn:
+		fillPill(dst, r, sc.ink)
+	case chipBusy:
+		fillPill(dst, r, sc.dim)
+	case chipDanger:
+		strokeRound(dst, r, h/2, 1.5*a.u, sc.danger)
+		ink = sc.danger
+	default:
+		strokeRound(dst, r, h/2, 1.5*a.u, sc.dim)
+		ink = sc.dim
+	}
+	drawText(dst, c.word, a.f.smallBold, r.cx(), r.cy(), text.AlignCenter, ink)
+}
+
 // arrowLeft draws a back arrow centred at (x, y), s wide.
 func arrowLeft(dst *ebiten.Image, x, y, s, w float64, c color.RGBA) {
 	tip, h := x-s/2, s*0.4

@@ -1,6 +1,7 @@
 package proto
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -18,6 +19,23 @@ const (
 	MaxName = 24 // bytes in a player name
 	MaxCode = 8  // bytes in a room code
 )
+
+// Room codes, online and on the LAN, are CodeLen characters of CodeAlphabet, which leaves out 0/O/1/I as they read
+// alike.
+const (
+	CodeLen      = 6
+	CodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+)
+
+// NewCode returns a random room code.
+func NewCode() string {
+	var b [CodeLen]byte
+	_, _ = rand.Read(b[:]) // never fails
+	for i := range b {
+		b[i] = CodeAlphabet[b[i]%byte(len(CodeAlphabet))] // 256 is a multiple of 32: no bias
+	}
+	return string(b[:])
+}
 
 // Pass in MoveApplied's C and R means the player's turn was passed instead of played.
 const Pass = 0xFF

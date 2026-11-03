@@ -276,3 +276,23 @@ func TestSetupCountChangesPreserveSeats(t *testing.T) {
 		t.Fatal("removing players left stale seats or lost the heading stepper")
 	}
 }
+
+// TestRemoveSeat takes a middle seat out of Setup: the seats after it move up with their choices, and two seats stay.
+func TestRemoveSeat(t *testing.T) {
+	a := setupTestApp(1040, 640, 1, 3)
+	a.set.seats = []int{seatHuman, 1 + 2, 1 + 5}
+	s := newSetup()
+	s.layout(a)
+	s.menu = 1
+	if s.menuCount(a) != len(seatLabels)+1 {
+		t.Fatal("three seats offer Remove player")
+	}
+	s.removeSeat(a, 1)
+	if a.set.Players != 2 || len(a.set.seats) != 2 || a.set.seats[1] != 1+5 || s.menu != -1 {
+		t.Fatalf("after removing seat 1: %d players, seats %v", a.set.Players, a.set.seats)
+	}
+	s.menu = 0
+	if s.menuCount(a) != len(seatLabels) {
+		t.Fatal("two seats can't lose another")
+	}
+}

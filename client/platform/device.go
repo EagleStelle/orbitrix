@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"os"
 	"runtime"
 	"sync/atomic"
 )
@@ -27,6 +28,17 @@ var Rotate func(landscape bool)
 // neither suggests nor learns, or a room code's (capitals, no suggestions). The mobile wrapper sets it; it stays nil
 // elsewhere.
 var Keyboard func(secret bool)
+
+// Discover holds Android's multicast lock while the player looks for LAN rooms (on), without which the Wi-Fi drops
+// the hosts' broadcasts. The mobile wrapper sets it; elsewhere it does nothing.
+var Discover = func(on bool) {}
+
+// DeviceName is the name this device goes by, which other players see its LAN rooms listed under. The mobile wrapper
+// sets it on Android, whose host name is "localhost".
+var DeviceName = func() string {
+	name, _ := os.Hostname()
+	return name
+}
 
 // PressBack reports a press of Android's back button.
 func PressBack() { back.Store(true) }

@@ -10,6 +10,8 @@ import (
 	"orbitrix/core/ai"
 	"orbitrix/proto"
 	"orbitrix/server/hub"
+	"orbitrix/server/lan"
+	"orbitrix/server/signal"
 )
 
 // origin is the server this build plays online through, or "" when it can't play online.
@@ -27,12 +29,17 @@ const onlineName = "Human"
 // hostAIDelay paces the host's AI seats, so a browser host's thinking leaves it time to draw between moves.
 const hostAIDelay = 400 * time.Millisecond
 
-// session is one online room as this player sees it, kept across the lobby, the game and its results. Scenes call
-// pump every update, so the connection never backs up.
+// session is one online or LAN room as this player sees it, kept across the lobby, the game and its results. Scenes
+// call pump every update, so the connection never backs up.
 type session struct {
-	host *online.Host // nil for a joiner
-	link *online.Link
-	code string // the room code a joiner came in with
+	room    *hub.Room    // the room this player hosts, or nil for a joiner
+	host    *online.Host // an online host's signaling, or nil
+	lan     *lan.Host    // a LAN host's listener, or nil
+	link    *online.Link
+	code    string     // the room's code: the one a joiner came in with, or a private LAN room's
+	addr    string     // a LAN room's host:port, or "" online
+	private bool       // the room this player hosts takes its code (LAN) or isn't listed (online)
+	desc    signal.Msg // what describe last told signaling
 
 	seat   int // -1 until Welcome
 	token  proto.Token
@@ -47,12 +54,21 @@ type session struct {
 
 func newSession(link *online.Link) *session { return &session{link: link, seat: -1} }
 
-// hostSession opens an online room on the server for the seats Setup chose.
-func hostSession(a *app, h *online.Host) *session {
-	s := newSession(h.Me)
-	s.host = h
+// hostSession seats this player in the room they host, through me, the hub's in-process connection.
+func hostSession(room *hub.Room, me *online.Link) *session {
+	s := newSession(me)
+	s.room = room
 	s.link.Send(proto.Hello{Name: onlineName})
 	platform.Hosting(true)
+	return s
+}
+
+// lanSession is the LAN room at addr this player joined, through c, with the host's Welcome; code is a private
+// room's, kept for a rejoin.
+func lanSession(a *app, c hub.Conn, w proto.Welcome, addr, code string) *session {
+	s := newSession(online.NewLink(c))
+	s.addr, s.code = addr, code
+	s.welcome(a, w)
 	return s
 }
 
@@ -74,16 +90,13 @@ func (s *session) pump(a *app) {
 		}
 		switch m := m.(type) {
 		case proto.Welcome:
-			s.seat, s.token = int(m.Seat), m.Token
-			if s.host == nil {
-				a.set.Rejoin = &rejoin{Code: s.code, Token: hexenc.EncodeToString(m.Token[:])}
-				a.set.save()
-			}
+			s.welcome(a, m)
 		case proto.Lobby:
 			s.lobby, s.got = m, true
 			s.lobbyN++
+			s.describe()
 			// The host is ready whenever the room is in its lobby: when it opens and after every Play again.
-			if s.host != nil && !m.Playing && s.seat >= 0 && !m.Seats[s.seat].Ready {
+			if s.room != nil && !m.Playing && s.seat >= 0 && !m.Seats[s.seat].Ready {
 				s.link.Send(proto.Ready{On: true})
 			}
 		case proto.Snapshot:
@@ -91,11 +104,47 @@ func (s *session) pump(a *app) {
 		case proto.MoveApplied:
 			s.moves = append(s.moves, m)
 		case proto.Bye:
-			s.end = byeText[min(int(m.Reason), len(byeText)-1)]
+			s.end = byeWhy(m.Reason)
 		}
 	}
 	if s.end == "" && s.link.Closed() {
-		s.end, s.lost = "Connection lost", s.host == nil
+		s.end, s.lost = "Connection lost", s.room == nil
+		if s.lost && s.addr != "" {
+			s.end = "Host disconnected" // a LAN host whose device slept or left the app; the joiner retries
+		}
+	}
+}
+
+// describe tells signaling how the online room this player hosts stands: whether it is listed, its human seats (which
+// bound its TURN credentials) and how the list shows it. It sends only what changed.
+func (s *session) describe() {
+	if s.host == nil || !s.got {
+		return
+	}
+	l := signal.Listed{Cols: int(s.lobby.Cols), Rows: int(s.lobby.Rows), Playing: s.lobby.Playing}
+	humans := 0
+	for _, st := range s.lobby.Seats {
+		if st.State != proto.SeatAI {
+			humans++
+		}
+		if st.State == proto.SeatOpen {
+			l.Open++
+		}
+	}
+	m := signal.Msg{Public: !s.private, Humans: max(1, humans), Listed: &l}
+	if s.desc.Listed != nil && *s.desc.Listed == l && s.desc.Public == m.Public && s.desc.Humans == m.Humans {
+		return
+	}
+	s.desc = m
+	s.host.Update(m.Public, m.Humans, l)
+}
+
+// welcome takes the seat the host gave this player. A joiner remembers it, to rejoin after the app closes.
+func (s *session) welcome(a *app, m proto.Welcome) {
+	s.seat, s.token = int(m.Seat), m.Token
+	if s.room == nil {
+		a.set.Rejoin = &rejoin{Code: s.code, Addr: s.addr, Token: hexenc.EncodeToString(m.Token[:])}
+		a.set.save()
 	}
 }
 
@@ -112,21 +161,29 @@ var byeText = [...]string{
 	proto.ReasonRateLimit:  "Connection lost",
 }
 
+// byeWhy is byeText for any reason, one from a newer host included.
+func byeWhy(r proto.Reason) string { return byeText[min(int(r), len(byeText)-1)] }
+
 // leave ends this player's part in the room: a host closes it for everyone, a joiner gives up the seat.
 func (s *session) leave(a *app) {
-	if s.host != nil {
+	switch {
+	case s.host != nil:
 		s.host.Close()
-		platform.Hosting(false)
-	} else {
+	case s.lan != nil:
+		s.lan.Close()
+	default:
 		s.link.Send(proto.Leave{})
 		s.link.Close()
+	}
+	if s.room != nil {
+		platform.Hosting(false)
 	}
 	s.forget(a)
 }
 
 // forget drops the saved rejoin once the seat is gone for good.
 func (s *session) forget(a *app) {
-	if s.host == nil && a.set.Rejoin != nil {
+	if s.room == nil && a.set.Rejoin != nil {
 		a.set.Rejoin = nil
 		a.set.save()
 	}
@@ -142,7 +199,7 @@ func (s *session) route(a *app, from scene) bool {
 		if !s.lost {
 			s.forget(a)
 		}
-		if s.host != nil {
+		if s.room != nil {
 			platform.Hosting(false)
 		}
 		to = newGone(s)
@@ -152,7 +209,7 @@ func (s *session) route(a *app, from scene) bool {
 			to = p
 		}
 	case !s.lobby.Playing && inGame:
-		to = newLobby(s)
+		to = newRoom(s)
 	}
 	if to == nil {
 		return false

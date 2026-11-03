@@ -40,33 +40,34 @@ type Host struct {
 	Me   *Link // the host's own player
 
 	url, password string
-	relay         bool
+	relay, public bool
 	humans        int
+	code          string
 	ctx           context.Context
 	cancel        context.CancelFunc
 
 	mu      sync.Mutex
 	k       *signal.Client // nil while reconnecting
-	code    string
 	secret  string
 	ice     json.RawMessage
 	reqs    []Request
 	peers   map[string]*rtc.Peer // approved joiners whose channel isn't open yet
-	locked  bool
-	offline bool // signaling is down: the game goes on, but nobody new can join
+	update  *signal.Msg          // the room as the host last described it, sent again after a reconnect
+	offline bool                 // signaling is down: the game goes on, but nobody new can join
 }
 
-// Open creates a room on the signaling server at url and starts its hub with cfg (cfg.Code is ignored: signaling
-// already admits only the players the host approved). It returns ErrPassword when the server wants a password and
+// Open creates a room on the signaling server at url and starts its hub with cfg. A public room is listed for anyone
+// once Update describes it.
+// It returns ErrPassword when the server wants a password and
 // password is empty, ErrRefused when the password is wrong, and ErrBusy when the server is full.
-func Open(ctx context.Context, url, password string, relay bool, cfg hub.Config) (*Host, error) {
+func Open(ctx context.Context, url, password string, relay, public bool, cfg hub.Config) (*Host, error) {
 	humans := 0
 	for _, s := range cfg.Seats {
 		if s.Human {
 			humans++
 		}
 	}
-	h := &Host{url: url, password: password, relay: relay, humans: humans, peers: map[string]*rtc.Peer{}}
+	h := &Host{url: url, password: password, relay: relay, public: public, humans: humans, code: cfg.Code, peers: map[string]*rtc.Peer{}}
 	k, err := h.create(ctx)
 	if err != nil {
 		return nil, err
@@ -81,6 +82,7 @@ func Open(ctx context.Context, url, password string, relay bool, cfg hub.Config)
 	h.Room.Add(theirs)
 	h.Me = NewLink(mine)
 	h.ctx, h.cancel = context.WithCancel(context.Background())
+	h.k = k // so sends work at once, before run takes over the socket
 	go h.run(k)
 	go h.ping()
 	return h, nil
@@ -96,7 +98,7 @@ func (h *Host) create(ctx context.Context) (*signal.Client, error) {
 		k.Close()
 		return nil, ErrPassword
 	}
-	m := signal.Msg{T: "host.create", Humans: h.humans}
+	m := signal.Msg{T: "host.create", Humans: h.humans, Public: h.public, Code: h.code}
 	if !k.Open {
 		m.Password = h.password
 	}
@@ -155,22 +157,14 @@ func (h *Host) answer(peer, t string) {
 	h.send(signal.Msg{T: t, Peer: peer})
 }
 
-// Lock stops new joiners (rejoins still pass); waiting ones are turned away.
-func (h *Host) Lock(on bool) {
+// Update tells signaling how the room stands: whether it is public, how many human seats it has (which bounds its
+// TURN credentials) and how the list shows it.
+func (h *Host) Update(public bool, humans int, l signal.Listed) {
+	m := signal.Msg{T: "update", Public: public, Humans: humans, Listed: &l}
 	h.mu.Lock()
-	h.locked = on
-	if on {
-		h.reqs = h.reqs[:0]
-	}
+	h.update = &m
 	h.mu.Unlock()
-	h.send(signal.Msg{T: "lock", On: on})
-}
-
-// Locked reports whether the room is locked.
-func (h *Host) Locked() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.locked
+	h.send(m)
 }
 
 // Close ends the room for everyone and leaves signaling.
@@ -258,8 +252,11 @@ func (h *Host) reconnect() *signal.Client {
 			k, err = h.create(h.ctx)
 		}
 		if err == nil {
-			if h.Locked() {
-				_ = k.Send(h.ctx, signal.Msg{T: "lock", On: true})
+			h.mu.Lock()
+			u := h.update
+			h.mu.Unlock()
+			if u != nil {
+				_ = k.Send(h.ctx, *u) // a new room starts private and undescribed
 			}
 			return k
 		}

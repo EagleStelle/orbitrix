@@ -322,3 +322,69 @@ New, not from the prototype; they use real search or learning instead of more he
   internal that Go's linker refuses otherwise. The app now asks for `INTERNET`.
 - **Size:** pion added 7.3 MB to the APK (now 18.1 MB) and 1.7 MB brotli to the web build (33.6 MB raw, 5.6 MB
   brotli).
+
+## LAN play and one Room page (Phase 7)
+
+- **Same Wi-Fi lists rooms; private ones take a code** (user decisions, in two steps). The first build joined by
+  code with an Address row for join by IP; the user dropped the address ("modern apps don't need them"), then the
+  code for ordinary rooms ("a join code on a LAN is illogical"), then asked for public and private rooms on both
+  kinds. A public LAN room is listed by its host device's name and joined with a tap, no approval; a private one is
+  never listed and its code finds it among the rooms heard. There is no join by IP.
+- **Online public rooms are listed, and the host still lets people in** (user choice). The host's `update{public,
+  humans, listed}` tells signaling whether the room is public, its human seats (which bound its TURN credentials) and
+  how the list shows it; an anonymous `list` after the proof of work returns the public rooms with their codes. Rows
+  show the board's preset and size, not a device name, since the list is open to the internet. Private rooms are
+  never listed. Every online join, public or private, waits for Let in, so strangers never get a seat or TURN without
+  the host's yes.
+- **Defaults under Settings, Network:** Same Wi-Fi rooms start public and Online rooms private (user choice); the
+  Room page's Room button changes it for one room. The Online tab became Network.
+- **Lock is gone** (user request), in the client and in signaling: public/private and Kick cover it. "Keep this tab
+  open" is gone too; the web host keeps its wake lock and `beforeunload` question.
+- **One Room page** (superseded by "The room is Setup" below; user request; impeccable surface round, seed d38a7a29, the user locked "Board-led sheet" over
+  "the seat table is the page" and "single-column ticket"). Set-up and lobby share the page; Open room becomes Start
+  in place. Every setting is a button opening a dialog: the mini mat is the Board button; Players, Room
+  (Public/Private) and each seat have their own. Kick moved into the seat dialog (Remove player), so seat rows stay
+  one control each. The invite code with Share sits in the host's top block, under the setting buttons, the same on a
+  phone and a desktop; Share sends the join link online and the code on Same Wi-Fi. Joiners see only the seats.
+  This Device's Setup is unchanged.
+- **Settings stay live until Start** (user choice): `hub.Room.Configure` changes the board and seats in the lobby.
+  A seat that goes away or turns into a bot lets its player go as a kick; the host's own seat can't. Seats keep one
+  backing array (capacity 12) so grace timers never point at a stale seat.
+- **Pause menu:** Main menu leaves at once (user request); Restart still asks twice.
+- **No browser LAN play** (user decision): the desktop no longer embeds the web build, and the web build never
+  offers Same Wi-Fi. `lan.Host` keeps a stop closure rather than its `http.Server`, and the Room page calls `lan.Open`
+  behind a constant `runtime.GOOS` check, so the web build carries no HTTP server: it grew 0.2 MB over Phase 6,
+  not 2.8 MB.
+- **Discovery by subnet broadcast,** not multicast: every private IPv4 network the host is on gets a 1 s
+  announcement (magic, version, room id, name, open seats, playing/private flags, port). Broadcast needs no group
+  joins, which Android 11+ makes awkward, and home routers pass it. `github.com/wlynxg/anet` (already in through
+  pion) reads interfaces where Android 11+ refuses Go's own lookup. The random room id makes a host heard on two
+  networks one room. Joiners hold Android's multicast lock while the page is open.
+- **Private interfaces only:** the host listens on each private IPv4 address (7777, then up to 15 more ports), not
+  0.0.0.0. Detecting a public network is left to the OS: Windows' firewall prompt allows private networks by default.
+  Known limit: a host whose address changes mid-session (new DHCP lease) stops being reachable there.
+- **Windows firewall notice before Same Wi-Fi** (moved from Open room): listening for rooms brings up Windows'
+  prompt for joiners too, so the first Same Wi-Fi tap on Windows says so once, with Continue and Back.
+- **A quiet host is noticed:** `ws` pings its peer every 10 s and drops it after 10 s without a pong; a LAN joiner
+  then sees "Host disconnected" and retries every 2 s for the 60 s seat grace with its rejoin token (and code), and
+  is back in its seat when the host returns. Browsers can't ping, so only native sides check.
+- **No network security config on Android:** it governs Java's HTTP stacks; Go dials its own sockets, and an
+  emulator joined a desktop host over plain `ws://` without one.
+- **Room codes live in `proto`** (`CodeLen`, `CodeAlphabet`, `NewCode`), shared by signaling, the LAN host and the
+  client's code field.
+- **Verified:** unit and scene tests (a LAN room played through, a dropped joiner winning its seat back, the Room page
+  driven by clicks through its dialogs, a public online room listed); on the API 36 emulator, the room list heard a
+  PC room through an emulator redirect, a tap joined it and a game ran, and an Android-hosted room seated a PC client.
+  Not yet: two real devices on one Wi-Fi without internet.
+- **Join requests are a snackbar** (user request), one at a time like Material's queue, above the action on every layout; request rows left the Players block. A private room's code tiles show empty until the room opens. The Join block has two labelled groups, the list and Join by code; Same Wi-Fi and Online were already one scene (`joinScene`).
+- **The room is Setup** (user direction, replacing the Board-led sheet): the host's room page is This Device's Setup
+  scene itself (`setupScene` with a `hostRoom`), so Players, Board and the seat dropdown are the same code on both.
+  What a room adds sits outside the blocks: a round key button beside the action opens the Room dialog (Public or
+  Private; when Private is selected, the code in the join page's tiles and an icon-only copy button), and join
+  requests come as a snackbar. Access changes are a draft until Confirm; Cancel or dismiss discards them. The Board,
+  Players and seat dialogs were dropped; joiners keep a seats-only page.
+- **Remove player** (user request): any seat, bot or human, from the seat dropdown, on both Setups.
+  `hub.Room.RemoveSeat` lets the seat's player go, moves the seats after it up with their players and sends those a
+  Welcome with their new seat. Seat holds now take room-wide numbers, so a grace timer whose seat moved does nothing,
+  and a moved away seat starts its grace again. It is drawn in a danger ink (user request), the one colour outside
+  the player inks.

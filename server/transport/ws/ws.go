@@ -5,6 +5,7 @@ package ws
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/coder/websocket"
@@ -15,13 +16,34 @@ const readLimit = 16 << 10
 
 const writeTimeout = 10 * time.Second
 
+// A peer that answers no ping within pingWait is gone: a host whose phone left the app or slept, a joiner who walked
+// out of range. TCP alone would wait minutes to notice.
+const pingEvery, pingWait = 10 * time.Second, 10 * time.Second
+
 // Conn is a hub connection over one WebSocket. Messages travel as binary frames.
 type Conn struct{ c *websocket.Conn }
 
-// New wraps an open WebSocket.
+// New wraps an open WebSocket and starts pinging its peer. Pongs are read by Receive, which the hub and the client
+// call without pause. A browser can't send pings, so there only the native side checks.
 func New(c *websocket.Conn) *Conn {
 	c.SetReadLimit(readLimit)
+	if runtime.GOOS != "js" {
+		go keepAlive(c)
+	}
 	return &Conn{c}
+}
+
+func keepAlive(c *websocket.Conn) {
+	for {
+		time.Sleep(pingEvery)
+		ctx, cancel := context.WithTimeout(context.Background(), pingWait)
+		err := c.Ping(ctx)
+		cancel()
+		if err != nil {
+			c.CloseNow() // unblocks Receive, so the connection ends as if the peer had closed it
+			return
+		}
+	}
 }
 
 // Dial connects to a host's hub at url (ws://host:port/...).

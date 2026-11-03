@@ -1,18 +1,15 @@
 package client
 
 import (
-	"context"
-	"errors"
 	"image"
 	"image/color"
+	"log"
 	"math"
 	"slices"
-	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
-	"orbitrix/client/online"
 	"orbitrix/core"
 )
 
@@ -123,21 +120,15 @@ func presetOf(cols, rows int) int {
 }
 
 // previewFrame is the preview's frame in cells: the shape's largest preset, or the chosen board when it is bigger.
-func (s *setupScene) previewFrame(a *app) (cols, rows int) {
+func previewFrame(a *app) (cols, rows int) {
 	c, r := presetSize(shapeOf(a.set.Cols, a.set.Rows), len(boardSizes)-1)
 	return max(a.set.Cols, c), max(a.set.Rows, r)
 }
 
 // setupScene keeps Players above Board and Start outside the scrollable content.
 type setupScene struct {
-	menu int // seat whose type menu is open, or -1
-
-	// Hosting an online room: Start opens it on the server instead of starting a local game.
-	online  bool
-	opening bool
-	opened  chan openResult
-	note    string // why the room didn't open, shown on Start for noteT ticks
-	noteT   int
+	menu int       // seat whose type menu is open, or -1
+	room *hostRoom // a room this player hosts, or nil for a game on this device
 
 	// Layout in device px, recomputed when the screen size changes.
 	lv                    rect
@@ -149,6 +140,8 @@ type setupScene struct {
 	back                  rect
 	titleX, titleY        float64
 	players, boardB       rect
+	invite                rect // the Room dialog's button beside the action, in a room
+	lsnack                bool // the join request snackbar was showing
 	headY                 float64
 	minusP, plusP         rect
 	seatDot, seatTy       [core.MaxPlayers]rect
@@ -172,17 +165,13 @@ type setupScene struct {
 
 func newSetup() *setupScene { return &setupScene{menu: -1} }
 
-// newHostSetup is Setup for an online room: its human seats are for the host and the players who join.
-func newHostSetup() *setupScene {
-	return &setupScene{menu: -1, online: true, opened: make(chan openResult, 1)}
-}
-
 func (s *setupScene) layout(a *app) {
 	v := a.safe()
-	if v == s.lv && a.u == s.lu && a.set.Players == s.lp && s.scroll == s.lscroll {
+	snacking := s.room != nil && len(s.room.reqs) > 0
+	if v == s.lv && a.u == s.lu && a.set.Players == s.lp && s.scroll == s.lscroll && snacking == s.lsnack {
 		return
 	}
-	s.lv, s.lu, s.lp = v, a.u, a.set.Players
+	s.lv, s.lu, s.lp, s.lsnack = v, a.u, a.set.Players, snacking
 	u := a.u
 	pad, gap, bp := 20*u, 16*u, 20*u
 	if v.w < 1200*u {
@@ -193,8 +182,19 @@ func (s *setupScene) layout(a *app) {
 	s.back = backButton(v.x+pad, v.y+pad, w, u)
 	s.titleX, s.titleY = s.back.right()+16*u, s.back.cy()
 	s.start = rect{v.x + pad, v.bottom() - pad - 52*u, w, 52 * u}
+	if s.room != nil { // the invite button stands beside the action
+		s.start.w -= 52*u + gap
+		s.invite = rect{s.start.right() + gap, s.start.y, 52 * u, 52 * u}
+	}
 	top := s.back.bottom() + gap
 	s.viewport = rect{v.x + pad, top, w, max(1, s.start.y-gap-top)}
+	snack := 0.0 // room under the join request snackbar, so it hides nothing for good
+	if s.room != nil {
+		s.room.layoutSnack(a, s.viewport, s.start, gap)
+		if len(s.room.reqs) > 0 {
+			snack = snackH*u + gap
+		}
+	}
 
 	// Visible controls match Back; their larger hit rows preserve touch usability.
 	buttonH, targetH := compactButtonHeight*u, compactButtonTarget*u
@@ -222,6 +222,9 @@ func (s *setupScene) layout(a *app) {
 	for _, label := range seatLabels {
 		minSeatW = max(minSeatW, seatChoiceX*u+textWidth(label, a.f.labelBold)+(52+pipsW)*u)
 	}
+	if s.room != nil { // a player's seat shows its state where an AI's shows pips
+		minSeatW = max(minSeatW, seatChoiceX*u+textWidth("Human (you)", a.f.labelBold)+chipWidth(a, "Not ready", chipHeight*u)+60*u)
+	}
 	cols := max(1, min(4, a.set.Players, int((inner+gap)/(minSeatW+gap))))
 	rows := (a.set.Players + cols - 1) / cols
 	playerH := 2*bp + 44*u + float64(rows)*rowPitch
@@ -232,7 +235,7 @@ func (s *setupScene) layout(a *app) {
 	if !sideBySide {
 		boardMin += 128*u + gap // preview above the controls
 	}
-	s.maxScroll = max(0, boardMin+gap+playerH-s.viewport.h)
+	s.maxScroll = max(0, boardMin+gap+playerH+snack-s.viewport.h)
 	s.scroll = max(0, min(s.maxScroll, s.scroll))
 	s.lscroll = s.scroll
 	boardH := max(boardMin, s.viewport.h-gap-playerH)
@@ -296,30 +299,49 @@ func setupStepHit(r rect, u float64) rect {
 }
 
 func (s *setupScene) canStart(a *app) bool {
-	return a.set.Players <= a.set.Cols*a.set.Rows && !s.opening && s.noteT == 0 && (!s.online || hasHuman(a.set.seats))
+	if s.room != nil {
+		return s.room.canAct(a)
+	}
+	return a.set.Players <= a.set.Cols*a.set.Rows
 }
 
 func hasHuman(seats []int) bool { return slices.Contains(seats, seatHuman) }
 
+// minPlayers is the fewest players Setup allows: two, or in an open room as many as keep the host's own seat.
+func (s *setupScene) minPlayers() int {
+	if s.room != nil {
+		return s.room.minPlayers()
+	}
+	return core.MinPlayers
+}
+
+// changed saves a change to the seats or the board, and hands it to the room this player hosts.
+func (s *setupScene) changed(a *app) {
+	a.set.save()
+	if s.room != nil {
+		s.room.apply(a)
+	}
+}
+
 func (s *setupScene) setPlayers(a *app, n int) {
-	a.set.Players = max(core.MinPlayers, min(core.MaxPlayers, n))
+	a.set.Players = max(s.minPlayers(), min(core.MaxPlayers, n))
 	a.set.fitSeats()
 	s.menu = -1
-	a.set.save()
+	s.changed(a)
 }
 
 func (s *setupScene) resize(a *app, dc, dr int) {
 	a.set.Cols = max(core.MinSize, min(core.MaxSize, a.set.Cols+dc))
 	a.set.Rows = max(core.MinSize, min(core.MaxSize, a.set.Rows+dr))
-	a.set.save()
+	s.changed(a)
 }
 
 func (s *setupScene) begin(a *app) {
 	if !s.canStart(a) {
 		return
 	}
-	if s.online {
-		s.open(a, a.set.Password)
+	if s.room != nil {
+		s.room.act(a)
 		return
 	}
 	if p, err := newPlay(a, a.set.Cols, a.set.Rows, a.set.seats); err == nil {
@@ -332,10 +354,11 @@ func (s *setupScene) menuRects(a *app) (panel, first rect) {
 	u, v := a.u, a.safe()
 	t := s.seatTy[s.menu]
 	cols := 1
-	if float64(len(seatLabels))*compactButtonTarget*u+12*u > v.h-16*u {
+	n := s.menuCount(a)
+	if float64(n)*compactButtonTarget*u+12*u > v.h-16*u {
 		cols = 2
 	}
-	rows := (len(seatLabels) + cols - 1) / cols
+	rows := (n + cols - 1) / cols
 	w := min(v.w-16*u, max(t.w, 200*u)*float64(cols))
 	h := float64(rows)*compactButtonTarget*u + 12*u
 	y := t.bottom() + 6*u
@@ -346,17 +369,47 @@ func (s *setupScene) menuRects(a *app) (panel, first rect) {
 	return panel, rect{panel.x + 6*u, panel.y + 6*u, (w - 12*u) / float64(cols), compactButtonTarget * u}
 }
 
+// menuCount is how many options a seat's menu has: Human and the AIs, then Remove player while there are more than
+// two players.
+func (s *setupScene) menuCount(a *app) int {
+	if a.set.Players > core.MinPlayers {
+		return len(seatLabels) + 1
+	}
+	return len(seatLabels)
+}
+
+// removeSeat takes seat i out, bot or human: the seats after it move up one, keeping their choices. In an open room
+// the hub moves their players with them and lets the seat's own player go.
+func (s *setupScene) removeSeat(a *app, i int) {
+	if s.room != nil && s.room.net != nil {
+		if err := s.room.net.room.RemoveSeat(i); err != nil {
+			log.Printf("remove seat %d: %v", i, err)
+			return
+		}
+	}
+	a.set.seats = slices.Delete(a.set.seats, i, i+1)
+	a.set.Players--
+	s.menu = -1
+	s.changed(a)
+}
+
 func setupMenuOption(panel, first rect, i int, u float64) rect {
 	rows := int(math.Round((panel.h - 12*u) / first.h))
 	return rect{first.x + float64(i/rows)*first.w, first.y + float64(i%rows)*first.h, first.w, first.h}
 }
 
 func (s *setupScene) update(a *app) error {
+	if s.room != nil {
+		if s.room.pre(a, s) {
+			return nil
+		}
+		if s.room.open {
+			s.room.updateDialog(a)
+			return nil
+		}
+	}
 	s.layout(a)
 	u, set := a.u, a.set
-	if s.online && s.pollOpen(a) {
-		return nil
-	}
 	if s.maxScroll > 0 && (a.in.dragY != 0 || a.in.wheel != 0 && s.viewport.contains(a.in.x, a.in.y)) {
 		s.scroll -= a.in.wheel*(compactButtonTarget+8)*u + a.in.dragY
 		s.menu = -1
@@ -377,14 +430,20 @@ func (s *setupScene) update(a *app) error {
 	if s.menu >= 0 {
 		panel, first := s.menuRects(a)
 		if a.hover(panel) {
-			for o := range seatLabels {
+			for o := range s.menuCount(a) {
 				opt := setupMenuOption(panel, first, o, u)
-				if a.clicked(opt) {
-					set.seats[s.menu] = o
-					s.menu = -1
-					set.save()
+				if !a.clicked(opt) {
+					continue
+				}
+				if o == len(seatLabels) {
+					s.removeSeat(a, s.menu)
+					s.layout(a)
 					break
 				}
+				set.seats[s.menu] = o
+				s.menu = -1
+				s.changed(a)
+				break
 			}
 			return nil
 		}
@@ -393,6 +452,9 @@ func (s *setupScene) update(a *app) error {
 		}
 	}
 
+	if s.room != nil && s.room.answerSnack(a) {
+		return nil
+	}
 	switch {
 	case a.clicked(compactHit(s.back, u)):
 		s.leave(a)
@@ -400,12 +462,15 @@ func (s *setupScene) update(a *app) error {
 	case s.canStart(a) && a.clicked(s.start):
 		s.begin(a)
 		return nil
+	case s.room != nil && a.clicked(s.invite):
+		s.room.openDialog()
+		return nil
 	}
 	if !s.viewport.contains(a.in.x, a.in.y) {
 		return nil
 	}
 	switch {
-	case set.Players > core.MinPlayers && a.clicked(setupStepHit(s.minusP, u)):
+	case set.Players > s.minPlayers() && a.clicked(setupStepHit(s.minusP, u)):
 		s.setPlayers(a, set.Players-1)
 	case set.Players < core.MaxPlayers && a.clicked(setupStepHit(s.plusP, u)):
 		s.setPlayers(a, set.Players+1)
@@ -425,7 +490,7 @@ func (s *setupScene) update(a *app) error {
 	}
 	for i := range set.Players {
 		switch {
-		case !a.clicked(s.seatHit[i]):
+		case !a.clicked(s.seatHit[i]), s.room != nil && !s.room.editable(i):
 		case closing != i:
 			s.menu = i
 		}
@@ -434,7 +499,7 @@ func (s *setupScene) update(a *app) error {
 		for t, r := range group {
 			if a.clicked(compactHit(r, u)) {
 				set.Cols, set.Rows = presetSize(g, t)
-				set.save()
+				s.changed(a)
 			}
 		}
 	}
@@ -447,7 +512,10 @@ func (s *setupScene) draw(dst *ebiten.Image, a *app) {
 
 	drawBack(dst, a, s.back)
 	title := "Set up the game"
-	if s.online {
+	switch {
+	case s.room != nil && s.room.net != nil:
+		title = "Room"
+	case s.room != nil:
 		title = "Set up the room"
 	}
 	titleFace := f.title
@@ -468,8 +536,15 @@ func (s *setupScene) draw(dst *ebiten.Image, a *app) {
 		fillRound(dst, rect{v.right() + 5*u, v.y + (v.h-h)*s.scroll/s.maxScroll, 3 * u, h}, 1.5*u, sc.dim)
 	}
 	s.drawStart(dst, a)
+	if s.room != nil {
+		drawRoomButton(dst, a, s.invite)
+		s.room.drawSnack(dst, a)
+	}
 	if s.menu >= 0 {
 		s.drawMenu(dst, a)
+	}
+	if s.room != nil && s.room.open {
+		s.room.drawDialog(dst, a)
 	}
 }
 
@@ -492,19 +567,35 @@ func (s *setupScene) drawPlayers(dst *ebiten.Image, a *app) {
 	p := s.players
 	fillRound(dst, p, 24*u, sc.tile)
 	drawText(dst, "Players", f.heading, p.x+s.blockPad, s.headY, text.AlignStart, sc.ink)
-	stepper(dst, a, set.Players, core.MinPlayers, core.MaxPlayers, s.minusP, s.plusP)
+	stepper(dst, a, set.Players, s.minPlayers(), core.MaxPlayers, s.minusP, s.plusP)
 
 	for i := range set.Players {
 		d, t := s.seatDot[i], s.seatTy[i]
-		hot := s.menu < 0 && a.over(s.seatHit[i]) || s.menu == i
+		label, opt, state := seatLabels[set.seats[i]], set.seats[i], chip{}
+		if s.room != nil {
+			label, opt, state = s.room.seat(a, i)
+		}
+		editable := s.room == nil || s.room.editable(i)
+		hot := editable && (s.menu < 0 && a.over(s.seatHit[i]) || s.menu == i)
 		style := btnGround
-		if set.seats[i] == seatHuman || s.menu == i {
+		if opt == seatHuman || s.menu == i {
 			style = btnChosen
 		}
 		ink := drawButtonSurface(dst, a, t, style, true, hot)
 		seatDot(dst, sc, i, d.cx(), d.cy(), d.w/2, false, set.Marks)
-		drawText(dst, seatLabels[set.seats[i]], f.labelBold, t.x+seatChoiceX*u, t.cy(), text.AlignStart, ink)
-		drawPips(dst, set.seats[i], t.right()-36*u, t.cy(), u, ink)
+		drawText(dst, label, f.labelBold, t.x+seatChoiceX*u, t.cy(), text.AlignStart, ink)
+		right := t.right() - 36*u
+		if !editable {
+			right = t.right() - 16*u
+		}
+		if state.word != "" {
+			drawChip(dst, a, state, right, t.cy(), chipHeight*u)
+		} else {
+			drawPips(dst, opt, right, t.cy(), u, ink)
+		}
+		if !editable {
+			continue
+		}
 		tip := 2.5 * u // the chevron points down, or up while its menu is open
 		if s.menu == i {
 			tip = -tip
@@ -516,18 +607,11 @@ func (s *setupScene) drawPlayers(dst *ebiten.Image, a *app) {
 // drawStart draws the Start button; when the board is too small for the players it says so instead.
 func (s *setupScene) drawStart(dst *ebiten.Image, a *app) {
 	label, ok := "Start", s.canStart(a)
-	if s.online {
-		label = "Open room"
-	}
 	switch {
-	case s.noteT > 0:
-		label = s.note
-	case s.opening:
-		label = "Opening"
-	case a.set.Players > a.set.Cols*a.set.Rows:
-		label = "Board too small"
+	case s.room != nil:
+		label = s.room.actionLabel(a)
 	case !ok:
-		label = "Needs a human seat"
+		label = "Board too small"
 	}
 	drawButton(dst, a, s.start, label, "", btnInk, ok)
 }
@@ -556,24 +640,7 @@ func (s *setupScene) drawBoard(dst *ebiten.Image, a *app) {
 		fillRound(dst, s.previewPanel, 16*u, sc.ground)
 	}
 	if s.showPreview {
-		// Centre the diagram (the chosen board and the shape's largest preset) in its frame. Preset outlines too small
-		// to read at this scale are left out.
-		pv := s.preview
-		fc, fr := s.previewFrame(a)
-		k := min(pv.w/float64(fc), pv.h/float64(fr))
-		ox := math.Round(pv.x + (pv.w-float64(fc)*k)/2)
-		oy := math.Round(pv.y + (pv.h-float64(fr)*k)/2)
-		drawMini(dst, a, k, ox, oy)
-		for t := range boardSizes {
-			c, r := presetSize(g, t)
-			// At small scales an outline inside the chosen board only adds scribble, so it is dropped.
-			inside := c <= set.Cols && r <= set.Rows
-			if float64(min(c, r))*k >= 12*u && !(inside && k < 6*u) {
-				dashedRect(dst, rect{ox, oy, float64(c) * k, float64(r) * k}, 4*u, 1.5*u, sc.dim)
-			}
-		}
-		strokeRound(dst, rect{ox - 3*u, oy - 3*u, float64(set.Cols)*k + 6*u, float64(set.Rows)*k + 6*u}, 6*u,
-			2.5*u, sc.ink)
+		drawPreview(dst, a, s.preview)
 	}
 
 	for shape, group := range s.presetPills {
@@ -591,6 +658,28 @@ func (s *setupScene) drawBoard(dst *ebiten.Image, a *app) {
 	stepper(dst, a, set.Cols, core.MinSize, core.MaxSize, s.minusCol, s.plusCol)
 	drawText(dst, "Rows", a.f.labelBold, s.rowsCtl.x, s.rowsCtl.cy(), text.AlignStart, sc.ink)
 	stepper(dst, a, set.Rows, core.MinSize, core.MaxSize, s.minusRow, s.plusRow)
+}
+
+// drawPreview draws the chosen board as a mini mat centred in pv, with its shape's presets as dashed outlines from the
+// same corner: graded sizes, like the nested lines of a sewing pattern. Preset outlines too small to read at this
+// scale are left out.
+func drawPreview(dst *ebiten.Image, a *app, pv rect) {
+	sc, u, set := a.sc, a.u, a.set
+	g := shapeOf(set.Cols, set.Rows)
+	fc, fr := previewFrame(a)
+	k := min(pv.w/float64(fc), pv.h/float64(fr))
+	ox := math.Round(pv.x + (pv.w-float64(fc)*k)/2)
+	oy := math.Round(pv.y + (pv.h-float64(fr)*k)/2)
+	drawMini(dst, a, k, ox, oy)
+	for t := range boardSizes {
+		c, r := presetSize(g, t)
+		// At small scales an outline inside the chosen board only adds scribble, so it is dropped.
+		inside := c <= set.Cols && r <= set.Rows
+		if float64(min(c, r))*k >= 12*u && !(inside && k < 6*u) {
+			dashedRect(dst, rect{ox, oy, float64(c) * k, float64(r) * k}, 4*u, 1.5*u, sc.dim)
+		}
+	}
+	strokeRound(dst, rect{ox - 3*u, oy - 3*u, float64(set.Cols)*k + 6*u, float64(set.Rows)*k + 6*u}, 6*u, 2.5*u, sc.ink)
 }
 
 // drawMini draws the chosen board's tiles at k px per cell with their top left at (ox, oy), in one batch.
@@ -612,82 +701,36 @@ func (s *setupScene) drawMenu(dst *ebiten.Image, a *app) {
 	fillRound(dst, panel, 18*u, sc.ground)
 	strokeRound(dst, panel, 18*u, 2*u, sc.ink)
 	current := a.set.seats[s.menu]
-	for o, label := range seatLabels {
+	if s.room != nil {
+		_, current, _ = s.room.seat(a, s.menu)
+	}
+	for o := range s.menuCount(a) {
 		opt := setupMenuOption(panel, first, o, a.u)
+		face := rect{opt.x, opt.cy() - compactButtonHeight*a.u/2, opt.w, compactButtonHeight * a.u}
+		if o == len(seatLabels) {
+			// Remove player is destructive: set apart by a hairline, in the danger ink, its hover tinted with it.
+			fillRound(dst, rect{opt.x + 8*u, opt.y, opt.w - 16*u, 1.5 * u}, 0, mix(sc.ground, sc.dim, 0.35))
+			if a.over(opt) {
+				fillPill(dst, face, withAlpha(sc.danger, 0.14))
+			}
+			drawText(dst, "Remove player", f.labelBold, opt.x+14*u, opt.cy(), text.AlignStart, sc.danger)
+			continue
+		}
 		style := btnGround
 		if o == current {
 			style = btnInk
 		}
-		face := rect{opt.x, opt.cy() - compactButtonHeight*a.u/2, opt.w, compactButtonHeight * a.u}
 		ink := drawButtonSurface(dst, a, face, style, true, a.over(opt))
-		drawText(dst, label, f.labelBold, opt.x+14*u, opt.cy(), text.AlignStart, ink)
+		drawText(dst, seatLabels[o], f.labelBold, opt.x+14*u, opt.cy(), text.AlignStart, ink)
 		drawPips(dst, o, opt.right()-14*u, opt.cy(), u, ink)
 	}
 }
 
-// leave goes back to where Setup was opened from.
+// leave goes back Home, or from a room to its join page, closing the room.
 func (s *setupScene) leave(a *app) {
-	if s.opening { // a room that opens after all closes again at once
-		go func() {
-			if r := <-s.opened; r.h != nil {
-				r.h.Close()
-			}
-		}()
+	if s.room != nil {
+		s.room.leave(a)
+		return
 	}
-	if s.online {
-		a.next = newOnline(a, "")
-	} else {
-		a.next = newHome()
-	}
-}
-
-type openResult struct {
-	h   *online.Host
-	err error
-}
-
-// open opens the online room off the game loop; pollOpen takes the answer.
-func (s *setupScene) open(a *app, password string) {
-	s.opening, s.menu = true, -1
-	cfg, url, relay := hubConfig(a), signalURL(), a.set.Relay
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		h, err := online.Open(ctx, url, password, relay, cfg)
-		s.opened <- openResult{h, err}
-	}()
-}
-
-// pollOpen goes on to the room's lobby once it is open, asks for the host password when the server wants it (again,
-// when it refused the saved one), and otherwise says on Start why it failed. It reports whether the scene changes.
-func (s *setupScene) pollOpen(a *app) bool {
-	if s.noteT > 0 {
-		s.noteT--
-	}
-	var r openResult
-	select {
-	case r = <-s.opened:
-	default:
-		return false
-	}
-	s.opening = false
-	switch {
-	case r.err == nil:
-		a.set.save() // keeps the password that worked
-		n := hostSession(a, r.h)
-		a.net, a.next = n, newLobby(n)
-		return true
-	case errors.Is(r.err, online.ErrPassword), errors.Is(r.err, online.ErrRefused):
-		wrong := a.set.Password != ""
-		a.set.Password = ""
-		a.set.save()
-		a.next = newPassword(s, wrong)
-		return true
-	case errors.Is(r.err, online.ErrBusy):
-		s.note = "Server full"
-	default:
-		s.note = "Can't reach the server"
-	}
-	s.noteT = 180
-	return false
+	a.next = newHome()
 }

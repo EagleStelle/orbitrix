@@ -13,12 +13,12 @@ const MaxMessage = 16 << 10
 
 // Msg is every signaling message: T names it and the other fields are those it uses.
 //
-// Client to server: hello{v}, pow{c, n}, host.create{password, humans}, host.reclaim{code, secret},
-// join{code, name}, rejoin{code, name, token}, ping; a host's approve{peer}, deny{peer}, lock{on},
-// signal{peer, sdp}, revoke{peer}, close; a joiner's signal{sdp}.
+// Client to server: hello{v}, pow{c, n}, list, host.create{password, humans, public}, host.reclaim{code, secret},
+// join{code, name}, rejoin{code, name, token}, ping; a host's update{public, humans, listed}, approve{peer},
+// deny{peer}, signal{peer, sdp}, revoke{peer}, close; a joiner's signal{sdp}.
 //
-// Server to client: challenge{v, c, bits, open}, room{code, secret, ice}, wait, approved{ice} (to the joiner) or
-// approved{peer} (to the host), request{peer, name, token}, signal{sdp[, peer]}, gone{peer}, pong,
+// Server to client: challenge{v, c, bits, open}, rooms{rooms}, room{code, secret, ice}, wait, approved{ice} (to the
+// joiner) or approved{peer} (to the host), request{peer, name, token}, signal{sdp[, peer]}, gone{peer}, pong,
 // error{error[, peer]}.
 type Msg struct {
 	T        string          `json:"t"`
@@ -31,11 +31,22 @@ type Msg struct {
 	Code     string          `json:"code,omitempty"`
 	Secret   string          `json:"secret,omitempty"` // the host's key to reclaim its room
 	Name     string          `json:"name,omitempty"`
-	Token    string          `json:"token,omitempty"` // a rejoin token from the host's hub, hex
-	Peer     string          `json:"peer,omitempty"`  // a joiner, as the host sees it
-	On       bool            `json:"on,omitempty"`
-	Open     bool            `json:"open,omitempty"` // in the challenge: hosting needs no password (STUN only)
+	Token    string          `json:"token,omitempty"`  // a rejoin token from the host's hub, hex
+	Peer     string          `json:"peer,omitempty"`   // a joiner, as the host sees it
+	Public   bool            `json:"public,omitempty"` // the room is listed for anyone; joining still takes the host's yes
+	Listed   *Listed         `json:"listed,omitempty"` // update: how the list shows the room
+	Rooms    []Listed        `json:"rooms,omitempty"`  // the public rooms
+	Open     bool            `json:"open,omitempty"`   // in the challenge: hosting needs no password (STUN only)
 	SDP      string          `json:"sdp,omitempty"`
 	ICE      json.RawMessage `json:"ice,omitempty"` // RTCIceServer list
 	Error    string          `json:"error,omitempty"`
+}
+
+// Listed is a public room as the Online page lists it.
+type Listed struct {
+	Code    string `json:"code"`
+	Cols    int    `json:"cols"`
+	Rows    int    `json:"rows"`
+	Open    int    `json:"open"` // human seats nobody holds
+	Playing bool   `json:"playing,omitempty"`
 }

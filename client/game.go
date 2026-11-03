@@ -236,7 +236,7 @@ func New() *Game {
 	a.in.finger = true // no pointer until the mouse moves or a finger lands
 	g.scene = newHome()
 	if code := platform.JoinCode(); code != "" && origin != "" { // opened from a /join/ link
-		g.scene = newOnline(a, code)
+		g.scene = newJoin(a, false, code)
 	}
 	// Closing the window while hosting closes the room first, so the other players hear why.
 	ebiten.SetWindowClosingHandled(true)

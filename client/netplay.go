@@ -118,7 +118,7 @@ func (p *playScene) myTurn() bool {
 func (p *playScene) askGone() {
 	n := p.net
 	p.goneP = -1
-	if n.host == nil || p.over {
+	if n.room == nil || p.over {
 		return
 	}
 	for i, st := range n.lobby.Seats {
@@ -131,13 +131,13 @@ func (p *playScene) askGone() {
 
 // updateGone runs the host's Bot or Skip question for a seat whose player left.
 func (p *playScene) updateGone(a *app) {
-	h, i := p.net.host, p.goneP
+	r, i := p.net.room, p.goneP
 	var err error
 	switch {
 	case a.clicked(p.goneB[0]):
-		err = h.Room.Replace(i, defaultAI(i))
+		err = r.Replace(i, defaultAI(i))
 	case a.clicked(p.goneB[1]):
-		err = h.Room.Skip(i)
+		err = r.Skip(i)
 	default:
 		return
 	}

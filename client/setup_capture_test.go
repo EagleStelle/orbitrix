@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -116,36 +117,69 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		h.choosing = true
 		h.layout(a)
 		h.draw(out, a)
-	case "online":
-		o := newOnline(a, "K7Q")
+	case "online", "wifi":
+		// Built by hand, so the capture neither listens on the network nor asks a server for its rooms.
+		o := &joinScene{lan: c.screen == "wifi", code: codeField()}
+		o.code.set("K7Q")
+		o.rows = []joinRow{{"Doormat 7 × 10", roomWord(2, false), "", "AB12CD", true},
+			{"Floor 13 × 18", roomWord(0, true), "", "EF34GH", false}}
+		if o.lan {
+			o.rows = []joinRow{{"DESKTOP-7QF3K2L", roomWord(1, false), "192.168.1.20:7777", "", true},
+				{"Pixel 8", roomWord(0, false), "192.168.1.31:7777", "", false}}
+		}
 		if c.hover == "waiting" {
 			o.code.set("K7QX3M")
-			o.joining, o.code.focused = true, false
+			o.joining, o.code.focused = "K7QX3M", false
 			o.waiting.Store(true)
+		}
+		if c.hover == "empty" {
+			o.rows = nil
 		}
 		o.layout(a)
 		o.draw(out, a)
+	case "room-setup", "room-invite":
+		s := newRoomSetup(a, false)
+		if c.screen == "room-invite" {
+			s.room.openDialog()
+		}
+		s.layout(a)
+		s.draw(out, a)
+	case "room-host", "room-joiner", "room-seat", "room-invite-open":
+		n := captureSession(c.screen != "room-joiner")
+		n.lobby.Seats = []proto.Seat{{State: proto.SeatHere, Ready: true, Name: "Human"}, {State: proto.SeatHere, Name: "Human"},
+			{State: proto.SeatOpen}, {State: proto.SeatAI, AI: 6}}
+		a.set.seats = []int{seatHuman, seatHuman, seatHuman, 1 + 6}
+		if c.screen == "room-joiner" {
+			n.seat = 1
+		}
+		r := newRoom(n)
+		if s, ok := r.(*setupScene); ok {
+			if c.screen == "room-host" {
+				s.room.reqs = []online.Request{{Peer: "p1", Name: "Human"}}
+				if c.hover == "two" {
+					s.room.reqs = append(s.room.reqs, online.Request{Peer: "p2", Name: "Human"})
+				}
+				s.room.snackPeer, s.room.snackMsg, s.room.snackT = "p1", "Human wants to join", snackIn
+			}
+			s.layout(a)
+			if c.screen == "room-invite-open" {
+				s.room.openDialog()
+				s.room.draft = true // Private chosen: its code shows
+			}
+			if c.screen == "room-seat" {
+				s.menu = 1
+			}
+		}
+		r.draw(out, a)
 	case "password":
-		p := newPassword(newHostSetup(), c.hover == "wrong")
+		p := newPassword(newRoomSetup(a, false), c.hover == "wrong")
 		p.pw.set("correct-horse")
 		p.layout(a)
 		p.draw(out, a)
-	case "lobby-host", "lobby-joiner", "pause-online", "gone-prompt":
-		n := captureSession(c.screen != "lobby-joiner")
+	case "pause-online", "gone-prompt":
+		n := captureSession(true)
 		n.lobby.Seats = []proto.Seat{{State: proto.SeatHere, Ready: true, Name: "Human"}, {State: proto.SeatHere, Name: "Human"},
 			{State: proto.SeatOpen}, {State: proto.SeatAI, AI: 6}}
-		if c.screen == "lobby-joiner" {
-			n.seat = 1
-		}
-		if strings.HasPrefix(c.screen, "lobby") {
-			l := newLobby(n)
-			if c.screen == "lobby-host" {
-				l.reqs = []online.Request{{Peer: "p1", Name: "Human"}}
-			}
-			l.layout(a)
-			l.draw(out, a)
-			break
-		}
 		n.lobby.Seats[2] = proto.Seat{State: proto.SeatGone, Name: "Human"}
 		g, _ := core.NewGame(9, 9, 4)
 		p := newPlayOn(a, g, n.seats(), n.labels(), pauseOnline)
@@ -161,7 +195,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		g.draw(out, a)
 	case "settings-online":
 		m := newSettingsMenu(newHome())
-		m.tab = tabOnline
+		m.tab = tabNetwork
 		m.layout(a)
 		m.draw(out, a)
 	case "pause", "results":
@@ -202,6 +236,11 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 				p.orbs[i], p.orbS[i] = c.count-i, strconv.Itoa(c.count-i)
 			}
 		}
+		if c.hover == "out" { // every third seat out, so the Out chips show
+			for i := 2; i < len(p.seats); i += 3 {
+				p.alive[i] = false
+			}
+		}
 		p.shown, p.spin = c.turn, p.wedgeAngle(c.turn)
 		p.chain, p.chainHold, p.chainText = 88, calloutHold, "Chain ×88"
 		p.layout(a)
@@ -237,6 +276,25 @@ func TestCaptureSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := &setupCaptureGame{dir: dir, cases: []setupCaptureCase{
+		{name: "p7-room-setup", w: 1440, h: 900, players: 4, screen: "room-setup"},
+		{name: "p7-room-setup-mobile", w: 390, h: 844, players: 4, screen: "room-setup", dark: true},
+		{name: "p7-room-host", w: 1440, h: 900, players: 4, screen: "room-host"},
+		{name: "p7-room-host-1040", w: 1040, h: 640, players: 4, screen: "room-host", hover: "two"},
+		{name: "p7-room-host-landscape", w: 844, h: 390, players: 4, screen: "room-host", hover: "two", dark: true},
+		{name: "p7-room-host-mobile", w: 390, h: 844, players: 4, screen: "room-host", dark: true},
+		{name: "p7-room-joiner", w: 1040, h: 640, players: 4, screen: "room-joiner"},
+		{name: "p7-room-joiner-mobile", w: 390, h: 844, players: 4, screen: "room-joiner"},
+		{name: "p7-room-invite-mobile", w: 390, h: 844, players: 4, screen: "room-invite", dark: true},
+		{name: "p7-room-invite-mobile-light", w: 390, h: 844, players: 4, screen: "room-invite"},
+		{name: "p7-room-invite-open", w: 1040, h: 640, players: 4, screen: "room-invite-open"},
+		{name: "p7-room-invite-open-dark", w: 1040, h: 640, players: 4, screen: "room-invite-open", dark: true},
+		{name: "p7-room-seat", w: 1040, h: 640, players: 4, screen: "room-seat"},
+		{name: "p7-room-seat-mobile", w: 390, h: 844, players: 4, screen: "room-seat"},
+		{name: "p7-join-wifi", w: 1440, h: 900, players: 2, screen: "wifi"},
+		{name: "p7-join-wifi-mobile-empty", w: 390, h: 844, players: 2, screen: "wifi", hover: "empty", dark: true},
+		{name: "p7-join-online-mobile", w: 390, h: 844, players: 2, screen: "online"},
+		{name: "p7-join-online-waiting", w: 1040, h: 640, players: 2, screen: "online", hover: "waiting"},
+		{name: "p7-settings-network", w: 1040, h: 640, players: 2, screen: "settings-online"},
 		{name: "home-desktop", w: 1440, h: 900, players: 4, screen: "home"},
 		{name: "home-dark-1040", w: 1040, h: 640, players: 4, screen: "home", dark: true},
 		{name: "home-mobile", w: 390, h: 844, players: 4, screen: "home"},
@@ -256,9 +314,6 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "p6-online-landscape", w: 844, h: 390, players: 2, screen: "online"},
 		{name: "p6-password", w: 1040, h: 640, players: 2, screen: "password", hover: "wrong"},
 		{name: "p6-password-mobile", w: 390, h: 844, players: 2, screen: "password"},
-		{name: "p6-lobby-host", w: 1440, h: 900, players: 4, screen: "lobby-host"},
-		{name: "p6-lobby-host-mobile", w: 390, h: 844, players: 4, screen: "lobby-host", dark: true},
-		{name: "p6-lobby-joiner", w: 1040, h: 640, players: 4, screen: "lobby-joiner"},
 		{name: "p6-pause-online", w: 1040, h: 640, players: 4, screen: "pause-online"},
 		{name: "p6-gone-prompt", w: 1040, h: 640, players: 4, screen: "gone-prompt"},
 		{name: "p6-gone", w: 1040, h: 640, players: 2, screen: "gone"},
@@ -297,6 +352,10 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "setup-stepper-hover", w: 1040, h: 640, players: 2, hover: "stepper"},
 		{name: "setup-dark-player-hover", w: 1040, h: 640, players: 4, dark: true, hover: "player"},
 		{name: "setup-dark-preset-hover", w: 1040, h: 640, players: 4, dark: true, hover: "preset"},
+		{name: "chip-play-desktop", w: 1440, h: 900, players: 6, play: true, hover: "out"},
+		{name: "chip-play-12p-dark", w: 1040, h: 640, players: 12, play: true, hover: "out", dark: true, tail: true},
+		{name: "chip-play-landscape-short", w: 780, h: 360, players: 12, cols: 30, rows: 18, play: true, hover: "out", tail: true},
+		{name: "chip-play-portrait", w: 360, h: 740, players: 12, cols: 13, rows: 18, play: true, hover: "out", dark: true},
 		{name: "play-desktop", w: 1440, h: 900, players: 2, play: true},
 		{name: "play-desktop-12p", w: 1040, h: 640, players: 12, play: true},
 		{name: "play-wide-12p", w: 1920, h: 1080, players: 12, play: true, dark: true},
@@ -331,6 +390,9 @@ func TestCaptureSetup(t *testing.T) {
 	ebiten.SetWindowSize(160, 100)
 	ebiten.SetWindowDecorated(false)
 	ebiten.SetWindowPosition(-32000, -32000)
+	if only := os.Getenv("ORBITRIX_CAPTURE_ONLY"); only != "" { // a name prefix, to capture a few cases
+		g.cases = slices.DeleteFunc(g.cases, func(c setupCaptureCase) bool { return !strings.HasPrefix(c.name, only) })
+	}
 	if err := ebiten.RunGame(g); err != nil {
 		t.Fatal(err)
 	}
@@ -349,10 +411,10 @@ func captureSession(host bool) *session {
 	srv := httptest.NewServer(signal.New(signal.Config{STUN: []string{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	h, err := online.Open(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), "", false, hubConfig(setupTestApp(800, 600, 1, 4)))
+	h, err := online.Open(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), "", false, false, hubConfig(setupTestApp(800, 600, 1, 4)))
 	if err != nil {
 		panic(err)
 	}
-	n := &session{host: h, link: h.Me, seat: 0, got: true}
+	n := &session{room: h.Room, host: h, link: h.Me, seat: 0, got: true}
 	return n
 }

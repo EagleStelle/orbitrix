@@ -77,6 +77,9 @@ type Room struct {
 	bot   ai.Bot
 	timer *time.Timer // the pending AI move, pass or turn timeout
 	shut  bool
+	// epochs numbers the seats' holds across the room, so a grace timer whose seat was dropped, released or moved
+	// matches no seat and does nothing.
+	epochs int
 }
 
 type seat struct {
@@ -85,7 +88,7 @@ type seat struct {
 	token proto.Token // zero while nobody holds the seat
 	peer  *peer
 	ready bool
-	epoch int // bumped on each drop, so a stale grace timer does nothing
+	epoch int // this hold's number from Room.epochs; a stale grace timer's never matches
 	away  *time.Timer
 	gone  bool // its player left mid-game; waits for Replace or Skip
 	skip  bool
@@ -123,7 +126,7 @@ func New(cfg Config) (*Room, error) {
 			cfg.Seed = cfg.Seed<<8 | uint64(v)
 		}
 	}
-	r := &Room{cfg: cfg, seats: make([]seat, len(cfg.Seats)), peers: map[*peer]struct{}{}}
+	r := &Room{cfg: cfg, seats: make([]seat, len(cfg.Seats), core.MaxPlayers), peers: map[*peer]struct{}{}}
 	for i, s := range cfg.Seats {
 		r.seats[i].Seat = s
 	}
@@ -310,12 +313,20 @@ func (r *Room) drop(p *peer) {
 	if p.seat < 0 || r.seats[p.seat].peer != p {
 		return
 	}
-	i, s := p.seat, &r.seats[p.seat]
+	s := &r.seats[p.seat]
 	s.peer, s.ready = nil, false
 	if r.shut {
 		return
 	}
-	s.epoch++
+	r.hold(p.seat)
+	r.broadcastLobby()
+}
+
+// hold keeps seat i for its away player through the grace period, then frees it.
+func (r *Room) hold(i int) {
+	s := &r.seats[i]
+	r.epochs++
+	s.epoch = r.epochs
 	epoch := s.epoch
 	s.away = time.AfterFunc(r.cfg.Grace, func() {
 		r.mu.Lock()
@@ -325,14 +336,14 @@ func (r *Room) drop(p *peer) {
 			r.broadcastLobby()
 		}
 	})
-	r.broadcastLobby()
 }
 
 // release frees seat i for good: open again in the lobby, gone mid-game until the host replaces or skips it.
 func (r *Room) release(i int) {
 	s := &r.seats[i]
 	s.token, s.ready = proto.Token{}, false
-	s.epoch++
+	r.epochs++
+	s.epoch = r.epochs
 	if s.away != nil {
 		s.away.Stop()
 	}
@@ -367,6 +378,13 @@ func (r *Room) broadcast(m proto.Msg) {
 }
 
 func (r *Room) broadcastLobby() { r.broadcast(r.lobby()) }
+
+// Lobby is the room as its players see it.
+func (r *Room) Lobby() proto.Lobby {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lobby()
+}
 
 func (r *Room) lobby() proto.Lobby {
 	l := proto.Lobby{Cols: uint8(r.cfg.Cols), Rows: uint8(r.cfg.Rows), TurnTimer: uint16(r.cfg.TurnTimer / time.Second),
@@ -436,6 +454,84 @@ func (r *Room) Kick(i int) error {
 	r.release(i)
 	r.broadcastLobby()
 	return nil
+}
+
+// Configure changes the board and the seats while the room is in its lobby. A player whose seat goes away or turns
+// into an AI is let go as if kicked; every other player keeps their seat.
+func (r *Room) Configure(cols, rows int, seats []Seat) error {
+	if _, err := core.NewGame(cols, rows, len(seats)); err != nil {
+		return fmt.Errorf("hub: %w", err)
+	}
+	for i, s := range seats {
+		if !s.Human && s.AI >= ai.NumStrategies {
+			return fmt.Errorf("hub: seat %d: unknown strategy %d", i, s.AI)
+		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.shut || r.game != nil {
+		return ErrState
+	}
+	for i := range r.seats {
+		if i < len(seats) && seats[i].Human && r.seats[i].Human {
+			continue
+		}
+		if p := r.seats[i].peer; p != nil {
+			r.seats[i].peer = nil
+			r.bye(p, proto.ReasonKicked)
+		}
+		r.release(i)
+	}
+	held := len(r.seats)
+	r.seats = r.seats[:len(seats)] // New gave the slice room for every seat, so grace timers keep valid pointers
+	for i, s := range seats {
+		if i >= held {
+			r.seats[i] = seat{epoch: r.seats[i].epoch} // a timer from a seat removed earlier must stay stale
+		}
+		r.seats[i].Seat = s
+	}
+	r.cfg.Cols, r.cfg.Rows = cols, rows
+	r.broadcastLobby()
+	return nil
+}
+
+// RemoveSeat takes seat i out of the room in its lobby. Its player is let go as if kicked; the seats after it move up
+// one, keeping their players, who are told their new seat (a Welcome with the same token).
+func (r *Room) RemoveSeat(i int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.shut || r.game != nil {
+		return ErrState
+	}
+	if i < 0 || i >= len(r.seats) || len(r.seats) <= core.MinPlayers {
+		return ErrSeat
+	}
+	if p := r.seats[i].peer; p != nil {
+		r.seats[i].peer = nil
+		r.bye(p, proto.ReasonKicked)
+	}
+	r.release(i)
+	copy(r.seats[i:], r.seats[i+1:])
+	r.seats = r.seats[:len(r.seats)-1]
+	for j := i; j < len(r.seats); j++ {
+		s := &r.seats[j]
+		if s.peer != nil {
+			s.peer.seat = j
+			r.send(s.peer, proto.Welcome{Seat: uint8(j), Token: s.token})
+		} else if s.token != (proto.Token{}) && s.away != nil { // away: its grace starts again at its new place
+			s.away.Stop()
+			r.hold(j)
+		}
+	}
+	r.broadcastLobby()
+	return nil
+}
+
+// SetCode changes the code a new player's Hello must carry; "" lets anyone in. Seated players keep their seats.
+func (r *Room) SetCode(code string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cfg.Code = code
 }
 
 // Replace hands human seat i to an AI. Its player must be gone: an open seat in the lobby, or one whose player left

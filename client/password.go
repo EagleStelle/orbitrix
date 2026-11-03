@@ -12,10 +12,10 @@ import (
 const maxPassword = 128
 
 // passwordScene asks for the host password the server wants, typed on the device's own keyboard. Open room goes back
-// to Setup, which tries it and saves it once it works.
+// to the Room page, which tries it and saves it once it works.
 type passwordScene struct {
 	page
-	setup *setupScene
+	room  *setupScene
 	pw    *field
 	show  bool
 	wrong bool // the server refused the last one
@@ -30,8 +30,8 @@ type passwordScene struct {
 }
 
 // newPassword opens the page with its field taking typing: the page is the field, so its keyboard opens with it.
-func newPassword(setup *setupScene, wrong bool) *passwordScene {
-	s := &passwordScene{setup: setup, wrong: wrong, pw: passwordField(), drawn: -1}
+func newPassword(room *setupScene, wrong bool) *passwordScene {
+	s := &passwordScene{room: room, wrong: wrong, pw: passwordField(), drawn: -1}
 	s.pw.focused = true
 	return s
 }
@@ -59,7 +59,7 @@ func (s *passwordScene) update(a *app) error {
 		s.layout(a)
 	}
 	if s.backed(a) {
-		a.next = s.setup
+		a.next = s.room
 		return nil
 	}
 	in := s.inBody(a)
@@ -77,8 +77,8 @@ func (s *passwordScene) update(a *app) error {
 	if enter || a.clicked(s.action) {
 		if pw := s.pw.value(); pw != "" {
 			a.set.Password = pw
-			a.next = s.setup
-			s.setup.open(a, pw)
+			a.next = s.room
+			s.room.room.openRoom(a, pw)
 		}
 	}
 	return nil

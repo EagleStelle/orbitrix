@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Online play: signaling over WebSocket, the game over WebRTC. -->
+    <!-- Online play: signaling over WebSocket, the game over WebRTC. Same Wi-Fi: the hub's WebSocket on the LAN. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Same Wi-Fi: hearing hosts' broadcasts takes the Wi-Fi multicast lock. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <application
         android:enableOnBackInvokedCallback="true"

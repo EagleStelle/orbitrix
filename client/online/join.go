@@ -12,7 +12,7 @@ import (
 	"orbitrix/server/transport/rtc"
 )
 
-// ErrRefused is signaling's one answer for a wrong code, a locked room, a full approval queue and a host's no: the
+// ErrRefused is signaling's one answer for a wrong code, a full approval queue and a host's no: the
 // server tells them apart for nobody.
 var ErrRefused = errors.New("online: refused")
 

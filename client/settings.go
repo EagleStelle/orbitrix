@@ -30,13 +30,21 @@ type settings struct {
 	Password string  `json:"password,omitempty"`
 	Relay    bool    `json:"relay,omitempty"`
 	Rejoin   *rejoin `json:"rejoin,omitempty"`
+	// WifiPrivate and OnlinePublic: the access a new room starts with; Same Wi-Fi rooms are public and online rooms
+	// private unless the player changes it under Settings, Network.
+	WifiPrivate  bool `json:"wifiPrivate,omitempty"`
+	OnlinePublic bool `json:"onlinePublic,omitempty"`
+	// Firewall: this Windows device was warned that Windows would ask to let Orbitrix on the network.
+	Firewall bool `json:"firewall,omitempty"`
 
 	seats []int // parsed Seats
 }
 
-// rejoin is a joiner's seat in an online room: its room code and the hub's rejoin token, hex.
+// rejoin is a joiner's seat in a room: its code, the host's address on the LAN ("" online) and the hub's rejoin
+// token, hex.
 type rejoin struct {
 	Code  string `json:"code"`
+	Addr  string `json:"addr,omitempty"`
 	Token string `json:"token"`
 }
 

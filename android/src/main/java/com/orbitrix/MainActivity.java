@@ -3,8 +3,10 @@ package com.orbitrix;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.text.InputType;
 import android.view.DisplayCutout;
 import android.view.KeyEvent;
@@ -136,7 +138,7 @@ public final class MainActivity extends Activity implements Host {
         runOnUiThread(() -> moveTaskToBack(true));
     }
 
-    // Hosting an online room keeps the screen on; the game pauses if the app goes to the background.
+    // Hosting a room, online or on the LAN, keeps the screen on; the game pauses if the app goes to the background.
     @Override
     public void keepScreenOn(boolean on) {
         runOnUiThread(() -> {
@@ -175,6 +177,35 @@ public final class MainActivity extends Activity implements Host {
                 }
             }
         });
+    }
+
+    // Wi-Fi drops broadcasts addressed to nobody in particular to save power, LAN hosts' announcements included,
+    // unless an app holds the multicast lock. The game holds it only while its Same Wi-Fi page is open.
+    private WifiManager.MulticastLock multicast;
+
+    @Override
+    public void discover(boolean on) {
+        runOnUiThread(() -> {
+            if (multicast == null) {
+                WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+                multicast = wifi.createMulticastLock("orbitrix");
+                multicast.setReferenceCounted(false);
+            }
+            if (on) {
+                multicast.acquire();
+            } else {
+                multicast.release();
+            }
+        });
+    }
+
+    // The phone's name as its owner set it (Settings, About phone), else its model: what other players see a LAN room
+    // listed under.
+    @Override
+    public String deviceName() {
+        String name = Build.VERSION.SDK_INT >= 25
+                ? Settings.Global.getString(getContentResolver(), Settings.Global.DEVICE_NAME) : null;
+        return name != null && !name.isEmpty() ? name : Build.MODEL;
     }
 
     // A game on a board with more columns than rows holds the screen on its side (either way up); leaving it hands

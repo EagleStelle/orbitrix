@@ -26,13 +26,24 @@ func TestHostJoinRejoinClose(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h, err := Open(ctx, url, "", false, hub.Config{Cols: 5, Rows: 5,
+	h, err := Open(ctx, url, "", false, false, hub.Config{Cols: 5, Rows: 5,
 		Seats: []hub.Seat{{Human: true}, {Human: true}, {AI: ai.Mason}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer h.Close()
 	h.Me.Send(proto.Hello{Name: "Host"})
+
+	// Made public, the room shows in the list anyone can ask for.
+	h.Update(true, 2, signal.Listed{Cols: 5, Rows: 5, Open: 1})
+	rooms := ListRooms(url)
+	defer rooms.Close()
+	for l := rooms.Get(nil); len(l) != 1 || l[0].Code != h.Code(); l = rooms.Get(nil) {
+		if ctx.Err() != nil {
+			t.Fatal("the public room was never listed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	joined := make(chan hub.Conn, 1)
 	join := func(token proto.Token) {

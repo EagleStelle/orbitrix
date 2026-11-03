@@ -2,6 +2,7 @@ package client
 
 import (
 	"math"
+	"runtime"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
@@ -18,7 +19,8 @@ import (
 // can join it later.
 type homeScene struct {
 	demo     *demo
-	choosing bool // PLAY was pressed: the column offers the ways to play instead
+	choosing bool       // PLAY was pressed: the column offers the ways to play instead
+	ask      *askDialog // the warning before Windows' firewall question, while it is open
 
 	// Layout in device px, recomputed when the screen size changes.
 	lv                  rect
@@ -154,6 +156,10 @@ func (s *homeScene) playRect() rect {
 func (s *homeScene) update(a *app) error {
 	s.layout(a)
 	s.demo.tick()
+	if s.ask != nil {
+		s.updateAsk(a)
+		return nil
+	}
 	if s.choosing {
 		s.updateModes(a)
 		return nil
@@ -205,6 +211,9 @@ func (s *homeScene) draw(dst *ebiten.Image, a *app) {
 				style = btnTile
 			}
 			drawButton(dst, a, it.r, it.label, "", style, true)
+		}
+		if s.ask != nil {
+			s.ask.draw(dst, a)
 		}
 		return
 	}
@@ -292,13 +301,32 @@ func (d *demo) tick() {
 	}
 }
 
-// playModes are the ways to play this build offers: on this device always (alone against bots, or passing it round),
-// Online where it has a server. Same Wi-Fi joins them in Phase 7.
-func playModes() []string {
-	if origin == "" {
-		return []string{"This Device"}
+// playModes are the ways to play this build offers.
+func playModes() []string { return waysToPlay(runtime.GOOS == "js", origin) }
+
+// waysToPlay is This Device always (alone against bots, or passing it round), Same Wi-Fi in every app (a browser can
+// neither host nor reach a LAN host), and Online where the build has a server.
+func waysToPlay(browser bool, origin string) []string {
+	modes := []string{"This Device"}
+	if !browser {
+		modes = append(modes, "Same Wi-Fi")
 	}
-	return []string{"This Device", "Online"}
+	if origin != "" {
+		modes = append(modes, "Online")
+	}
+	return modes
+}
+
+// updateAsk runs the firewall warning: Continue goes on to Same Wi-Fi, where Windows asks; it isn't shown again.
+func (s *homeScene) updateAsk(a *app) {
+	switch yes, back := s.ask.update(a); {
+	case yes:
+		a.set.Firewall = true
+		a.set.save()
+		a.next = newJoin(a, true, "")
+	case back:
+		s.ask = nil
+	}
 }
 
 // updateModes runs the ways to play; Back (or Esc) brings PLAY, Settings and Exit back.
@@ -314,8 +342,14 @@ func (s *homeScene) updateModes(a *app) {
 		switch it.label {
 		case "This Device":
 			a.next = newSetup()
+		case "Same Wi-Fi":
+			if runtime.GOOS == "windows" && !a.set.Firewall {
+				s.ask = &askDialog{text: firewallText, yes: "Continue"}
+			} else {
+				a.next = newJoin(a, true, "")
+			}
 		case "Online":
-			a.next = newOnline(a, "")
+			a.next = newJoin(a, false, "")
 		case "Back":
 			s.choosing = false
 		}

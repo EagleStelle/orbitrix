@@ -1,5 +1,3 @@
-//go:build !js
-
 package ws
 
 import (
@@ -9,8 +7,8 @@ import (
 	"github.com/coder/websocket"
 )
 
-// Accept upgrades a request to a hub connection. A browser's Origin must match the host it connected to, which holds
-// for the web build a LAN host serves itself.
+// Accept upgrades a request to a hub connection. Native clients send no Origin; a browser's would have to match the
+// host it connected to. In the browser build it always fails: a page can't listen.
 func Accept(w http.ResponseWriter, r *http.Request) (*Conn, error) {
 	c, err := websocket.Accept(w, r, nil)
 	if err != nil {

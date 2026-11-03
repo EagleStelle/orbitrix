@@ -2,6 +2,7 @@ package client
 
 import (
 	"math"
+	"runtime"
 	"slices"
 	"strconv"
 
@@ -12,18 +13,18 @@ import (
 )
 
 // Settings tabs and their rows. New groups get a tab; new options get a row.
-var settingsTabs = [...]string{"Video", "Audio", "Online"}
+var settingsTabs = [...]string{"Video", "Audio", "Network"}
 
 const (
 	tabVideo = iota
 	tabAudio
-	tabOnline // last, so builds that can't play online drop it (tabCount)
+	tabNetwork // last, so a build that plays with nobody else drops it (tabCount)
 )
 
-// tabCount is how many tabs show: Online only where the game can play online.
+// tabCount is how many tabs show: Network only where the game plays on Same Wi-Fi or online.
 func tabCount() int {
-	if origin == "" {
-		return tabOnline
+	if len(settingRows[tabNetwork]) == 0 {
+		return tabNetwork
 	}
 	return len(settingsTabs)
 }
@@ -34,6 +35,7 @@ const (
 	rowToggle rowKind = iota
 	rowSlider
 	rowTheme
+	rowAccess // Public or Private, the access a new room starts with
 )
 
 type settingRow struct {
@@ -49,6 +51,8 @@ const (
 	optFullscreen
 	optMarks
 	optRelay
+	optWifi
+	optOnline
 )
 
 var settingRows = [len(settingsTabs)][]settingRow{
@@ -57,8 +61,11 @@ var settingRows = [len(settingsTabs)][]settingRow{
 		{"Colorblind mode", rowToggle, optMarks}}, func(r settingRow) bool {
 		return r.id == optFullscreen && !platform.CanFullscreen
 	}),
-	tabAudio:  {{"Sound", rowToggle, optSound}, {"Volume", rowSlider, optVolume}},
-	tabOnline: {{"Force relay", rowToggle, optRelay}},
+	tabAudio: {{"Sound", rowToggle, optSound}, {"Volume", rowSlider, optVolume}},
+	tabNetwork: slices.DeleteFunc([]settingRow{{"Same Wi-Fi rooms", rowAccess, optWifi},
+		{"Online rooms", rowAccess, optOnline}, {"Force relay", rowToggle, optRelay}}, func(r settingRow) bool {
+		return r.id == optWifi && runtime.GOOS == "js" || r.id != optWifi && origin == ""
+	}),
 }
 
 // settingsMenu is the Settings page: tabs over one block of rows, each a label and its control. It returns to the
@@ -155,6 +162,14 @@ func (s *settingsMenu) sliderTrack(a *app, r rect) rect {
 	return rect{r.right() - 64*u - w, r.cy() - 4*u, w, 8 * u}
 }
 
+// private reads whether new rooms of the kind row id names start private.
+func (s *settingsMenu) private(a *app, id int) bool {
+	if id == optWifi {
+		return a.set.WifiPrivate
+	}
+	return !a.set.OnlinePublic
+}
+
 // themeOptions are the Light and Dark choices inside row r.
 func (s *settingsMenu) themeOptions(a *app, r rect) [2]rect {
 	u := a.u
@@ -189,6 +204,17 @@ func (s *settingsMenu) update(a *app) error {
 			for t, o := range s.themeOptions(a, r) {
 				if a.clicked(compactHit(o, a.u)) && a.sc != &schemes[t] {
 					a.toggleTheme()
+				}
+			}
+		case rowAccess:
+			for t, o := range s.themeOptions(a, r) {
+				if a.clicked(compactHit(o, a.u)) {
+					if row.id == optWifi {
+						a.set.WifiPrivate = t == 1
+					} else {
+						a.set.OnlinePublic = t == 0
+					}
+					a.set.save()
 				}
 			}
 		case rowSlider:
@@ -250,6 +276,14 @@ func (s *settingsMenu) draw(dst *ebiten.Image, a *app) {
 					style = btnChosen
 				}
 				drawButton(dst, a, o, [2]string{"Light", "Dark"}[t], "", style, true)
+			}
+		case rowAccess:
+			for t, o := range s.themeOptions(a, r) {
+				style := btnGround
+				if s.private(a, row.id) == (t == 1) {
+					style = btnChosen
+				}
+				drawButton(dst, a, o, accessNames[t], "", style, true)
 			}
 		case rowSlider:
 			s.drawSlider(dst, a, r)
