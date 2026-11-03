@@ -179,6 +179,7 @@ func playRoom(t *testing.T, ctx context.Context, ha, ja *app, r testRoom, drop b
 			s *scene
 		}{{ha, &hs}, {ja, &js}} {
 			p := (*s.s).(*playScene)
+			p.paused = !p.over // an online game goes on behind the pause menu
 			p.b.fastForward()
 			if !p.b.playing && !p.over && p.mine() {
 				p.play(s.a, p.game.LegalMoves(nil)[0])

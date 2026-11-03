@@ -212,7 +212,11 @@ func (p *playScene) update(a *app) error {
 	}
 	p.layout(a)
 	if p.paused {
-		return p.updatePause(a)
+		err := p.updatePause(a)
+		if p.net != nil && a.next == nil { // nobody can stop an online game's clock for everyone
+			p.advance(a)
+		}
+		return err
 	}
 	if p.goneP >= 0 {
 		p.updateGone(a)
@@ -233,15 +237,7 @@ func (p *playScene) update(a *app) error {
 		p.b.fastForward()
 	}
 
-	wasPlaying := p.b.playing
-	p.b.tick(a.snd)
-	p.tickRail()
-	if wasPlaying && !p.b.playing {
-		p.settle()
-	}
-	if p.net != nil {
-		p.playNet(a)
-	}
+	p.advance(a)
 
 	if p.over && !p.b.playing {
 		p.overT++
@@ -322,8 +318,21 @@ func (p *playScene) leave(a *app) {
 	}
 }
 
-// updatePause runs the pause menu. The game stands still behind it: no animation ticks, and an AI move that is
-// ready waits.
+// advance plays the board, the rail and, online, the host's next move on by one tick.
+func (p *playScene) advance(a *app) {
+	wasPlaying := p.b.playing
+	p.b.tick(a.snd)
+	p.tickRail()
+	if wasPlaying && !p.b.playing {
+		p.settle()
+	}
+	if p.net != nil {
+		p.playNet(a)
+	}
+}
+
+// updatePause runs the pause menu. A local game stands still behind it: no animation ticks, and an AI move that is
+// ready waits. An online game goes on.
 func (p *playScene) updatePause(a *app) error {
 	if p.confirmT--; p.confirmT <= 0 {
 		p.confirm = -1
@@ -755,7 +764,7 @@ func (p *playScene) draw(dst *ebiten.Image, a *app) {
 		turn = -1
 	}
 	// The board always fits its view, so it draws unclipped and burst rings at the edges spill onto the mat as on Home.
-	// The board's tick clock stops during pause and resumes without jumping ahead.
+	// The board's tick clock stops during a local pause and resumes without jumping ahead.
 	p.b.draw(dst, sc, p.b.clock*(1000.0/60), turn, a.set.Marks)
 	if !p.b.playing && !p.over && !p.paused && p.mine() {
 		if cell := p.cellAt(a.in.x, a.in.y); cell >= 0 && p.game.Legal(cell) {
