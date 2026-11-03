@@ -117,33 +117,29 @@ have, fill empty seats with AI, and enjoy following a chain reaction as it plays
 |---|---|---|
 | [Go](https://go.dev/dl/) 1.27.3+ | everything | The exact version is pinned in `go.mod`; older toolchains download it automatically (`GOTOOLCHAIN=auto`). |
 | [JDK](https://adoptium.net/) 17+ | Android | Used by Gradle (the wrapper in `android/` fetches Gradle 9.8.2 and the Android Gradle Plugin itself). |
-| [Android SDK](https://developer.android.com/studio) + NDK | Android | The scripts use `ANDROID_HOME`, or `%LOCALAPPDATA%\Android\Sdk` / `~/Android/Sdk` when it isn't set. Install an NDK with the SDK manager (`sdkmanager "ndk;30.0.16248370"`). |
-| Docker | server deployment | Only for running the website and signaling server in a container. |
+| [Android SDK](https://developer.android.com/studio) + NDK | Android | `go tool mage android` uses `ANDROID_HOME`, or `%LOCALAPPDATA%\Android\Sdk` / `~/Android/Sdk` when it isn't set. Install an NDK with the SDK manager (`sdkmanager "ndk;30.0.16248370"`). |
+| Docker | `image` target, server deployment | Builds and runs the website and signaling server image. |
 
 Desktop builds on Windows and Linux are pure Go (`CGO_ENABLED=0`). Only the Android/iOS bindings need cgo, through
-`ebitenmobile`, which is pinned in `go.mod` as a tool (`go tool ebitenmobile`).
+`ebitenmobile`. Both `ebitenmobile` and the build tool, [Mage](https://magefile.org), are pinned in `go.mod` as tools,
+so `go tool` runs them with nothing to install.
 
 ## Building
 
-Every script target works the same from bash and PowerShell. Output goes to `dist/`.
+The targets live in `magefile.go` and run the same from any shell. Output goes to `dist/`.
 
 ```sh
-bash scripts/build.sh [check|desktop|web|server|image|android|all]     # bash / Git Bash / CI
-```
-
-```powershell
-.\scripts\build.ps1 [check|desktop|web|server|image|android|all]       # PowerShell
+go tool mage <target>      # go tool mage -l lists the targets
 ```
 
 | Target | Output |
 |---|---|
 | `check` | gofmt, `go vet ./...`, `go test ./...` |
-| `desktop` | `dist/orbitrix[.exe]` (cross-compile with `GOOS=windows`) |
+| `desktop` | `dist/orbitrix.exe`, the Windows client, from any OS |
 | `web` | `dist/web/`: `game.wasm`, `wasm_exec.js` and the wordmark font under content-hashed names, `index.html` (the game's loader) and `landing.html`; each served file with `.gz` and `.br` copies (`cmd/webdist`) |
-| `server` | `dist/orbitrix-server[.exe]` |
-| `image` | the `orbitrix-server` Docker image (linux/amd64): `web` plus `dist/orbitrix-server-linux`, packaged by `deploy/Dockerfile`; needs Docker |
 | `android` | `dist/orbitrix.aar` (the Go game, arm64 + x86_64) and `dist/orbitrix.apk` (installable) |
-| `all` | check, desktop, web and server (default); `image` and `android` are separate because they need Docker and the SDK |
+| `image` | the `orbitrix-server` Docker image, compiled inside Docker by `deploy/Dockerfile` (the web build plus a Linux server) |
+| `all` | every target above, in that order |
 
 Native clients (`desktop`, `android`) play online through the server named in `ORBITRIX_SERVER` when they are built
 (e.g. `https://orbitrix.example.com`); without it they offer no Online. The web build always uses the server it was
@@ -166,9 +162,11 @@ precompressed copies to browsers that accept them. It reads its settings from th
 
 `-downloads <folder>` offers `orbitrix.exe` and `orbitrix.apk` from that folder on the landing page.
 
-Docker only deploys the website and signaling server; nothing is compiled in it. The `image` target builds the web
-build and a Linux server binary here, then packages them as the `orbitrix-server` image (for a remote server, copy
-it over with `docker save orbitrix-server | ssh <server> docker load`). On the server, copy `deploy/.env.example` to
+The `orbitrix-server` image is built in two stages: a Go stage compiles the web build and the server, and the
+final distroless image holds only those. Build it with `go tool mage image`, or on a machine without Go with
+`docker build -t orbitrix-server -f deploy/Dockerfile .` from the repo root (add `--platform linux/arm64` for an ARM
+server). An image built on another machine goes to the server with
+`docker save orbitrix-server | ssh <server> docker load`. On the server, copy `deploy/.env.example` to
 `deploy/.env`, fill it in and run `docker compose up -d` in `deploy/`. The server listens on `127.0.0.1:1212` only;
 put your own reverse proxy in front of it to make it public. To try the image locally with hosting open (no
 password), at `http://localhost:1212`:
@@ -247,5 +245,6 @@ $env:ORBITRIX_MATCH_BOT="sovereign"; $env:ORBITRIX_MATCH_GAMES=100; go test -tag
 | `server/transport/` | The hub's connections: `ws` (LAN), `rtc` (WebRTC data channel, online), `loopback` (the host's own player). |
 | `server/signal/` | Signaling: rooms, join approval, SDP relay, TURN credentials, abuse guards; `pow/` is its proof of work. |
 | `server/lan/` | LAN discovery and host (Phase 7). |
-| `deploy/` | Dockerfile (packages prebuilt files), docker-compose, local override, `.env.example`. |
+| `deploy/` | Multi-stage Dockerfile, docker-compose, local override, `.env.example`. |
+| `magefile.go` | Build targets (`go tool mage -l`). |
 | `docs/decisions.md` | Choices made where the brief left room. |

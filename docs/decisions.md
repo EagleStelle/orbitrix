@@ -8,8 +8,10 @@ Choices made where the brief or the prototype left room, and why. The specs them
 - **Module path `orbitrix`.** Nothing outside the repo imports it.
 - **Go 1.27.3 and Ebitengine v2.10.5 pinned** (latest stable on 2026-10-30). Older toolchains switch through
   `GOTOOLCHAIN=auto`; CI reads the version from `go.mod`.
-- **Build scripts, not a Makefile**, since Windows has no `make`: `scripts/build.sh` and `scripts/build.ps1` share
-  target names.
+- **Mage for builds** (`magefile.go`, run as `go tool mage`). One set of targets in Go replaced the hand-synced
+  `build.sh` and `build.ps1`: Windows has no `make`, the stack is Go only, and Mage has no dependencies and needs no
+  install. `GOOS=… go tool mage` can't cross-compile (`go tool` would build Mage itself
+  for that OS), so `desktop` always targets Windows, the desktop build that ships. `all` runs every target.
 - **CI builds with `CGO_ENABLED=0`.** Only the Android/iOS bindings need cgo.
 - **No README** (user request). Docs live in `PRODUCT.md`.
 
@@ -243,10 +245,11 @@ New, not from the prototype; they use real search or learning instead of more he
   Hashed files are cached for a year; pages revalidate. Downloads are offered only when the file is in `-downloads`.
 - **Server port 1212** (user request: not 8000, 8080 or another common port, yet easy to remember): "twelve twelve",
   for the twelve seats. Windows reserves nothing there, and it stays clear of the LAN hub's 7777.
-- **Docker only deploys** (user decision). Nothing is compiled in Docker: the build scripts' `image` target builds the
-  web build and a linux/amd64 server binary natively, and `deploy/Dockerfile` copies them onto distroless static
-  (non-root; compose runs it read-only with no capabilities). Compose runs the `orbitrix-server` image and never
-  builds. This replaced the brief's multi-stage Dockerfile.
+- **Multi-stage Dockerfile** (user decision, replacing an earlier package-only one). A Go stage runs
+  `go tool mage web` and cross-compiles the server for the target platform (the stage runs on the build machine's,
+  so an ARM image needs no emulation); the final stage is distroless static (non-root; compose runs it read-only
+  with no capabilities). The build context is an allowlist (`deploy/Dockerfile.dockerignore`), so `.env` and local
+  files never reach it. Compose runs the `orbitrix-server` image and never builds.
 - **Downloads stay out of the image** (user decision): compose mounts `deploy/downloads` read-only, so publishing a
   new `.exe` or `.apk` needs no image rebuild.
 - **No tunnel in compose** (user decision). Self-hosters choose how to expose the server, so compose bundles no
@@ -289,8 +292,8 @@ New, not from the prototype; they use real search or learning instead of more he
   still reaches the game. M types instead of muting while a field has the focus.
 - **The lobby is laid out like Setup** (user choice): a Room block and a Players block, with the action along the
   bottom.
-- **Native builds learn their server at build time** (user choice): `ORBITRIX_SERVER` is stamped in by the build
-  scripts; without it a build offers no Online. The desktop build also reads it at start, for local testing. The web
+- **Native builds learn their server at build time** (user choice): `ORBITRIX_SERVER` is stamped in by
+  `magefile.go`; without it a build offers no Online. The desktop build also reads it at start, for local testing. The web
   build uses the address it was loaded from.
 - **Players send the name "Human"** until they can name themselves. A seat's own row reads "(you)", so online players
   can find their colour.

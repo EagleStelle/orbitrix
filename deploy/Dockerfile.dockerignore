@@ -1,3 +1,10 @@
 *
-!orbitrix-server-linux
+!go.mod
+!go.sum
+!magefile.go
+!cmd
+!core
+!client
+!proto
+!server
 !web

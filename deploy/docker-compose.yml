@@ -1,4 +1,4 @@
-# The website and signaling server, from the orbitrix-server image the build scripts' image target makes. Values come
+# The website and signaling server, from the orbitrix-server image deploy/Dockerfile builds. Values come
 # from deploy/.env (start from .env.example). The port is published on 127.0.0.1 only: put your own reverse proxy in
 # front of it to make it public.
 #

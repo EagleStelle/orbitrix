@@ -4,7 +4,7 @@ package platform
 
 import "os"
 
-// origin is the website and signaling server native builds talk to, stamped in by the build scripts from
+// origin is the website and signaling server native builds talk to, stamped in by magefile.go from
 // ORBITRIX_SERVER (-ldflags "-X orbitrix/client/platform.origin=https://...").
 var origin string
 

@@ -9,25 +9,21 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # Ebitengine desktop builds are pure Go; keep cgo off so CI matches the Windows and Docker builds.
+      # Ebitengine desktop builds are pure Go; keep cgo off so CI matches the Windows build.
       CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      # Call through bash: scripts committed from Windows lack the executable bit.
       - name: gofmt, vet, test
-        run: bash scripts/build.sh check
+        run: go tool mage check
       - name: race detector (server, protocol, rules)
         run: go test -race ./server/... ./proto/ ./core/
         env:
           CGO_ENABLED: "1"
       - name: build desktop (windows)
-        run: GOOS=windows bash scripts/build.sh desktop
-      - name: build desktop (linux)
-        run: bash scripts/build.sh desktop
-      - name: build web (wasm)
-        run: bash scripts/build.sh web
-      - name: build server
-        run: bash scripts/build.sh server
+        run: go tool mage desktop
+      # Builds the web game and the server inside Docker; the image is not pushed.
+      - name: build image (web + server)
+        run: go tool mage image

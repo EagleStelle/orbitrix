@@ -6,6 +6,7 @@ require (
 	github.com/andybalholm/brotli v1.2.7
 	github.com/coder/websocket v1.8.15
 	github.com/hajimehoshi/ebiten/v2 v2.10.5
+	github.com/magefile/mage v1.17.2
 	github.com/pion/webrtc/v4 v4.2.26
 	golang.org/x/time v0.14.0
 )
@@ -45,4 +46,7 @@ require (
 	golang.org/x/tools v0.51.0 // indirect
 )
 
-tool github.com/hajimehoshi/ebiten/v2/cmd/ebitenmobile
+tool (
+	github.com/hajimehoshi/ebiten/v2/cmd/ebitenmobile
+	github.com/magefile/mage
+)
