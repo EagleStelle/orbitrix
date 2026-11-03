@@ -19,6 +19,10 @@ jobs:
       # Call through bash: scripts committed from Windows lack the executable bit.
       - name: gofmt, vet, test
         run: bash scripts/build.sh check
+      - name: race detector (server, protocol, rules)
+        run: go test -race ./server/... ./proto/ ./core/
+        env:
+          CGO_ENABLED: "1"
       - name: build desktop (windows)
         run: GOOS=windows bash scripts/build.sh desktop
       - name: build desktop (linux)

@@ -1,7 +1,7 @@
 # Build Orbitrix targets into dist\.
-# Usage: scripts\build.ps1 [check|desktop|web|server|android|all]   (default: all; android is separate)
+# Usage: scripts\build.ps1 [check|desktop|web|server|image|android|all]   (default: all; image and android are separate)
 param(
-    [ValidateSet('check', 'desktop', 'web', 'server', 'android', 'all')]
+    [ValidateSet('check', 'desktop', 'web', 'server', 'image', 'android', 'all')]
     [string]$Target = 'all'
 )
 $ErrorActionPreference = 'Stop'
@@ -26,6 +26,8 @@ function Build-Desktop {
 }
 
 function Build-Web {
+    # webdist renames files after their hash, so old builds would pile up.
+    if (Test-Path "$out/web") { Remove-Item -Recurse -Force "$out/web" }
     New-Item -ItemType Directory -Force "$out/web" | Out-Null
     $env:GOOS = 'js'; $env:GOARCH = 'wasm'
     try {
@@ -36,13 +38,26 @@ function Build-Web {
     # wasm_exec.js must match the Go version that built game.wasm. -Force because the
     # toolchain's copy is read-only, so a previous copy can't be overwritten otherwise.
     $goroot = go env GOROOT
-    Copy-Item -Force "$goroot/lib/wasm/wasm_exec.js", 'web/index.html' "$out/web/"
-    Invoke-Native go run ./cmd/webdist "$out/web" # loading progress size, .gz and .br copies
+    Copy-Item -Force "$goroot/lib/wasm/wasm_exec.js", 'web/index.html', 'web/landing.html', 'client/fonts/Unbounded.ttf' "$out/web/"
+    Invoke-Native go run ./cmd/webdist "$out/web" # loading progress size, hashed names, .gz and .br copies
 }
 
 function Build-Server {
     $exe = go env GOEXE
     Invoke-Native go build -trimpath -o "$out/orbitrix-server$exe" ./cmd/orbitrix-server
+}
+
+# Packages the web build and a Linux server binary as the orbitrix-server Docker image. Nothing is compiled in Docker.
+# shortcut: linux/amd64 only; add an architecture option if the server is ARM.
+function Build-Image {
+    Build-Web
+    $env:GOOS = 'linux'; $env:GOARCH = 'amd64'; $env:CGO_ENABLED = '0'
+    try {
+        Invoke-Native go build -trimpath '-ldflags=-s -w' -o "$out/orbitrix-server-linux" ./cmd/orbitrix-server
+    } finally {
+        Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED
+    }
+    Invoke-Native docker build --platform linux/amd64 -t orbitrix-server -f deploy/Dockerfile $out
 }
 
 # Binds ./mobile into an AAR and wraps it in an APK. Needs the Android SDK with an NDK and a JDK.
@@ -67,6 +82,7 @@ try {
         'desktop' { Build-Desktop }
         'web' { Build-Web }
         'server' { Build-Server }
+        'image' { Build-Image }
         'android' { Build-Android }
         'all' { Invoke-Check; Build-Desktop; Build-Web; Build-Server }
     }

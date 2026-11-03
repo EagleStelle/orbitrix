@@ -18,3 +18,7 @@ CLAUDE.md
 .gradle/
 build/
 local.properties
+
+# Server deployment secrets and published downloads
+/deploy/.env
+/deploy/downloads/

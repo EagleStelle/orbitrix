@@ -201,3 +201,62 @@ New, not from the prototype; they use real search or learning instead of more he
   in the docs.
 - **Limit:** twelve inks can't all be easy to tell apart, so Colorblind mode's shape marks remain the full fix for
   games with nine or more players.
+
+## Multiplayer engine (Phase 5)
+
+- **Skip passes a seat's turns** (user choice). `core.Game.Pass` ends the turn without placing an orb; a player who
+  passes before placing anything is out. The win check now waits until every player has had a turn. In play that is
+  the brief's "once two have played", since nothing can explode in the first round; it differs only after a pass,
+  which must not end the game before someone has moved.
+- **Close reasons travel as `proto.Bye`**, the host's last message, so every transport carries them alike.
+  `hub.Conn` is only Send, Receive and Close.
+- **Wire format:** a version byte, a type byte, then fixed big-endian fields; strings are length-prefixed (names up to
+  24 bytes). Encodings are canonical (a fuzz test checks that whatever decodes re-encodes to the same bytes). A game
+  starts with `Snapshot{Seq: 0}`, so there is no separate start message, and a pass is `MoveApplied` with C = R = 255.
+- **Hub rules:** Hello comes first, within 5 s. Messages are at most 128 bytes, 20 a second (burst 40), and a player
+  with 64 messages queued is dropped. Late or illegal moves are ignored rather than punished, because they can race a
+  turn timeout. Start needs every human seat held, connected and ready. A dropped player's seat is held 60 s, in the
+  lobby too; Leave and Kick free it at once. A seat freed mid-game waits for the host's Replace or Skip. When the turn
+  timer runs out, a random legal move (Jester) is played. If only skipped seats are left alive, the room returns to
+  the lobby. The host's own player joins through `loopback` like everyone else.
+- **Every connection the hub lets go of is reported** (`Config.OnClose`), a drop included, so the host revokes its
+  TURN credential at once and a rejoin gets a new one. The credential cap therefore counts live credentials: the
+  host's and the joiners' together at most the human seats plus 4.
+- **WebRTC without trickle ICE** (shortcut): each side gathers its candidates before sending its description, so a
+  join is one offer and one answer. TURN URLs on port 53 are dropped, as Cloudflare advises for that case.
+- **Signaling answers alike** for a wrong code, a locked room, a full approval queue and a denial ("refused"). A
+  rejoin carries the hub token and passes a lock. Joins that arrive while the host reconnects wait and are asked
+  about again after `host.reclaim`. An approved joiner's credential outlives its signaling socket, because it carries
+  the game until the host revokes it.
+- **Proof of work:** HMAC-signed challenges with a bounded cache (100,000) of answered ones. Difficulty follows
+  anonymous connections over a sliding 10 s window: free up to 200 globally and 20 per IP, then 8 bits, plus 2 bits
+  each time the rate doubles, capped at 18. 18 bits take about 37 ms on the development desktop; the web build on a
+  phone is estimated at about 2 s and not yet measured.
+- **Client IP:** `CF-Connecting-IP` is believed only from a private or loopback peer: the self-hoster's proxy, since
+  the container publishes its port on 127.0.0.1 only. IPv6 callers are counted by their /64.
+- **Where "never blocked" ends:** the per-IP socket cap (100). The flood test keeps its bots under it; a flood that
+  fills it sheds the honest socket from that IP too, as the edge rule does.
+- **Website:** `/` is the landing page, mirroring Home in HTML (user choice). Its wordmark and PLAY use Unbounded,
+  served from the build; its quiet labels use the system font, so Archivo isn't downloaded. `/play` and
+  `/join/<code>` serve the game's loader. `cmd/webdist` renames `game.wasm`, `wasm_exec.js` and the font after their
+  content hash and the pages refer to them by absolute path, so a LAN host can serve the same build at its root.
+  Hashed files are cached for a year; pages revalidate. Downloads are offered only when the file is in `-downloads`.
+- **Server port 1212** (user request: not 8000, 8080 or another common port, yet easy to remember): "twelve twelve",
+  for the twelve seats. Windows reserves nothing there, and it stays clear of the LAN hub's 7777.
+- **Docker only deploys** (user decision). Nothing is compiled in Docker: the build scripts' `image` target builds the
+  web build and a linux/amd64 server binary natively, and `deploy/Dockerfile` copies them onto distroless static
+  (non-root; compose runs it read-only with no capabilities). Compose runs the `orbitrix-server` image and never
+  builds. This replaced the brief's multi-stage Dockerfile.
+- **Downloads stay out of the image** (user decision): compose mounts `deploy/downloads` read-only, so publishing a
+  new `.exe` or `.apk` needs no image rebuild.
+- **No tunnel in compose** (user decision). Self-hosters choose how to expose the server, so compose bundles no
+  `cloudflared` and publishes the port on 127.0.0.1 only, for their own reverse proxy. `compose.dev.yml` only sets a
+  localhost origin.
+- **TURN only when everything is in place** (user decision): a `HOST_PASSWORD` of at least 20 characters, both
+  `CF_TURN_*` values and a working Cloudflare call. Anything less falls back to STUN, which costs nothing, and is
+  logged: an unset password opens hosting to anyone, a shorter one still guards hosting, one key value alone is
+  ignored, and a failed Cloudflare call gives that host or joiner STUN instead of an error. With hosting open, the
+  challenge says so (`open`), so clients skip the password prompt, and one IP may hold at most 3 rooms. This replaces
+  the earlier rule that hosting needs a password, and a short-lived published default password.
+- **Race detector in CI:** the Windows development box has no cgo, so CI runs `go test -race` on the server,
+  protocol and rules packages.

@@ -1,0 +1,322 @@
+package proto
+
+import (
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"unicode/utf8"
+
+	"orbitrix/core"
+)
+
+// Version is the first byte of every message. Peers on different versions can't talk; a host answers a Hello from
+// another version with Bye{ReasonVersion}, which every version decodes alike (version, type, reason).
+const Version = 1
+
+// Limits checked when decoding.
+const (
+	MaxName = 24 // bytes in a player name
+	MaxCode = 8  // bytes in a room code
+)
+
+// Pass in MoveApplied's C and R means the player's turn was passed instead of played.
+const Pass = 0xFF
+
+var (
+	ErrVersion = errors.New("proto: unsupported version")
+	ErrInvalid = errors.New("proto: invalid message")
+)
+
+// Type identifies a message. Values are part of the wire format: never reorder them.
+type Type uint8
+
+const (
+	// Player to host.
+	TypeHello Type = iota + 1
+	TypeReady
+	TypeMove
+	TypeResync
+	TypeLeave
+	// Host to player.
+	TypeWelcome
+	TypeLobby
+	TypeMoveApplied
+	TypeSnapshot
+	TypeBye
+)
+
+// Msg is one message. Every type below implements it.
+type Msg interface{ Type() Type }
+
+// Token is a seat's rejoin secret, issued by the host in Welcome.
+type Token [16]byte
+
+// Hello is a player's first message: a new player sends a zero Token, a returning one the Token from Welcome.
+type Hello struct {
+	Name, Code string
+	Token      Token
+}
+
+// Ready marks the player ready (or not) in the lobby.
+type Ready struct{ On bool }
+
+// Move places the player's orb at column C, row R.
+type Move struct{ C, R uint8 }
+
+// Resync asks the host for a Snapshot after a state hash mismatch.
+type Resync struct{}
+
+// Leave gives the seat up for good: no grace period, no rejoin.
+type Leave struct{}
+
+// Welcome tells a player their seat and the token to rejoin it with.
+type Welcome struct {
+	Seat  uint8
+	Token Token
+}
+
+// SeatState is what a seat holds right now.
+type SeatState uint8
+
+const (
+	SeatAI      SeatState = iota // an AI plays it; Seat.AI is the strategy
+	SeatOpen                     // a human seat nobody has taken
+	SeatHere                     // a connected human
+	SeatAway                     // a human who dropped, inside the grace period
+	SeatGone                     // a human who left mid-game; the host may replace or skip the seat
+	SeatSkipped                  // the host passes this seat's turns
+	numSeatStates
+)
+
+// Seat describes one seat in a Lobby.
+type Seat struct {
+	State SeatState
+	AI    uint8 // ai.Strategy when State is SeatAI
+	Ready bool
+	Name  string
+}
+
+// Lobby is the room as it stands. The host sends it on every seat change, in the lobby and during a game.
+type Lobby struct {
+	Cols, Rows uint8
+	TurnTimer  uint16 // seconds a human has to move; 0 means no limit
+	Playing    bool
+	Seats      []Seat
+}
+
+// MoveApplied reports a move the host accepted, numbered by Seq from 1 each game, with the state hash after it.
+// C and R are Pass when the turn was passed.
+type MoveApplied struct {
+	Seq          uint32
+	Player, C, R uint8
+	Hash         uint64
+}
+
+// Snapshot is the whole game after move Seq: sent when a game starts (Seq 0), to a player who rejoins mid-game and
+// in answer to Resync. Game comes from the network: rebuild it with core.Restore, which validates it.
+type Snapshot struct {
+	Seq  uint32
+	Game core.Snapshot
+}
+
+// Reason says why the host closed a connection.
+type Reason uint8
+
+const (
+	ReasonClosed     Reason = iota // the host closed the room
+	ReasonVersion                  // the player's protocol version differs
+	ReasonBadCode                  // wrong room code
+	ReasonFull                     // no free seat
+	ReasonKicked                   // the host removed the player
+	ReasonReplaced                 // the same seat connected again
+	ReasonTimeout                  // no Hello in time
+	ReasonBadMessage               // a message that didn't decode or wasn't allowed
+	ReasonRateLimit                // too many messages
+	numReasons
+)
+
+// Bye is the host's last message before it closes a connection.
+type Bye struct{ Reason Reason }
+
+func (Hello) Type() Type       { return TypeHello }
+func (Ready) Type() Type       { return TypeReady }
+func (Move) Type() Type        { return TypeMove }
+func (Resync) Type() Type      { return TypeResync }
+func (Leave) Type() Type       { return TypeLeave }
+func (Welcome) Type() Type     { return TypeWelcome }
+func (Lobby) Type() Type       { return TypeLobby }
+func (MoveApplied) Type() Type { return TypeMoveApplied }
+func (Snapshot) Type() Type    { return TypeSnapshot }
+func (Bye) Type() Type         { return TypeBye }
+
+// Append appends m's encoding to dst and returns it.
+func Append(dst []byte, m Msg) []byte {
+	dst = append(dst, Version, byte(m.Type()))
+	switch m := m.(type) {
+	case Hello:
+		dst = appendStr(appendStr(dst, m.Name), m.Code)
+		dst = append(dst, m.Token[:]...)
+	case Ready:
+		dst = appendBool(dst, m.On)
+	case Move:
+		dst = append(dst, m.C, m.R)
+	case Welcome:
+		dst = append(append(dst, m.Seat), m.Token[:]...)
+	case Lobby:
+		dst = binary.BigEndian.AppendUint16(append(dst, m.Cols, m.Rows), m.TurnTimer)
+		dst = append(appendBool(dst, m.Playing), byte(len(m.Seats)))
+		for _, s := range m.Seats {
+			dst = appendStr(appendBool(append(dst, byte(s.State), s.AI), s.Ready), s.Name)
+		}
+	case MoveApplied:
+		dst = binary.BigEndian.AppendUint32(dst, m.Seq)
+		dst = binary.BigEndian.AppendUint64(append(dst, m.Player, m.C, m.R), m.Hash)
+	case Snapshot:
+		g := m.Game
+		dst = binary.BigEndian.AppendUint32(dst, m.Seq)
+		dst = append(dst, byte(g.Cols), byte(g.Rows), byte(g.Players), byte(g.Turn))
+		dst = binary.BigEndian.AppendUint32(dst, uint32(g.Moves))
+		dst = append(binary.BigEndian.AppendUint16(dst, g.Played), byte(g.Winner))
+		dst = append(dst, g.Count...)
+		for _, o := range g.Owner {
+			dst = append(dst, byte(o))
+		}
+	case Bye:
+		dst = append(dst, byte(m.Reason))
+	}
+	return dst
+}
+
+// Decode parses one message. It checks structure and ranges, not game rules: a Snapshot still needs core.Restore.
+// Encodings are canonical, so Append(nil, m) gives back b exactly.
+func Decode(b []byte) (Msg, error) {
+	if len(b) < 2 {
+		return nil, ErrInvalid
+	}
+	if b[0] != Version {
+		return nil, ErrVersion
+	}
+	r := reader{b: b[2:]}
+	var m Msg
+	switch Type(b[1]) {
+	case TypeHello:
+		h := Hello{Name: r.str(MaxName), Code: r.str(MaxCode)}
+		r.token(&h.Token)
+		m = h
+	case TypeReady:
+		m = Ready{On: r.bool()}
+	case TypeMove:
+		m = Move{C: r.u8(), R: r.u8()}
+	case TypeResync:
+		m = Resync{}
+	case TypeLeave:
+		m = Leave{}
+	case TypeWelcome:
+		w := Welcome{Seat: r.u8()}
+		r.token(&w.Token)
+		m = w
+	case TypeLobby:
+		m = r.lobby()
+	case TypeMoveApplied:
+		m = MoveApplied{Seq: r.u32(), Player: r.u8(), C: r.u8(), R: r.u8(), Hash: r.u64()}
+	case TypeSnapshot:
+		m = r.snapshot()
+	case TypeBye:
+		m = Bye{Reason: Reason(r.u8())}
+		if m.(Bye).Reason >= numReasons {
+			r.fail()
+		}
+	default:
+		return nil, fmt.Errorf("%w: type %d", ErrInvalid, b[1])
+	}
+	if r.bad || len(r.b) != 0 {
+		return nil, fmt.Errorf("%w: type %d", ErrInvalid, b[1])
+	}
+	return m, nil
+}
+
+func appendStr(dst []byte, s string) []byte { return append(append(dst, byte(len(s))), s...) }
+
+func appendBool(dst []byte, v bool) []byte {
+	if v {
+		return append(dst, 1)
+	}
+	return append(dst, 0)
+}
+
+// reader consumes b; after any short or invalid read it returns zeros and sets bad.
+type reader struct {
+	b   []byte
+	bad bool
+}
+
+func (r *reader) fail() { r.bad, r.b = true, nil }
+
+func (r *reader) next(n int) []byte {
+	if len(r.b) < n {
+		r.fail()
+		return make([]byte, min(n, 8)) // enough for the fixed-size reads; longer reads of bad input get nothing
+	}
+	v := r.b[:n:n]
+	r.b = r.b[n:]
+	return v
+}
+
+func (r *reader) u8() uint8   { return r.next(1)[0] }
+func (r *reader) u16() uint16 { return binary.BigEndian.Uint16(r.next(2)) }
+func (r *reader) u32() uint32 { return binary.BigEndian.Uint32(r.next(4)) }
+func (r *reader) u64() uint64 { return binary.BigEndian.Uint64(r.next(8)) }
+
+func (r *reader) bool() bool {
+	v := r.u8()
+	if v > 1 {
+		r.fail()
+	}
+	return v == 1
+}
+
+func (r *reader) str(max int) string {
+	n := int(r.u8())
+	if n > max {
+		r.fail()
+		return ""
+	}
+	s := r.next(n)
+	if !utf8.Valid(s) {
+		r.fail()
+		return ""
+	}
+	return string(s)
+}
+
+func (r *reader) token(t *Token) { copy(t[:], r.next(len(t))) }
+
+func (r *reader) lobby() Lobby {
+	l := Lobby{Cols: r.u8(), Rows: r.u8(), TurnTimer: r.u16(), Playing: r.bool()}
+	n := int(r.u8())
+	if n > core.MaxPlayers {
+		r.fail()
+		return l
+	}
+	for i := 0; i < n && !r.bad; i++ {
+		s := Seat{State: SeatState(r.u8()), AI: r.u8(), Ready: r.bool(), Name: r.str(MaxName)}
+		if s.State >= numSeatStates {
+			r.fail()
+		}
+		l.Seats = append(l.Seats, s)
+	}
+	return l
+}
+
+func (r *reader) snapshot() Snapshot {
+	s := Snapshot{Seq: r.u32()}
+	g := &s.Game
+	g.Cols, g.Rows, g.Players, g.Turn = int(r.u8()), int(r.u8()), int(r.u8()), int(r.u8())
+	g.Moves, g.Played, g.Winner = int(r.u32()), r.u16(), int8(r.u8())
+	n := g.Cols * g.Rows
+	g.Count = append([]uint8(nil), r.next(n)...)
+	for _, o := range r.next(n) {
+		g.Owner = append(g.Owner, int8(o))
+	}
+	return s
+}

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#F4F3F0">
+<title>Orbitrix</title>
+<link rel="preload" href="Unbounded.ttf" as="font" type="font/ttf" crossorigin>
+<style>
+  /* The landing page mirrors the game's Home (DESIGN.md): the wordmark, the twelve seat inks, the PLAY dot and quiet
+     pills, flat on the mat. cmd/webdist rewrites the font's name to its hashed one. */
+  @font-face { font-family: Unbounded; src: url("Unbounded.ttf") format("truetype"); font-weight: 100 900; font-display: swap; }
+  :root {
+    --mat: #F4F3F0; --tile: #E0DED9; --tile-hover: #D1CEC8; --ink: #171615; --ink-hover: #3B3936;
+    --p1: #D55E00; --p2: #0072B2; --p3: #009E73; --p4: #E69F00; --p5: #CC79A7; --p6: #56B4E9;
+    --p7: #E8D21D; --p8: #2E2C2A; --p9: #901CFC; --p10: #8B5A2B; --p11: #440048; --p12: #641404;
+    --r: clamp(64px, 17vmin, 150px); /* PLAY dot radius, as on Home */
+  }
+  @media (prefers-color-scheme: dark) { :root:not(.light) { --mat: #1C1A18; --tile: #2D2A27; --tile-hover: #3B3733;
+    --ink: #F5F2EE; --ink-hover: #D4CEC6; --p1: #E86A1A; --p2: #3A9BE0; --p3: #1FB88C; --p4: #F0AA1A; --p5: #DD8DB8;
+    --p6: #7CC6F0; --p7: #F0E442; --p8: #F4F4F4; --p9: #844CFC; --p10: #C98B4E; --p11: #B4FC84; --p12: #B85450; } }
+  :root.dark { --mat: #1C1A18; --tile: #2D2A27; --tile-hover: #3B3733; --ink: #F5F2EE; --ink-hover: #D4CEC6;
+    --p1: #E86A1A; --p2: #3A9BE0; --p3: #1FB88C; --p4: #F0AA1A; --p5: #DD8DB8; --p6: #7CC6F0; --p7: #F0E442;
+    --p8: #F4F4F4; --p9: #844CFC; --p10: #C98B4E; --p11: #B4FC84; --p12: #B85450; }
+  html, body { margin: 0; min-height: 100%; background: var(--mat); color: var(--ink); }
+  body { display: grid; place-items: center; min-height: 100svh; padding: 40px 24px; box-sizing: border-box;
+    font: 700 18px/1.2 system-ui, sans-serif; }
+  main { display: flex; flex-direction: column; align-items: center; gap: 40px; }
+  .brand { display: inline-flex; flex-direction: column; gap: 24px; }
+  h1 { margin: 0; font: 800 clamp(32px, 10vw, 60px)/1 Unbounded, system-ui, sans-serif; letter-spacing: .02em; }
+  .seats { display: flex; justify-content: space-between; }
+  .seats i { width: 16px; height: 16px; border-radius: 50%; }
+  .play { display: grid; place-items: center; width: calc(2 * var(--r)); height: calc(2 * var(--r)); border-radius: 50%;
+    background: var(--ink); color: var(--mat); text-decoration: none; font: 800 calc(.34 * var(--r))/1 Unbounded, system-ui, sans-serif; }
+  .play:hover, .play:focus-visible { background: var(--ink-hover); }
+  nav { display: flex; flex-direction: column; gap: 12px; width: min(calc(2 * var(--r)), 240px); }
+  nav a { display: grid; place-items: center; height: 52px; border-radius: 26px; background: var(--tile); color: var(--ink);
+    text-decoration: none; }
+  nav a:hover, nav a:focus-visible { background: var(--tile-hover); }
+  a:focus-visible { outline: 2.5px solid var(--ink); outline-offset: 3px; }
+</style>
+<script>
+  // The theme saved by the game wins over the system's.
+  try {
+    const t = JSON.parse(localStorage.getItem("orbitrix/settings.json")).theme;
+    if (t === "dark" || t === "light") document.documentElement.classList.add(t);
+  } catch {}
+</script>
+<main>
+  <div class="brand">
+    <h1>ORBITRIX</h1>
+    <div class="seats" aria-hidden="true">
+      <i style="background:var(--p1)"></i><i style="background:var(--p2)"></i><i style="background:var(--p3)"></i>
+      <i style="background:var(--p4)"></i><i style="background:var(--p5)"></i><i style="background:var(--p6)"></i>
+      <i style="background:var(--p7)"></i><i style="background:var(--p8)"></i><i style="background:var(--p9)"></i>
+      <i style="background:var(--p10)"></i><i style="background:var(--p11)"></i><i style="background:var(--p12)"></i>
+    </div>
+  </div>
+  <a class="play" href="/play" aria-label="Play in browser">PLAY</a>
+  {{- if or .Windows .Android}}
+  <nav aria-label="Downloads">
+    {{- if .Windows}}<a href="/download/orbitrix.exe" download>Windows .exe</a>{{end}}
+    {{- if .Android}}<a href="/download/orbitrix.apk" download>Android .apk</a>{{end}}
+  </nav>
+  {{- end}}
+</main>
+</html>

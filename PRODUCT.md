@@ -12,7 +12,8 @@ web
 One custom-drawn game look on every target. The UI never uses web technology: no HTML, CSS or JavaScript UI, on
 any platform including the web build. Ebitengine draws all of it in Go (no DOM, no native widgets), so the value
 above means "not a native OS design language", not "HTML/CSS". The only HTML is `web/index.html`, the bootstrap
-page that loads `game.wasm` and shows its loading progress; it is not game UI. Platform needs still apply where they
+page that loads `game.wasm` and shows its loading progress, and `web/landing.html`, the website's landing page at `/`;
+neither is game UI. Platform needs still apply where they
 exist: touch targets and a portrait layout on Android, safe areas, Android back acting as Esc, keyboard shortcuts on
 desktop and web.
 
@@ -127,27 +128,49 @@ Desktop builds on Windows and Linux are pure Go (`CGO_ENABLED=0`). Only the Andr
 Every script target works the same from bash and PowerShell. Output goes to `dist/`.
 
 ```sh
-bash scripts/build.sh [check|desktop|web|server|android|all]     # bash / Git Bash / CI
+bash scripts/build.sh [check|desktop|web|server|image|android|all]     # bash / Git Bash / CI
 ```
 
 ```powershell
-.\scripts\build.ps1 [check|desktop|web|server|android|all]       # PowerShell
+.\scripts\build.ps1 [check|desktop|web|server|image|android|all]       # PowerShell
 ```
 
 | Target | Output |
 |---|---|
 | `check` | gofmt, `go vet ./...`, `go test ./...` |
 | `desktop` | `dist/orbitrix[.exe]` (cross-compile with `GOOS=windows`) |
-| `web` | `dist/web/`: `game.wasm`, `wasm_exec.js`, `index.html`, each with `.gz` and `.br` copies (`cmd/webdist`) |
+| `web` | `dist/web/`: `game.wasm`, `wasm_exec.js` and the wordmark font under content-hashed names, `index.html` (the game's loader) and `landing.html`; each served file with `.gz` and `.br` copies (`cmd/webdist`) |
 | `server` | `dist/orbitrix-server[.exe]` |
+| `image` | the `orbitrix-server` Docker image (linux/amd64): `web` plus `dist/orbitrix-server-linux`, packaged by `deploy/Dockerfile`; needs Docker |
 | `android` | `dist/orbitrix.aar` (the Go game, arm64 + x86_64) and `dist/orbitrix.apk` (installable) |
-| `all` | check, desktop, web and server (default); `android` is separate because it needs the SDK |
+| `all` | check, desktop, web and server (default); `image` and `android` are separate because they need Docker and the SDK |
 
 Run the desktop client directly with `go run ./cmd/orbitrix`. F3 toggles the frame-rate overlay (`-fps` starts
 with it on).
 
 Play the web build locally after a `web` build: `go run ./cmd/orbitrix-server -web dist/web`, then open
-`http://localhost:8080`. The server sends the precompressed copies to browsers that accept them.
+`http://localhost:1212` (the landing page) or `http://localhost:1212/play` (the game). The server sends the
+precompressed copies to browsers that accept them. It reads its settings from the environment:
+
+| Variable | Meaning |
+|---|---|
+| `LISTEN` | Listen address, default `:1212`. |
+| `PUBLIC_ORIGIN` | The site's public address (`https://…`); browsers may open `/signal` only from it. |
+| `HOST_PASSWORD` | Empty: anyone can host online, without a password, using STUN only. Set: hosts must enter it. Random, at least 20 characters. |
+| `CF_TURN_KEY_ID`, `CF_TURN_API_TOKEN` | Cloudflare Realtime TURN key. TURN needs both and a password of at least 20 characters; otherwise, or when Cloudflare fails, it falls back to STUN. |
+
+`-downloads <folder>` offers `orbitrix.exe` and `orbitrix.apk` from that folder on the landing page.
+
+Docker only deploys the website and signaling server; nothing is compiled in it. The `image` target builds the web
+build and a Linux server binary here, then packages them as the `orbitrix-server` image (for a remote server, copy
+it over with `docker save orbitrix-server | ssh <server> docker load`). On the server, copy `deploy/.env.example` to
+`deploy/.env`, fill it in and run `docker compose up -d` in `deploy/`. The server listens on `127.0.0.1:1212` only;
+put your own reverse proxy in front of it to make it public. To try the image locally with hosting open (no
+password), at `http://localhost:1212`:
+
+```sh
+cd deploy && docker compose -f docker-compose.yml -f compose.dev.yml up
+```
 
 Install the Android build on a connected phone or emulator with `adb install -r dist/orbitrix.apk`. It is signed
 with the debug key, so it installs directly (no store).
@@ -212,7 +235,11 @@ $env:ORBITRIX_MATCH_BOT="sovereign"; $env:ORBITRIX_MATCH_GAMES=100; go test -tag
 | `client/` | Ebitengine game: scenes, rendering, input, audio, settings. `client/fonts/` holds the two OFL fonts and their licences. |
 | `cmd/orbitrix/` | Desktop and web entry point. |
 | `mobile/`, `android/` | `ebitenmobile` binding and the Gradle project that wraps it (one activity in Java). |
-| `web/` | Page that loads `game.wasm`. |
-| `server/`, `cmd/orbitrix-server/` | Website and signaling server; `server/hub` is the room engine every host runs, `server/lan` the LAN host. |
-| `deploy/` | Dockerfile, docker-compose, Cloudflare Tunnel config. |
+| `web/` | The game's loader page (`index.html`) and the landing page (`landing.html`). |
+| `server/`, `cmd/orbitrix-server/` | Website server: landing page, `/play`, `/join/<code>`, downloads, `/signal`. |
+| `server/hub/` | The room engine every host runs, online and on LAN: lobby, seats, rejoin, the authoritative game. |
+| `server/transport/` | The hub's connections: `ws` (LAN), `rtc` (WebRTC data channel, online), `loopback` (the host's own player). |
+| `server/signal/` | Signaling: rooms, join approval, SDP relay, TURN credentials, abuse guards; `pow/` is its proof of work. |
+| `server/lan/` | LAN discovery and host (Phase 7). |
+| `deploy/` | Dockerfile (packages prebuilt files), docker-compose, local override, `.env.example`. |
 | `docs/decisions.md` | Choices made where the brief left room. |

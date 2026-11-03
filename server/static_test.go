@@ -3,40 +3,91 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
 
-func TestStatic(t *testing.T) {
-	fsys := fstest.MapFS{
-		"index.html":   {Data: []byte("page")},
-		"game.wasm":    {Data: []byte("plain")},
-		"game.wasm.gz": {Data: []byte("gzipped")},
-		"game.wasm.br": {Data: []byte("brotli")},
+var build = fstest.MapFS{
+	"index.html":            {Data: []byte("game page")},
+	"index.html.br":         {Data: []byte("game page, brotli")},
+	"landing.html":          {Data: []byte(`<p>{{if .Windows}}exe{{end}}{{if .Android}}apk{{end}}</p>`)},
+	"game.0123abcd.wasm":    {Data: []byte("plain")},
+	"game.0123abcd.wasm.gz": {Data: []byte("gzipped")},
+	"game.0123abcd.wasm.br": {Data: []byte("brotli")},
+}
+
+func site(t *testing.T, downloads string) http.Handler {
+	t.Helper()
+	h, err := Site{Web: build, Downloads: downloads}.Handler()
+	if err != nil {
+		t.Fatal(err)
 	}
-	h := Static(fsys)
+	return h
+}
+
+func get(h http.Handler, path, accept string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if accept != "" {
+		req.Header.Set("Accept-Encoding", accept)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestStatic(t *testing.T) {
+	h := site(t, "")
 	for _, tc := range []struct {
 		path, accept, body, encoding string
 	}{
-		{"/game.wasm", "gzip, deflate, br", "brotli", "br"},
-		{"/game.wasm", "gzip", "gzipped", "gzip"},
-		{"/game.wasm", "br;q=0, gzip;q=0.5", "gzipped", "gzip"},
-		{"/game.wasm", "br;q=0.0, gzip;q=0", "plain", ""},
-		{"/game.wasm", "", "plain", ""},
-		{"/", "br", "page", ""}, // no compressed copy of the page
+		{"/game.0123abcd.wasm", "gzip, deflate, br", "brotli", "br"},
+		{"/game.0123abcd.wasm", "gzip", "gzipped", "gzip"},
+		{"/game.0123abcd.wasm", "br;q=0, gzip;q=0.5", "gzipped", "gzip"},
+		{"/game.0123abcd.wasm", "br;q=0.0, gzip;q=0", "plain", ""},
+		{"/game.0123abcd.wasm", "", "plain", ""},
 	} {
-		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
-		if tc.accept != "" {
-			req.Header.Set("Accept-Encoding", tc.accept)
-		}
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
+		rec := get(h, tc.path, tc.accept)
 		if got := rec.Body.String(); got != tc.body || rec.Header().Get("Content-Encoding") != tc.encoding {
 			t.Errorf("%s with %q: got %q encoded %q, want %q encoded %q", tc.path, tc.accept, got,
 				rec.Header().Get("Content-Encoding"), tc.body, tc.encoding)
 		}
-		if tc.path == "/game.wasm" && rec.Header().Get("Content-Type") != "application/wasm" {
-			t.Errorf("%s with %q: Content-Type %q", tc.path, tc.accept, rec.Header().Get("Content-Type"))
+		if rec.Header().Get("Content-Type") != "application/wasm" ||
+			!strings.Contains(rec.Header().Get("Cache-Control"), "immutable") {
+			t.Errorf("%s with %q: headers %v", tc.path, tc.accept, rec.Header())
+		}
+	}
+}
+
+func TestPages(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "orbitrix.apk"), []byte("apk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := site(t, dir)
+	for _, tc := range []struct {
+		path, accept string
+		status       int
+		body         string
+	}{
+		{"/", "", 200, "<p>apk</p>"}, // only the download that exists is offered
+		{"/play", "br", 200, "game page, brotli"},
+		{"/join/K7M2QX", "", 200, "game page"},
+		{"/download/orbitrix.apk", "", 200, "apk"},
+		{"/download/orbitrix.exe", "", 404, ""},
+		{"/download/secret.txt", "", 404, ""},
+		{"/index.html", "", 404, ""},
+		{"/landing.html", "", 404, ""},
+		{"/healthz", "", 200, "ok\n"},
+	} {
+		rec := get(h, tc.path, tc.accept)
+		if rec.Code != tc.status || tc.status == 200 && rec.Body.String() != tc.body {
+			t.Errorf("%s: %d %q, want %d %q", tc.path, rec.Code, rec.Body.String(), tc.status, tc.body)
+		}
+		if tc.status == 200 && tc.path != "/healthz" && rec.Header().Get("Cache-Control") != "no-cache" {
+			t.Errorf("%s: Cache-Control %q", tc.path, rec.Header().Get("Cache-Control"))
 		}
 	}
 }

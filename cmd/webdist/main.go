@@ -1,22 +1,32 @@
-// Command webdist finishes a web build in a folder (default dist/web): it writes game.wasm's size into index.html for
-// the loading dots, then saves a gzip and a brotli copy of each file beside it, so a server sends them as they are.
+// Command webdist finishes a web build in a folder (default dist/web). It writes game.wasm's size into index.html for
+// the loading dots, renames the build's files after their content hash so the edge can cache them for good, points
+// the pages at the new names, and saves a gzip and a brotli copy of each served file beside it, so a server sends
+// them as they are. landing.html stays uncompressed: the server renders it as a template.
 package main
 
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/andybalholm/brotli"
 )
 
 // sizeMark is where index.html takes game.wasm's size.
 const sizeMark = "/*WASM_SIZE*/0"
+
+// hashed are renamed after their content. The pages name each one in double quotes, and get "/<new name>".
+var hashed = []string{"game.wasm", "wasm_exec.js", "Unbounded.ttf"}
+
+var pages = []string{"index.html", "landing.html"}
 
 // encoders write each file's compressed copies, by extension, at their best (slowest) levels.
 var encoders = map[string]func(io.Writer) io.WriteCloser{
@@ -42,19 +52,40 @@ func run(dir string) error {
 	if err != nil {
 		return err
 	}
-	index := filepath.Join(dir, "index.html")
-	page, err := os.ReadFile(index)
-	if err != nil {
-		return err
+	text := map[string][]byte{}
+	for _, name := range pages {
+		if text[name], err = os.ReadFile(filepath.Join(dir, name)); err != nil {
+			return err
+		}
 	}
-	if !bytes.Contains(page, []byte(sizeMark)) {
-		return fmt.Errorf("%s: no %s to fill in", index, sizeMark)
+	if !bytes.Contains(text["index.html"], []byte(sizeMark)) {
+		return fmt.Errorf("index.html: no %s to fill in", sizeMark)
 	}
-	page = bytes.Replace(page, []byte(sizeMark), []byte("/*WASM_SIZE*/"+strconv.FormatInt(wasm.Size(), 10)), 1)
-	if err := os.WriteFile(index, page, 0o644); err != nil {
-		return err
+	text["index.html"] = bytes.Replace(text["index.html"], []byte(sizeMark),
+		[]byte("/*WASM_SIZE*/"+strconv.FormatInt(wasm.Size(), 10)), 1)
+
+	served := []string{"index.html"}
+	for _, name := range hashed {
+		renamed, err := rename(dir, name)
+		if err != nil {
+			return err
+		}
+		ref, found := []byte(`"`+name+`"`), false
+		for page, b := range text {
+			found = found || bytes.Contains(b, ref)
+			text[page] = bytes.ReplaceAll(b, ref, []byte(`"/`+renamed+`"`))
+		}
+		if !found {
+			return fmt.Errorf("no page refers to %q", name)
+		}
+		served = append(served, renamed)
 	}
-	for _, name := range []string{"index.html", "wasm_exec.js", "game.wasm"} {
+	for page, b := range text {
+		if err := os.WriteFile(filepath.Join(dir, page), b, 0o644); err != nil {
+			return err
+		}
+	}
+	for _, name := range served {
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			return err
@@ -66,6 +97,18 @@ func run(dir string) error {
 		}
 	}
 	return nil
+}
+
+// rename moves name to name.<first 12 hex digits of its SHA-256>.ext and returns the new name.
+func rename(dir, name string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	ext := filepath.Ext(name)
+	renamed := strings.TrimSuffix(name, ext) + "." + hex.EncodeToString(sum[:6]) + ext
+	return renamed, os.Rename(filepath.Join(dir, name), filepath.Join(dir, renamed))
 }
 
 func compress(path string, data []byte, enc func(io.Writer) io.WriteCloser) error {

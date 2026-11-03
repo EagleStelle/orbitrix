@@ -1,0 +1,6 @@
+# Local testing at http://localhost:1212, with hosting open (no password).
+#   docker compose -f docker-compose.yml -f compose.dev.yml up
+services:
+  orbitrix:
+    environment:
+      PUBLIC_ORIGIN: http://localhost:1212

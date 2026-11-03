@@ -348,6 +348,36 @@ func TestSinglePlayerOnBoardIsNotAWinUntilTwoHavePlayed(t *testing.T) {
 	}
 }
 
+func TestPass(t *testing.T) {
+	g, _ := NewGame(3, 3, 3)
+	if _, err := g.Apply(4); err != nil {
+		t.Fatal(err)
+	}
+	// Player 1 passes before placing anything: they are out, and player 2 still gets a turn.
+	if err := g.Pass(); err != nil {
+		t.Fatal(err)
+	}
+	if g.Turn != 2 || g.Alive(1) || g.Moves != 1 || g.Over() {
+		t.Fatalf("after a pass: turn %d, player 1 alive %v, %d moves, over %v", g.Turn, g.Alive(1), g.Moves, g.Over())
+	}
+	// Player 2 passes too, leaving player 0 alone on the board after everyone's turn: a win.
+	if err := g.Pass(); err != nil {
+		t.Fatal(err)
+	}
+	if g.Winner != 0 {
+		t.Fatalf("winner %d, want 0", g.Winner)
+	}
+	if err := g.Pass(); !errors.Is(err, ErrGameOver) {
+		t.Fatalf("pass after the win: %v", err)
+	}
+
+	// A player with orbs on the board stays in after passing.
+	g = grid(t, 2, 1, "a1 . .", ". . .", ". . b1")
+	if err := g.Pass(); err != nil || g.Turn != 0 || !g.Alive(1) {
+		t.Fatalf("pass with orbs: err %v, turn %d, alive %v", err, g.Turn, g.Alive(1))
+	}
+}
+
 func TestFloodEndsInAWin(t *testing.T) {
 	g := flood(t, 40, 40)
 	waves, err := g.Apply(0)

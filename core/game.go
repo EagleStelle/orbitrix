@@ -3,7 +3,6 @@ package core
 import (
 	"errors"
 	"fmt"
-	"math/bits"
 )
 
 var (
@@ -140,6 +139,20 @@ func (g *Game) Apply(cell int) ([]Wave, error) {
 // Simulate is Apply without recording waves: the fast path for AI search, usually on a copy made with CopyFrom.
 func (g *Game) Simulate(cell int) error { return g.play(cell, false) }
 
+// Pass ends the current player's turn without placing an orb, for a host skipping a seat whose player left. It
+// counts as their turn but not as a move: a player who passes before placing anything is out, and the pass can
+// leave a single player with orbs, which wins.
+func (g *Game) Pass() error {
+	if g.Over() {
+		return ErrGameOver
+	}
+	g.Played |= 1 << g.Turn
+	if !g.checkWin() {
+		g.advance()
+	}
+	return nil
+}
+
 func (g *Game) play(cell int, record bool) error {
 	if g.Over() {
 		return ErrGameOver
@@ -237,9 +250,11 @@ func (g *Game) explode() {
 	}
 }
 
-// checkWin sets Winner and reports true once at least two players have played and only one has orbs left.
+// checkWin sets Winner and reports true once every player has had a turn and only one has orbs left. Nothing can
+// explode in the first round, so in play this is the brief's "once at least two have played"; it differs only
+// after a Pass, where a player yet to move must still get their turn.
 func (g *Game) checkWin() bool {
-	if bits.OnesCount16(g.Played) < 2 {
+	if g.Played != 1<<g.Players-1 {
 		return false
 	}
 	winner := NoOwner
