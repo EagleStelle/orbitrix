@@ -18,6 +18,8 @@ import (
 
 	"github.com/magefile/mage/mg"
 	"github.com/magefile/mage/sh"
+
+	"orbitrix/internal/appicon"
 )
 
 const out = "dist"
@@ -52,6 +54,15 @@ func Check() error {
 
 // Desktop builds the Windows client, dist/orbitrix.exe, from any OS.
 func Desktop() error {
+	icon, err := appicon.WindowsResource()
+	if err != nil {
+		return err
+	}
+	const resource = "cmd/orbitrix/icon_windows_amd64.syso"
+	if err := os.WriteFile(resource, icon, 0o644); err != nil {
+		return err
+	}
+	defer os.Remove(resource)
 	return sh.RunWithV(map[string]string{"GOOS": "windows", "GOARCH": "amd64"},
 		"go", "build", "-trimpath", "-ldflags="+ldflags, "-o", filepath.Join(out, "orbitrix.exe"), "./cmd/orbitrix")
 }
@@ -65,6 +76,7 @@ const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
 	<key>CFBundleExecutable</key><string>orbitrix</string>
 	<key>CFBundleIdentifier</key><string>com.orbitrix</string>
 	<key>CFBundleName</key><string>Orbitrix</string>
+	<key>CFBundleIconFile</key><string>orbitrix.icns</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>` + version + `</string>
 	<key>CFBundleVersion</key><string>` + version + `</string>
@@ -92,9 +104,14 @@ func Mac() error {
 	if f, err := macho.NewFatFile(bytes.NewReader(fat)); err != nil || len(f.Arches) != len(slices) {
 		return fmt.Errorf("mac: universal binary doesn't read back: %v", err)
 	}
+	icon, err := appicon.ICNS()
+	if err != nil {
+		return err
+	}
 	return zipFiles(filepath.Join(out, "orbitrix-mac.zip"), map[string][]byte{
-		"Orbitrix.app/Contents/Info.plist":     []byte(infoPlist),
-		"Orbitrix.app/Contents/MacOS/orbitrix": fat,
+		"Orbitrix.app/Contents/Info.plist":              []byte(infoPlist),
+		"Orbitrix.app/Contents/MacOS/orbitrix":          fat,
+		"Orbitrix.app/Contents/Resources/orbitrix.icns": icon,
 	})
 }
 
@@ -105,7 +122,14 @@ func Linux() error {
 	if err != nil {
 		return err
 	}
-	return zipFiles(filepath.Join(out, "orbitrix-linux.zip"), map[string][]byte{"orbitrix": bin})
+	icon, err := appicon.PNG(256)
+	if err != nil {
+		return err
+	}
+	return zipFiles(filepath.Join(out, "orbitrix-linux.zip"), map[string][]byte{
+		"orbitrix": bin, "orbitrix.png": icon,
+		"orbitrix.desktop": []byte("[Desktop Entry]\nType=Application\nName=Orbitrix\nExec=orbitrix\nIcon=orbitrix\nTerminal=false\nCategories=Game;BoardGame;\nStartupWMClass=Orbitrix\n"),
+	})
 }
 
 // desktopBinary builds the desktop client for goos/goarch without cgo and returns it.

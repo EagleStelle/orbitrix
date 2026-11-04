@@ -37,9 +37,9 @@ Mage and `ebitenmobile` are pinned in `go.mod` as tools, so `go tool` runs them 
 | Target | Output |
 |---|---|
 | `check` | Fails on unformatted files, then runs `go vet ./...` and `go test ./...` |
-| `desktop` | `dist/orbitrix.exe`, the Windows client |
-| `mac` | `dist/orbitrix-mac.zip`: `Orbitrix.app` with one universal binary for Apple silicon and Intel |
-| `linux` | `dist/orbitrix-linux.zip`: the amd64 client. At run time it needs X11 or XWayland, OpenGL and ALSA or PulseAudio |
+| `desktop` | `dist/orbitrix.exe`, the Windows client with an embedded application icon |
+| `mac` | `dist/orbitrix-mac.zip`: `Orbitrix.app` with its icon and one universal binary for Apple silicon and Intel |
+| `linux` | `dist/orbitrix-linux.zip`: the amd64 client, `orbitrix.png` and `orbitrix.desktop`. At run time it needs X11 or XWayland, OpenGL and ALSA or PulseAudio |
 | `web` | `dist/web/`: `game.wasm`, `wasm_exec.js`, the wordmark font and `favicon.svg` under content-hashed names, the loader page and the landing page, each served file kept as `.gz` and `.br` copies |
 | `android` | `dist/orbitrix.aar` (arm64 and x86_64) and `dist/orbitrix.apk` |
 | `image` | The `eaglestelle/orbitrix-server` image for linux/amd64 and linux/arm64, tagged `latest` and with the version, loaded into Docker |
@@ -86,6 +86,18 @@ adb install -r dist/orbitrix.apk
 ```
 
 A phone holding a debug-signed build must uninstall it once before it takes a release-signed one.
+
+### Linux launcher
+
+After unpacking the Linux zip, install its launcher and icon for your user (put `~/.local/bin` on `PATH`):
+
+```sh
+install -Dm755 orbitrix ~/.local/bin/orbitrix
+install -Dm644 orbitrix.png ~/.local/share/icons/hicolor/256x256/apps/orbitrix.png
+install -Dm644 orbitrix.desktop ~/.local/share/applications/orbitrix.desktop
+```
+
+The desktop entry also gives GNOME Shell the icon for running windows.
 
 ## Checking it works
 

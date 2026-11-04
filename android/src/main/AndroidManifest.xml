@@ -9,6 +9,7 @@
 
     <application
         android:enableOnBackInvokedCallback="true"
+        android:icon="@drawable/ic_launcher"
         android:label="Orbitrix"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 

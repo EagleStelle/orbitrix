@@ -18,6 +18,8 @@ import (
 	"strings"
 
 	"github.com/andybalholm/brotli"
+
+	"orbitrix/internal/appicon"
 )
 
 // sizeMark is where index.html takes game.wasm's size.
@@ -52,7 +54,7 @@ func run(dir string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "favicon.svg"), favicon(), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "favicon.svg"), appicon.SVG(), 0o644); err != nil {
 		return err
 	}
 	text := map[string][]byte{}

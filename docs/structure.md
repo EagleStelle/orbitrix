@@ -82,5 +82,5 @@ From the bottom up:
 - The hub must not depend on HTTP, WebRTC or signaling. A new way to connect players is a new `Conn` in `server/transport`.
 - Platform differences belong in `client/platform` behind build tags, not in `runtime.GOOS` checks spread through the client.
 - Game messages are binary `proto` messages on every transport. JSON is only for signaling and settings.
-- No image or audio files: graphics are drawn in code and sounds are generated. The two fonts in `client/fonts/` are the only assets. The one exception is `docs/logo.svg` and `docs/logo-dark.svg` for the README, written by `cmd/webdist`'s logo code; `TestDocsLogos` fails when they drift, and `go test ./cmd/webdist -run TestDocsLogos -update` rewrites them.
+- Graphics are drawn in code and sounds are generated. `internal/appicon` shares the logo geometry between the web favicon, desktop window icons, native build icons and Android's launcher vector. Native PNG, ICNS and Windows resources are generated during builds. The README SVGs and Android vector are checked in; `TestDocsLogos` fails when they drift, and `go test ./cmd/webdist -run TestDocsLogos -update` rewrites them. The two fonts in `client/fonts/` are the other assets.
 - Build steps go in `magefile.go`, not shell scripts, so they run the same from bash and PowerShell.

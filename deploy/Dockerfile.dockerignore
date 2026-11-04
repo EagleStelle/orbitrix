@@ -3,6 +3,7 @@
 !go.sum
 !magefile.go
 !cmd
+!internal
 !core
 !client
 !proto

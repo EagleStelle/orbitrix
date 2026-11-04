@@ -8,14 +8,19 @@ import (
 	"io"
 	"os"
 	"testing"
+
+	"orbitrix/internal/appicon"
 )
 
-var update = flag.Bool("update", false, "rewrite docs/logo.svg and docs/logo-dark.svg")
+var update = flag.Bool("update", false, "rewrite the README logos and Android launcher vector")
 
-// TestDocsLogos keeps the README's logos equal to the drawn logo. After changing the logo, rewrite them with
+// TestDocsLogos keeps the README logos and Android vector equal to the drawn logo. Rewrite them with
 // `go test ./cmd/webdist -run TestDocsLogos -update`.
 func TestDocsLogos(t *testing.T) {
-	for path, want := range map[string][]byte{"../../docs/logo.svg": favicon(), "../../docs/logo-dark.svg": darkLogo()} {
+	for path, want := range map[string][]byte{
+		"../../docs/logo.svg": appicon.SVG(), "../../docs/logo-dark.svg": appicon.DarkSVG(),
+		"../../android/src/main/res/drawable/ic_launcher_foreground.xml": appicon.Android(),
+	} {
 		if *update {
 			if err := os.WriteFile(path, want, 0o644); err != nil {
 				t.Fatal(err)
@@ -32,7 +37,7 @@ func TestDocsLogos(t *testing.T) {
 }
 
 func TestFaviconIsWellFormedSVG(t *testing.T) {
-	d := xml.NewDecoder(bytes.NewReader(favicon()))
+	d := xml.NewDecoder(bytes.NewReader(appicon.SVG()))
 	shapes := map[string]int{}
 	for {
 		tok, err := d.Token()
