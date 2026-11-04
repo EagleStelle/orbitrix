@@ -138,7 +138,7 @@ go tool mage <target>      # go tool mage -l lists the targets
 | `desktop` | `dist/orbitrix.exe`, the Windows client, from any OS |
 | `web` | `dist/web/`: `game.wasm`, `wasm_exec.js` and the wordmark font under content-hashed names, `index.html` (the game's loader) and `landing.html`; each served file with `.gz` and `.br` copies (`cmd/webdist`) |
 | `android` | `dist/orbitrix.aar` (the Go game, arm64 + x86_64) and `dist/orbitrix.apk` (installable) |
-| `image` | the `orbitrix-server` Docker image, compiled inside Docker by `deploy/Dockerfile` (the web build plus a Linux server) |
+| `image` | the `eaglestelle/orbitrix-server` Docker image for linux/amd64 and linux/arm64, compiled inside Docker by `deploy/Dockerfile` (the web build plus a Linux server), labelled with its commit and build time |
 | `all` | every target above, in that order |
 
 Native clients (`desktop`, `android`) play online through the server named in `ORBITRIX_SERVER` when they are built
@@ -162,16 +162,21 @@ precompressed copies to browsers that accept them. It reads its settings from th
 
 `-downloads <folder>` offers `orbitrix.exe` and `orbitrix.apk` from that folder on the landing page.
 
-The `orbitrix-server` image is built in two stages: a Go stage compiles the web build and the server, and the
-final distroless image holds only those. Build it with `go tool mage image`, or on a machine without Go with
-`docker build -t orbitrix-server -f deploy/Dockerfile .` from the repo root (add `--platform linux/arm64` for an ARM
-server). An image built on another machine goes to the server with
-`docker save orbitrix-server | ssh <server> docker load`. On the server, copy `deploy/.env.example` to
-`deploy/.env`, fill it in and run `docker compose up -d` in `deploy/`. The server listens on `127.0.0.1:1212` only;
-put your own reverse proxy in front of it to make it public. The proxy must accept connections only from
-[Cloudflare's IP ranges](https://www.cloudflare.com/ips/) and pass `CF-Connecting-IP` on. The server believes that
-header from any private peer, so a request that reached the proxy around Cloudflare could name its own address and
-slip every per-IP limit. To try the image locally with hosting open (no password), at `http://localhost:1212`:
+The `eaglestelle/orbitrix-server` image is built in two stages: a Go stage compiles the web build and the server, and
+the final distroless image holds only those. `go tool mage image` builds it with buildx for linux/amd64 and
+linux/arm64 at once, natively on the build machine, and loads both into Docker, which takes Docker's containerd image
+store (Docker Desktop's default). On a machine without Go: `docker buildx build --platform linux/amd64,linux/arm64
+-t eaglestelle/orbitrix-server -f deploy/Dockerfile --load .` from the repo root, which leaves the commit and
+build-time labels empty. To get it to the server, either push it (`docker push eaglestelle/orbitrix-server` sends both
+platforms) and run `docker compose pull` there, or send only the server's platform:
+`docker save --platform linux/arm64 eaglestelle/orbitrix-server | ssh <server> docker load`. On the server, copy
+`deploy/.env.example` to `deploy/.env`, fill it in and run `docker compose up -d` in `deploy/`. The server listens on
+`127.0.0.1:1212` only; put your own reverse proxy in front of it to make it public. The proxy must accept connections
+only from [Cloudflare's IP ranges](https://www.cloudflare.com/ips/) and pass `CF-Connecting-IP` on. The server
+believes that header from any private peer, so a request that reached the proxy around Cloudflare could name its own
+address and slip every per-IP limit. A Cloudflare Tunnel (`cloudflared`) to `http://localhost:1212` meets this by
+itself: nothing reaches the server except through Cloudflare. To try the image locally with hosting open (no
+password), at `http://localhost:1212`:
 
 ```sh
 cd deploy && docker compose -f docker-compose.yml -f compose.dev.yml up

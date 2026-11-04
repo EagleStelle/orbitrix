@@ -24,6 +24,9 @@ jobs:
           CGO_ENABLED: "1"
       - name: build desktop (windows)
         run: go tool mage desktop
-      # Builds the web game and the server inside Docker; the image is not pushed.
-      - name: build image (web + server)
-        run: go tool mage image
+      # Builds the web game and the server inside Docker for amd64 and arm64; the image is not pushed. A
+      # docker-container builder builds both platforms whatever image store the runner's Docker uses.
+      - name: build image (web + server, amd64 + arm64)
+        run: |
+          docker buildx create --use
+          go tool mage image

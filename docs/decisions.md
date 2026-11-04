@@ -254,7 +254,12 @@ New, not from the prototype; they use real search or learning instead of more he
   `go tool mage web` and cross-compiles the server for the target platform (the stage runs on the build machine's,
   so an ARM image needs no emulation); the final stage is distroless static (non-root; compose runs it read-only
   with no capabilities). The build context is an allowlist (`deploy/Dockerfile.dockerignore`), so `.env` and local
-  files never reach it. Compose runs the `orbitrix-server` image and never builds.
+  files never reach it. Compose runs the `eaglestelle/orbitrix-server` image (user's Docker Hub name) and never
+  builds. The image is multi-platform, linux/amd64 and linux/arm64 (user request), built with buildx: the web build
+  comes before the target platform's arguments, so it runs once for both. CI builds both on a docker-container builder
+  without loading them, since loading a multi-platform image takes the containerd image store. The image carries OCI labels (title, description, author, repo, docs, base image, and the commit and build
+  time that `go tool mage image` passes), set last in the Dockerfile so they never invalidate a cached layer. There is
+  no license label or version label: the repo has no license file and no tags yet.
 - **Downloads stay out of the image** (user decision): compose mounts `deploy/downloads` read-only, so publishing a
   new `.exe` or `.apk` needs no image rebuild.
 - **No tunnel in compose** (user decision). Self-hosters choose how to expose the server, so compose bundles no

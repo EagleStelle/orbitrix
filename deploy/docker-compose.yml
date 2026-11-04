@@ -1,4 +1,4 @@
-# The website and signaling server, from the orbitrix-server image deploy/Dockerfile builds. Values come
+# The website and signaling server, from the eaglestelle/orbitrix-server image deploy/Dockerfile builds. Values come
 # from deploy/.env (start from .env.example). The port is published on 127.0.0.1 only: put your own reverse proxy in
 # front of it to make it public, taking connections from Cloudflare's IP ranges only (the server believes the
 # CF-Connecting-IP header the proxy passes on).
@@ -9,7 +9,7 @@ name: orbitrix
 
 services:
   orbitrix:
-    image: orbitrix-server
+    image: eaglestelle/orbitrix-server
     restart: unless-stopped
     ports: ["127.0.0.1:1212:1212"]
     environment:

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/magefile/mage/mg"
 	"github.com/magefile/mage/sh"
@@ -101,7 +102,20 @@ func Android() error {
 	return sh.Copy(filepath.Join(out, "orbitrix.apk"), "android/build/outputs/apk/release/orbitrix-release.apk")
 }
 
-// Image builds the orbitrix-server Docker image (website and signaling server) from deploy/Dockerfile. Needs Docker.
+// Image builds the eaglestelle/orbitrix-server Docker image (website and signaling server) from deploy/Dockerfile for
+// linux/amd64 and linux/arm64, labelled with the commit it was built from and when, and loads it into Docker. Needs
+// Docker with its containerd image store (Docker Desktop's default) and git.
 func Image() error {
-	return sh.RunV("docker", "build", "-t", "orbitrix-server", "-f", "deploy/Dockerfile", ".")
+	rev, err := sh.Output("git", "rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	args := []string{"buildx", "build", "--platform", "linux/amd64,linux/arm64", "-t", "eaglestelle/orbitrix-server",
+		"-f", "deploy/Dockerfile", "--build-arg", "REVISION=" + rev,
+		"--build-arg", "CREATED=" + time.Now().UTC().Format(time.RFC3339)}
+	// CI only checks that both platforms build: loading them takes the containerd image store, which a runner may lack.
+	if os.Getenv("CI") == "" {
+		args = append(args, "--load")
+	}
+	return sh.RunV("docker", append(args, ".")...)
 }
