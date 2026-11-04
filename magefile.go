@@ -5,6 +5,10 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
+	"debug/macho"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
@@ -22,9 +26,9 @@ const out = "dist"
 // through; without it they offer no Online. The web build ignores the stamp and uses the server it was loaded from.
 var ldflags = "-s -w -X orbitrix/client/platform.origin=" + os.Getenv("ORBITRIX_SERVER")
 
-// All runs every target: Check, Desktop, Web, Android and Image.
+// All runs every target: Check, Desktop, Mac, Linux, Web, Android and Image.
 func All() {
-	mg.SerialDeps(Check, Desktop, Web, Android, Image)
+	mg.SerialDeps(Check, Desktop, Mac, Linux, Web, Android, Image)
 }
 
 // Check fails on unformatted files, then runs go vet and go test.
@@ -46,6 +50,125 @@ func Check() error {
 func Desktop() error {
 	return sh.RunWithV(map[string]string{"GOOS": "windows", "GOARCH": "amd64"},
 		"go", "build", "-trimpath", "-ldflags="+ldflags, "-o", filepath.Join(out, "orbitrix.exe"), "./cmd/orbitrix")
+}
+
+// infoPlist describes Orbitrix.app to macOS. The local network line is the prompt macOS 15 and later show before Same
+// Wi-Fi play.
+const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key><string>orbitrix</string>
+	<key>CFBundleIdentifier</key><string>com.orbitrix</string>
+	<key>CFBundleName</key><string>Orbitrix</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>0.4.0</string>
+	<key>NSHighResolutionCapable</key><true/>
+	<key>NSLocalNetworkUsageDescription</key><string>Orbitrix finds and hosts Same Wi-Fi rooms.</string>
+</dict>
+</plist>
+`
+
+// Mac builds dist/orbitrix-mac.zip from any OS: Orbitrix.app, one binary for Apple silicon and Intel Macs. It carries
+// only the Go linker's ad-hoc signature, so macOS makes the player allow it once in Privacy & Security.
+func Mac() error {
+	var slices [][]byte
+	for _, arch := range []string{"arm64", "amd64"} {
+		bin, err := desktopBinary("darwin", arch)
+		if err != nil {
+			return err
+		}
+		slices = append(slices, bin)
+	}
+	fat, err := universal(slices)
+	if err != nil {
+		return err
+	}
+	if f, err := macho.NewFatFile(bytes.NewReader(fat)); err != nil || len(f.Arches) != len(slices) {
+		return fmt.Errorf("mac: universal binary doesn't read back: %v", err)
+	}
+	return zipFiles(filepath.Join(out, "orbitrix-mac.zip"), map[string][]byte{
+		"Orbitrix.app/Contents/Info.plist":     []byte(infoPlist),
+		"Orbitrix.app/Contents/MacOS/orbitrix": fat,
+	})
+}
+
+// Linux builds dist/orbitrix-linux.zip (amd64) from any OS. Ebitengine loads X11 (or XWayland), OpenGL and ALSA or
+// PulseAudio at run time, so the binary needs no cgo and runs on any desktop distribution.
+func Linux() error {
+	bin, err := desktopBinary("linux", "amd64")
+	if err != nil {
+		return err
+	}
+	return zipFiles(filepath.Join(out, "orbitrix-linux.zip"), map[string][]byte{"orbitrix": bin})
+}
+
+// desktopBinary builds the desktop client for goos/goarch without cgo and returns it.
+func desktopBinary(goos, goarch string) ([]byte, error) {
+	tmp, err := os.MkdirTemp("", "orbitrix")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmp)
+	bin := filepath.Join(tmp, "orbitrix")
+	if err := sh.RunWithV(map[string]string{"GOOS": goos, "GOARCH": goarch, "CGO_ENABLED": "0"},
+		"go", "build", "-trimpath", "-ldflags="+ldflags, "-o", bin, "./cmd/orbitrix"); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(bin)
+}
+
+// universal joins Mach-O binaries into one fat binary, as Apple's lipo does: a big-endian header listing each
+// architecture's slice, then the slices, each at a 16 KiB boundary.
+func universal(bins [][]byte) ([]byte, error) {
+	const align = 14
+	fat := make([]byte, 1<<align)
+	binary.BigEndian.PutUint32(fat, macho.MagicFat)
+	binary.BigEndian.PutUint32(fat[4:], uint32(len(bins)))
+	for i, b := range bins {
+		f, err := macho.NewFile(bytes.NewReader(b))
+		if err != nil {
+			return nil, err
+		}
+		fat = append(fat, make([]byte, -len(fat)&(1<<align-1))...)
+		for j, v := range []uint32{uint32(f.Cpu), f.SubCpu, uint32(len(fat)), uint32(len(b)), align} {
+			binary.BigEndian.PutUint32(fat[8+20*i+4*j:], v)
+		}
+		fat = append(fat, b...)
+	}
+	return fat, nil
+}
+
+// zipFiles writes the files to a zip, the executable one (the one with no extension) marked so, which macOS and Linux
+// keep when they unpack it.
+func zipFiles(name string, files map[string][]byte) error {
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(name)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	z := zip.NewWriter(f)
+	for path, data := range files {
+		h := &zip.FileHeader{Name: path, Method: zip.Deflate, Modified: time.Now()}
+		h.SetMode(0o644)
+		if filepath.Ext(path) == "" {
+			h.SetMode(0o755)
+		}
+		w, err := z.CreateHeader(h)
+		if err != nil {
+			return err
+		}
+		if _, err := w.Write(data); err != nil {
+			return err
+		}
+	}
+	if err := z.Close(); err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 // Web builds the browser game into dist/web: game.wasm, its loader page and the landing page, under content-hashed

@@ -22,8 +22,8 @@ jobs:
         run: go test -race ./server/... ./proto/ ./core/
         env:
           CGO_ENABLED: "1"
-      - name: build desktop (windows)
-        run: go tool mage desktop
+      - name: build desktop (windows, macOS, linux)
+        run: go tool mage desktop mac linux
       # Builds the web game and the server inside Docker for amd64 and arm64; the image is not pushed. A
       # docker-container builder builds both platforms whatever image store the runner's Docker uses.
       - name: build image (web + server, amd64 + arm64)

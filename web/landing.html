@@ -57,10 +57,12 @@
     </div>
   </div>
   <a class="play" href="/play" aria-label="Play in browser">PLAY</a>
-  {{- if or .Windows .Android}}
+  {{- if or .Windows .Android .Mac .Linux}}
   <nav aria-label="Downloads">
     {{- if .Windows}}<a href="/download/orbitrix.exe" download>Windows .exe</a>{{end}}
     {{- if .Android}}<a href="/download/orbitrix.apk" download>Android .apk</a>{{end}}
+    {{- if .Mac}}<a href="/download/orbitrix-mac.zip" download>macOS .app</a>{{end}}
+    {{- if .Linux}}<a href="/download/orbitrix-linux.zip" download>Linux</a>{{end}}
   </nav>
   {{- end}}
 </main>

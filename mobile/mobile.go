@@ -1,4 +1,4 @@
-// Package mobile is the ebitenmobile binding for Android (and later iOS). ebitenmobile bind turns it into the AAR the
+// Package mobile is the ebitenmobile binding for Android. ebitenmobile bind turns it into the AAR the
 // Gradle project in /android wraps; its exported functions become static methods of the Java class Mobile.
 package mobile
 

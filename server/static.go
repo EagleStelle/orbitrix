@@ -16,13 +16,14 @@ import (
 var encodings = [...]struct{ token, ext string }{{"br", ".br"}, {"gzip", ".gz"}}
 
 // downloads are the files /download/ offers, by name, and the landing page field that shows each.
-var downloads = map[string]string{"orbitrix.exe": "Windows", "orbitrix.apk": "Android"}
+var downloads = map[string]string{"orbitrix.exe": "Windows", "orbitrix.apk": "Android",
+	"orbitrix-mac.zip": "Mac", "orbitrix-linux.zip": "Linux"}
 
 // Site is the website. Edge caching depends on its headers: the build's files have content-hashed names and never
 // change, pages are revalidated on every load, and downloads keep their names, so they are cached for 5 minutes.
 type Site struct {
 	Web       fs.FS        // the web build (dist/web); nil serves only /healthz and /signal
-	Downloads string       // folder holding orbitrix.exe and orbitrix.apk; "" offers neither
+	Downloads string       // folder holding the files in downloads; "" offers none
 	Signal    http.Handler // the signaling service; nil leaves /signal out
 }
 
@@ -62,7 +63,7 @@ func (s Site) Handler() (http.Handler, error) {
 			http.NotFound(w, r)
 			return
 		}
-		// Cloudflare stores .exe and .apk by default, unless told no-cache: the edge serves a download flood, and a new
+		// Cloudflare stores .exe, .apk and .zip by default, unless told no-cache: the edge serves a download flood, and a new
 		// build shows within 5 minutes.
 		w.Header().Set("Cache-Control", "public, max-age=300")
 		http.ServeFile(w, r, filepath.Join(s.Downloads, name))

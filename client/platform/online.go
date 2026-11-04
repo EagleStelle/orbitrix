@@ -27,7 +27,7 @@ var Hosting = func(on bool) {}
 // ShareSheet opens the system share sheet with text. The mobile wrapper sets it; elsewhere it stays nil.
 var ShareSheet func(text string)
 
-// Share hands text to the share sheet (Android) or copies it to the clipboard (Windows), and reports whether it
+// Share hands text to the share sheet (Android) or copies it to the clipboard (desktop), and reports whether it
 // copied, so the caller can say so. Where it can do neither the caller shows the text anyway.
 func Share(text string) (copied bool) {
 	if ShareSheet != nil {

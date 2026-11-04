@@ -1,7 +1,8 @@
 # Orbitrix
 
 A turn-based chain-reaction orb game for 2–12 players, written in Go with Ebitengine. Targets Windows, Android and
-the web (WASM), with online and LAN games hosted by one of the players.
+the web (WASM), plus macOS and Linux, with online and LAN games hosted by one of the players. No native iOS build:
+iPhones play in the browser.
 
 <!-- impeccable:product-schema 1 -->
 
@@ -120,8 +121,8 @@ have, fill empty seats with AI, and enjoy following a chain reaction as it plays
 | [Android SDK](https://developer.android.com/studio) + NDK | Android | `go tool mage android` uses `ANDROID_HOME`, or `%LOCALAPPDATA%\Android\Sdk` / `~/Android/Sdk` when it isn't set. Install an NDK with the SDK manager (`sdkmanager "ndk;30.0.16248370"`). |
 | Docker | `image` target, server deployment | Builds and runs the website and signaling server image. |
 
-Desktop builds on Windows and Linux are pure Go (`CGO_ENABLED=0`). Only the Android/iOS bindings need cgo, through
-`ebitenmobile`. Both `ebitenmobile` and the build tool, [Mage](https://magefile.org), are pinned in `go.mod` as tools,
+Desktop builds (Windows, macOS, Linux) are pure Go (`CGO_ENABLED=0`) and cross-compile from any OS. Only the Android
+binding needs cgo, through `ebitenmobile`. Both `ebitenmobile` and the build tool, [Mage](https://magefile.org), are pinned in `go.mod` as tools,
 so `go tool` runs them with nothing to install.
 
 ## Building
@@ -136,12 +137,14 @@ go tool mage <target>      # go tool mage -l lists the targets
 |---|---|
 | `check` | gofmt, `go vet ./...`, `go test ./...` |
 | `desktop` | `dist/orbitrix.exe`, the Windows client, from any OS |
+| `mac` | `dist/orbitrix-mac.zip`: `Orbitrix.app` with one universal binary (Apple silicon + Intel), from any OS |
+| `linux` | `dist/orbitrix-linux.zip`: the amd64 Linux client, from any OS. It needs X11 or XWayland, OpenGL and ALSA or PulseAudio at run time; Copy uses `wl-copy` or `xclip` when one is installed |
 | `web` | `dist/web/`: `game.wasm`, `wasm_exec.js`, the wordmark font and `favicon.svg` (the logo) under content-hashed names, `index.html` (the game's loader) and `landing.html`; each served file with `.gz` and `.br` copies (`cmd/webdist`) |
 | `android` | `dist/orbitrix.aar` (the Go game, arm64 + x86_64) and `dist/orbitrix.apk` (installable) |
 | `image` | the `eaglestelle/orbitrix-server` Docker image for linux/amd64 and linux/arm64, compiled inside Docker by `deploy/Dockerfile` (the web build plus a Linux server), labelled with its commit and build time |
 | `all` | every target above, in that order |
 
-Native clients (`desktop`, `android`) play online through the server named in `ORBITRIX_SERVER` when they are built
+Native clients (`desktop`, `mac`, `linux`, `android`) play online through the server named in `ORBITRIX_SERVER` when they are built
 (e.g. `https://orbitrix.example.com`); without it they offer no Online. The web build always uses the server it was
 loaded from. For testing, the desktop client also reads `ORBITRIX_SERVER` when it starts, so
 `ORBITRIX_SERVER=http://localhost:1212 go run ./cmd/orbitrix` plays against a local server.
@@ -160,7 +163,8 @@ precompressed copies to browsers that accept them. It reads its settings from th
 | `HOST_PASSWORD` | Empty: anyone can host online, without a password, using STUN only. Set: hosts must enter it. Random, at least 20 characters. |
 | `CF_TURN_KEY_ID`, `CF_TURN_API_TOKEN` | Cloudflare Realtime TURN key. TURN needs both and a password of at least 20 characters; otherwise, or when Cloudflare fails, it falls back to STUN. |
 
-`-downloads <folder>` offers `orbitrix.exe` and `orbitrix.apk` from that folder on the landing page.
+`-downloads <folder>` offers `orbitrix.exe`, `orbitrix.apk`, `orbitrix-mac.zip` and `orbitrix-linux.zip` from that
+folder on the landing page, each once it is there.
 
 The `eaglestelle/orbitrix-server` image is built in two stages: a Go stage compiles the web build and the server, and
 the final distroless image holds only those. `go tool mage image` builds it with buildx for linux/amd64 and
@@ -284,7 +288,7 @@ Open `https://orbitrix.example.com/play`: the game loads.
 
 ### 4. Cache Rules
 
-Caching → Cache Rules. Cloudflare caches `.js`, `.ttf`, `.svg`, `.exe` and `.apk` on its own but not `.wasm` or pages. With
+Caching → Cache Rules. Cloudflare caches `.js`, `.ttf`, `.svg`, `.exe`, `.apk` and `.zip` on its own but not `.wasm` or pages. With
 these two rules a flood on the website is answered at the edge and barely reaches the server.
 
 | Rule | When incoming requests match (Edit expression) | Then |
@@ -306,7 +310,8 @@ not (http.request.method in {"GET" "HEAD"})
 or (http.request.uri.query ne "" and http.request.uri.path ne "/signal")
 or (http.request.uri.path eq "/signal" and not any(lower(http.request.headers["upgrade"][*])[*] eq "websocket"))
 or not (
-  http.request.uri.path in {"/" "/play" "/signal" "/healthz" "/download/orbitrix.exe" "/download/orbitrix.apk"}
+  http.request.uri.path in {"/" "/play" "/signal" "/healthz" "/download/orbitrix.exe" "/download/orbitrix.apk"
+    "/download/orbitrix-mac.zip" "/download/orbitrix-linux.zip"}
   or starts_with(http.request.uri.path, "/join/")
   or ends_with(http.request.uri.path, ".wasm")
   or ends_with(http.request.uri.path, ".js")
@@ -354,22 +359,25 @@ lost key means every phone has to uninstall Orbitrix (losing its settings) to ta
 keytool -genkeypair -keystore orbitrix-release.p12 -storetype PKCS12 -alias orbitrix -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=Orbitrix"
 ```
 
-Build both clients with the key and the site's address, then copy them into the server's `downloads/` folder. The
+Build the clients with the key and the site's address, then copy them into the server's `downloads/` folder. The
 landing page offers each file once it is there; Cloudflare keeps serving the old one for up to 5 minutes (Caching →
 Purge Cache to skip that).
 
 ```sh
-ORBITRIX_SERVER=https://orbitrix.example.com ORBITRIX_KEYSTORE=/path/to/orbitrix-release.p12 ORBITRIX_KEYSTORE_PASSWORD=… go tool mage desktop android
-scp dist/orbitrix.exe dist/orbitrix.apk <server>:orbitrix/downloads/
+ORBITRIX_SERVER=https://orbitrix.example.com ORBITRIX_KEYSTORE=/path/to/orbitrix-release.p12 ORBITRIX_KEYSTORE_PASSWORD=… go tool mage desktop mac linux android
+scp dist/orbitrix.exe dist/orbitrix.apk dist/orbitrix-mac.zip dist/orbitrix-linux.zip <server>:orbitrix/downloads/
 ```
 
 ```powershell
-$env:ORBITRIX_SERVER="https://orbitrix.example.com"; $env:ORBITRIX_KEYSTORE="C:\path\to\orbitrix-release.p12"; $env:ORBITRIX_KEYSTORE_PASSWORD="…"; go tool mage desktop android
-scp dist/orbitrix.exe dist/orbitrix.apk <server>:orbitrix/downloads/
+$env:ORBITRIX_SERVER="https://orbitrix.example.com"; $env:ORBITRIX_KEYSTORE="C:\path\to\orbitrix-release.p12"; $env:ORBITRIX_KEYSTORE_PASSWORD="…"; go tool mage desktop mac linux android
+scp dist/orbitrix.exe dist/orbitrix.apk dist/orbitrix-mac.zip dist/orbitrix-linux.zip <server>:orbitrix/downloads/
 ```
 
 A phone holding a debug-signed build must uninstall it once before installing the first release-signed one. Windows
-SmartScreen warns about the unsigned `.exe` until it has been downloaded often enough: More info → Run anyway.
+SmartScreen warns about the unsigned `.exe` until it has been downloaded often enough: More info → Run anyway. The Mac
+app isn't signed with an Apple Developer ID or notarized, so macOS refuses its first open: System Settings → Privacy &
+Security → Open Anyway (once). If macOS calls it damaged instead, run `xattr -dr com.apple.quarantine
+/Applications/Orbitrix.app` once. On Linux, unzip and run `./orbitrix`.
 
 ### Updating
 

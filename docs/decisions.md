@@ -445,3 +445,27 @@ New, not from the prototype; they use real search or learning instead of more he
 - **Verified against the live site** (2026-11-04): a host and a joiner, both with `iceTransportPolicy=relay`, played
   a game through production signaling with the host password, so TURN credentials and the relay work end to end.
   The real-phone test is the user's (checklist).
+
+## macOS and Linux builds (Phase 9)
+
+- **Scope (user decisions):** the app icon, colour-blind markers and the tutorial were done or dropped before this
+  phase, and match replays are skipped. **No native iOS build:** it needs a Mac with Xcode, an Apple Developer
+  account to reach a phone, and Apple's multicast entitlement for Same Wi-Fi discovery; iPhones play the web build
+  in Safari instead.
+- **Pure Go, cross-compiled from any OS.** Ebitengine 2.10 loads Cocoa/Metal (macOS) and X11, OpenGL and ALSA or
+  PulseAudio (Linux) at run time through purego, so `go tool mage mac linux` builds both with `CGO_ENABLED=0` on
+  Windows, like the `.exe`. Linux is amd64 only.
+- **`orbitrix-mac.zip` holds `Orbitrix.app`** with a universal binary: Mage joins the arm64 and amd64 builds into a
+  fat Mach-O itself (16 KiB-aligned slices, as `lipo` writes them) and reads it back before zipping. The arm64 slice
+  carries the Go linker's ad-hoc signature, which Apple silicon requires; there is no Developer ID signature or
+  notarization, so macOS asks once (Privacy & Security → Open Anyway). `Info.plist` sets `NSHighResolutionCapable`
+  and `NSLocalNetworkUsageDescription`, the prompt macOS 15+ shows before Same Wi-Fi play. Not yet opened on a Mac.
+- **Zips keep the executable bit** (Unix mode in the zip's external attributes), so the Mac app and the Linux binary
+  run straight after unzipping; a bare download would lose it.
+- **Copy on macOS and Linux** pipes the room link into `pbcopy`, `wl-copy` or `xclip`, whichever exists, instead of
+  linking a clipboard library. Without one, the copy button does nothing, as before.
+- **Downloads:** the landing page offers `orbitrix-mac.zip` and `orbitrix-linux.zip` beside the `.exe` and `.apk`
+  once they are in the downloads folder; the WAF allowlist in `PRODUCT.md` names both paths.
+- **Verified:** the Linux binary ran in a Debian container under Xvfb with Mesa and drew Home with its demo mat.
+  Ebitengine ends the game when no audio device exists at all (true on every platform, not new), so the container
+  needed a null ALSA device; real desktops have PipeWire or PulseAudio.
