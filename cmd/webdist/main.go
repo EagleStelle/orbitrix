@@ -1,5 +1,5 @@
 // Command webdist finishes a web build in a folder (default dist/web). It writes game.wasm's size into index.html for
-// the loading dots, renames the build's files after their content hash so the edge can cache them for good, points
+// the loading dots, draws the logo as favicon.svg, renames the build's files after their content hash so the edge can cache them for good, points
 // the pages at the new names, and saves a gzip and a brotli copy of each served file beside it, so a server sends
 // them as they are. landing.html stays uncompressed: the server renders it as a template.
 package main
@@ -24,7 +24,7 @@ import (
 const sizeMark = "/*WASM_SIZE*/0"
 
 // hashed are renamed after their content. The pages name each one in double quotes, and get "/<new name>".
-var hashed = []string{"game.wasm", "wasm_exec.js", "Unbounded.ttf"}
+var hashed = []string{"game.wasm", "wasm_exec.js", "Unbounded.ttf", "favicon.svg"}
 
 var pages = []string{"index.html", "landing.html"}
 
@@ -50,6 +50,9 @@ func main() {
 func run(dir string) error {
 	wasm, err := os.Stat(filepath.Join(dir, "game.wasm"))
 	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "favicon.svg"), favicon(), 0o644); err != nil {
 		return err
 	}
 	text := map[string][]byte{}
