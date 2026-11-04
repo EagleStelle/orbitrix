@@ -128,7 +128,6 @@ func previewFrame(a *app) (cols, rows int) {
 // setupScene keeps Players above Board and Start outside the scrollable content.
 type setupScene struct {
 	menu int       // seat whose type menu is open, or -1
-	swap bool      // the open menu lists the other seats, to trade places with
 	room *hostRoom // a room this player hosts, or nil for a game on this device
 
 	// Layout in device px, recomputed when the screen size or the room's lobby changes.
@@ -381,40 +380,26 @@ func (s *setupScene) menuRects(a *app) (panel, first rect) {
 }
 
 // menuCount is how many options a seat's menu has: Human and the AIs, then Swap position and Remove player, which are
-// always listed and greyed out where they can't act. Swap position turns the menu into the seats it may trade with.
-func (s *setupScene) menuCount(a *app) int {
-	if s.swap {
-		return s.swaps(a)
-	}
-	return len(seatLabels) + 2
-}
+// always listed and greyed out where they can't act.
+func (s *setupScene) menuCount(*app) int { return len(seatLabels) + 2 }
 
 // canRemove reports whether Remove player acts: a game keeps at least two players.
 func (s *setupScene) canRemove(a *app) bool { return a.set.Players > core.MinPlayers }
 
-// swapTarget is the seat option o of the swap menu stands for, or -1 past the last: the seats the menu's seat may
-// trade places with, in order. Two humans never trade, on this device or in a room, so a human seat lists only the
-// bots.
-func (s *setupScene) swapTarget(a *app, o int) int {
-	human := s.seatType(a, s.menu) == seatHuman
-	for j := range a.set.Players {
-		if j != s.menu && (!human || s.seatType(a, j) != seatHuman) {
-			if o == 0 {
-				return j
-			}
-			o--
-		}
+// self is this player's seat, or -1 with none: the host's in an open room, otherwise the first human one, which
+// carries their name.
+func (s *setupScene) self(a *app) int {
+	if s.room != nil && s.room.net != nil {
+		return s.room.net.seat
 	}
-	return -1
+	return firstHuman(a.set.seats)
 }
 
-// swaps is how many seats the menu's seat may trade places with.
-func (s *setupScene) swaps(a *app) int {
-	n := 0
-	for s.swapTarget(a, n) >= 0 {
-		n++
-	}
-	return n
+// canSwap reports whether Swap position acts on the menu's seat: it moves this player there, so the seat must be
+// another one and a bot's, as two humans never trade.
+func (s *setupScene) canSwap(a *app) bool {
+	me := s.self(a)
+	return me >= 0 && me != s.menu && s.seatType(a, s.menu) != seatHuman
 }
 
 // seat is how Setup shows seat i: its label, its type and, in an open room, a human seat's state.
@@ -504,14 +489,14 @@ func (s *setupScene) update(a *app) error {
 					continue
 				}
 				switch {
-				case s.swap:
-					s.swapSeats(a, s.menu, s.swapTarget(a, o))
 				case o < len(seatLabels):
 					set.seats[s.menu] = o
 					s.menu = -1
 					s.changed(a)
 				case o == len(seatLabels):
-					s.swap = s.swaps(a) > 0
+					if s.canSwap(a) {
+						s.swapSeats(a, s.self(a), s.menu)
+					}
 				case s.canRemove(a):
 					s.removeSeat(a, s.menu)
 					s.layout(a)
@@ -565,7 +550,7 @@ func (s *setupScene) update(a *app) error {
 		switch {
 		case !a.clicked(s.seatHit[i]), s.room != nil && !s.room.editable(i):
 		case closing != i:
-			s.menu, s.swap = i, false
+			s.menu = i
 		}
 	}
 	for g, group := range s.presetPills {
@@ -774,21 +759,13 @@ func (s *setupScene) drawMenu(dst *ebiten.Image, a *app) {
 	for o := range s.menuCount(a) {
 		opt := setupMenuOption(panel, first, o, a.u)
 		face := rect{opt.x, opt.cy() - compactButtonHeight*a.u/2, opt.w, compactButtonHeight * a.u}
-		if s.swap { // the seats it may trade with, each as its pill shows it
-			j := s.swapTarget(a, o)
-			ink := drawButtonSurface(dst, a, face, btnGround, true, a.over(opt))
-			seatDot(dst, sc, j, opt.x+24*u, opt.cy(), 8*u, false, a.set.Marks)
-			label, _, _ := s.seat(a, j)
-			drawText(dst, label, f.labelBold, opt.x+seatChoiceX*u, opt.cy(), text.AlignStart, ink)
-			continue
-		}
 		if o == len(seatLabels) { // the seat's actions are set apart from its types by a hairline
 			fillRound(dst, rect{opt.x + 8*u, opt.y, opt.w - 16*u, 1.5 * u}, 0, mix(sc.ground, sc.dim, 0.35))
 		}
 		switch {
-		case o == len(seatLabels): // greyed out with nobody to trade with
+		case o == len(seatLabels): // greyed out where this player can't move to the seat
 			ink := sc.dim
-			if s.swaps(a) > 0 {
+			if s.canSwap(a) {
 				ink = drawButtonSurface(dst, a, face, btnGround, true, a.over(opt))
 			}
 			drawText(dst, "Swap position", f.labelBold, opt.x+14*u, opt.cy(), text.AlignStart, ink)

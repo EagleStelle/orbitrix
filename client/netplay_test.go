@@ -379,15 +379,12 @@ func TestRoomSetup(t *testing.T) {
 		t.Fatal("the player behind a removed seat must move up with it")
 	}
 
-	// That player can't trade with the host, only with a bot, which the player then swaps places with.
+	// The host can't take that player's seat, only a bot's, and moves there at once.
 	s.layout(a)
 	click(s.seatHit[1])
-	if s.swaps(a) != 0 || s.menuCount(a) != len(seatLabels)+2 {
-		t.Fatal("two players must find Swap position listed with nobody to trade with")
-	}
 	panel, first = s.menuRects(a)
-	click(setupMenuOption(panel, first, len(seatLabels), a.u))
-	if s.swap {
+	click(setupMenuOption(panel, first, len(seatLabels), a.u)) // Swap position
+	if s.canSwap(a) || s.menu != 1 {
 		t.Fatal("two players must never swap")
 	}
 	click(rect{1, 1, 1, 1})
@@ -395,16 +392,11 @@ func TestRoomSetup(t *testing.T) {
 	click(setupStepHit(s.plusP, a.u))
 	wait("the room never got its bot", func() bool { return len(n().lobby.Seats) == 3 })
 	s.layout(a)
-	click(s.seatHit[1])
+	click(s.seatHit[2])
 	panel, first = s.menuRects(a)
 	click(setupMenuOption(panel, first, len(seatLabels), a.u)) // Swap position
-	if s.swaps(a) != 1 || s.swapTarget(a, 0) != 2 {
-		t.Fatal("a player's seat must list only the bot")
-	}
-	panel, first = s.menuRects(a)
-	click(setupMenuOption(panel, first, 0, a.u))
 	wait("the swap never reached the room", func() bool {
-		return s.room.held(2) && n().lobby.Seats[1].State == proto.SeatAI
+		return n().seat == 2 && s.room.held(1) && n().lobby.Seats[0].State == proto.SeatAI
 	})
 	s.leave(a)
 }

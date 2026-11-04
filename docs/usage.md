@@ -25,7 +25,7 @@ In a browser on a site without a server, PLAY goes straight to Setup.
 
 ## Setup
 
-- Players: the heading's − and + set the count from 2 to 12. Each seat is Human or one of the twelve bots, with its difficulty shown as five pips. The seat dropdown also has Swap position, which trades this seat with another (two humans never trade), and Remove player, which takes the seat out and moves the seats after it up.
+- Players: the heading's − and + set the count from 2 to 12. Each seat is Human or one of the twelve bots, with its difficulty shown as five pips. The seat dropdown also has Swap position, which moves you into that seat and gives the bot there yours (two humans never trade), and Remove player, which takes the seat out and moves the seats after it up.
 - Board: a mini-board preview, then eighteen presets in Portrait, Balanced and Landscape sections, each with six sizes from Coaster (5×7) to Floor (13×18). Columns and Rows go from 3 to 40; a size that matches no preset reads Custom.
 - Start reads "Board too small" when there are more players than cells.
 

@@ -33,7 +33,6 @@ type setupCaptureCase struct {
 	cols, rows  int
 	dark, tail  bool
 	menu, small bool
-	swap        bool   // the menu lists the seats to swap with
 	player      string // the player's name
 	focus       bool   // the name takes typing
 	play        bool
@@ -84,7 +83,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		s.scroll = s.maxScroll
 	}
 	if c.menu {
-		s.menu, s.swap = 1, c.swap
+		s.menu = 1
 	}
 	if c.small {
 		a.set.Cols, a.set.Rows = 3, 3
@@ -354,7 +353,6 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "setup-landscape", w: 844, h: 390, players: 12},
 		{name: "setup-landscape-mid", w: 844, h: 390, players: 12, progress: 0.5},
 		{name: "setup-menu", w: 1040, h: 640, players: 2, menu: true},
-		{name: "setup-swap", w: 1040, h: 640, players: 4, menu: true, swap: true, player: "Ana"},
 		{name: "setup-menu-4", w: 1040, h: 640, players: 4, menu: true},
 		{name: "setup-menu-2", w: 1040, h: 640, players: 2, menu: true},
 		{name: "setup-board-too-small", w: 1040, h: 640, players: 12, small: true, tail: true},

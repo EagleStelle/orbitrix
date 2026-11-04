@@ -297,8 +297,8 @@ func TestRemoveSeat(t *testing.T) {
 	}
 }
 
-// TestSwapSeat trades two seats through the menu: Swap position lists the seats this one may trade with (a player's
-// only the bots, never another human), and picking one swaps them.
+// TestSwapSeat moves this player through a bot seat's menu: Swap position trades their seat with that one at once,
+// and is greyed out on their own seat and on another human's.
 func TestSwapSeat(t *testing.T) {
 	a := setupTestApp(1040, 640, 1, 4)
 	a.set.seats = []int{seatHuman, 1 + 2, 1 + 5, seatHuman}
@@ -314,29 +314,19 @@ func TestSwapSeat(t *testing.T) {
 		}
 		a.in = input{x: offScreen, y: offScreen}
 	}
-	s.menu = 3
-	if s.swaps(a) != 2 || s.swapTarget(a, 0) != 1 || s.swapTarget(a, 1) != 2 {
-		t.Fatal("a player's seat must trade only with the bots")
+	for _, i := range []int{0, 3} { // this player's own seat, then another human's
+		s.menu = i
+		pick(len(seatLabels)) // Swap position
+		if s.canSwap(a) || s.menu != i || !slices.Equal(a.set.seats, []int{seatHuman, 1 + 2, 1 + 5, seatHuman}) {
+			t.Fatalf("Swap position on seat %d must be greyed out and do nothing: %v", i, a.set.seats)
+		}
 	}
 	s.menu = 2
-	pick(len(seatLabels)) // Swap position
-	if !s.swap || s.menuCount(a) != 3 || s.swapTarget(a, 2) != 3 {
-		t.Fatal("a bot's seat must list every other seat")
-	}
-	pick(0)
+	pick(len(seatLabels))
 	if !slices.Equal(a.set.seats, []int{1 + 5, 1 + 2, seatHuman, seatHuman}) || s.menu != -1 {
-		t.Fatalf("after swapping seats 2 and 0: %v", a.set.seats)
+		t.Fatalf("after this player took seat 2: %v", a.set.seats)
 	}
 	if l, _, _ := s.seat(a, 2); l != "Ana" {
 		t.Fatalf("the player's name must follow their seat, got %q", l)
-	}
-	a.set.seats = []int{seatHuman, seatHuman, seatHuman, seatHuman}
-	s.menu, s.swap = 0, false
-	if s.menuCount(a) != len(seatLabels)+2 || s.swaps(a) != 0 {
-		t.Fatal("among humans only, Swap position is listed with no seat to trade with")
-	}
-	pick(len(seatLabels))
-	if s.swap || !slices.Equal(a.set.seats, []int{seatHuman, seatHuman, seatHuman, seatHuman}) {
-		t.Fatal("two humans must never swap")
 	}
 }
