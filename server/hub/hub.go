@@ -514,17 +514,40 @@ func (r *Room) RemoveSeat(i int) error {
 	copy(r.seats[i:], r.seats[i+1:])
 	r.seats = r.seats[:len(r.seats)-1]
 	for j := i; j < len(r.seats); j++ {
-		s := &r.seats[j]
-		if s.peer != nil {
-			s.peer.seat = j
-			r.send(s.peer, proto.Welcome{Seat: uint8(j), Token: s.token})
-		} else if s.token != (proto.Token{}) && s.away != nil { // away: its grace starts again at its new place
-			s.away.Stop()
-			r.hold(j)
-		}
+		r.moved(j)
 	}
 	r.broadcastLobby()
 	return nil
+}
+
+// SwapSeats trades seats i and j in the room's lobby, with their players, who are told their new seat (a Welcome with
+// the same token). At least one of them must be an AI's: two players never trade places.
+func (r *Room) SwapSeats(i, j int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.shut || r.game != nil {
+		return ErrState
+	}
+	if i < 0 || j < 0 || i >= len(r.seats) || j >= len(r.seats) || i == j || r.seats[i].Human && r.seats[j].Human {
+		return ErrSeat
+	}
+	r.seats[i], r.seats[j] = r.seats[j], r.seats[i]
+	r.moved(i)
+	r.moved(j)
+	r.broadcastLobby()
+	return nil
+}
+
+// moved tells the player who now holds seat j that it is theirs. An away seat's grace starts again at its new place.
+func (r *Room) moved(j int) {
+	s := &r.seats[j]
+	if s.peer != nil {
+		s.peer.seat = j
+		r.send(s.peer, proto.Welcome{Seat: uint8(j), Token: s.token})
+	} else if s.token != (proto.Token{}) && s.away != nil {
+		s.away.Stop()
+		r.hold(j)
+	}
 }
 
 // SetCode changes the code a new player's Hello must carry; "" lets anyone in. Seated players keep their seats.

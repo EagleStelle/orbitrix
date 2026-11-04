@@ -284,15 +284,59 @@ func TestRemoveSeat(t *testing.T) {
 	s := newSetup()
 	s.layout(a)
 	s.menu = 1
-	if s.menuCount(a) != len(seatLabels)+1 {
-		t.Fatal("three seats offer Remove player")
+	if s.menuCount(a) != len(seatLabels)+2 {
+		t.Fatal("three seats offer Swap position and Remove player")
 	}
 	s.removeSeat(a, 1)
 	if a.set.Players != 2 || len(a.set.seats) != 2 || a.set.seats[1] != 1+5 || s.menu != -1 {
 		t.Fatalf("after removing seat 1: %d players, seats %v", a.set.Players, a.set.seats)
 	}
 	s.menu = 0
-	if s.menuCount(a) != len(seatLabels) {
-		t.Fatal("two seats can't lose another")
+	if s.menuCount(a) != len(seatLabels)+2 || s.canRemove(a) {
+		t.Fatal("two seats still list Remove player, greyed out: they can't lose another")
+	}
+}
+
+// TestSwapSeat trades two seats through the menu: Swap position lists the seats this one may trade with (a player's
+// only the bots, never another human), and picking one swaps them.
+func TestSwapSeat(t *testing.T) {
+	a := setupTestApp(1040, 640, 1, 4)
+	a.set.seats = []int{seatHuman, 1 + 2, 1 + 5, seatHuman}
+	a.set.Name = "Ana"
+	s := newSetup()
+	s.layout(a)
+	pick := func(o int) {
+		panel, first := s.menuRects(a)
+		r := setupMenuOption(panel, first, o, a.u)
+		a.in = input{x: r.cx(), y: r.cy(), clicked: true}
+		if err := s.update(a); err != nil {
+			t.Fatal(err)
+		}
+		a.in = input{x: offScreen, y: offScreen}
+	}
+	s.menu = 3
+	if s.swaps(a) != 2 || s.swapTarget(a, 0) != 1 || s.swapTarget(a, 1) != 2 {
+		t.Fatal("a player's seat must trade only with the bots")
+	}
+	s.menu = 2
+	pick(len(seatLabels)) // Swap position
+	if !s.swap || s.menuCount(a) != 3 || s.swapTarget(a, 2) != 3 {
+		t.Fatal("a bot's seat must list every other seat")
+	}
+	pick(0)
+	if !slices.Equal(a.set.seats, []int{1 + 5, 1 + 2, seatHuman, seatHuman}) || s.menu != -1 {
+		t.Fatalf("after swapping seats 2 and 0: %v", a.set.seats)
+	}
+	if l, _, _ := s.seat(a, 2); l != "Ana" {
+		t.Fatalf("the player's name must follow their seat, got %q", l)
+	}
+	a.set.seats = []int{seatHuman, seatHuman, seatHuman, seatHuman}
+	s.menu, s.swap = 0, false
+	if s.menuCount(a) != len(seatLabels)+2 || s.swaps(a) != 0 {
+		t.Fatal("among humans only, Swap position is listed with no seat to trade with")
+	}
+	pick(len(seatLabels))
+	if s.swap || !slices.Equal(a.set.seats, []int{seatHuman, seatHuman, seatHuman, seatHuman}) {
+		t.Fatal("two humans must never swap")
 	}
 }

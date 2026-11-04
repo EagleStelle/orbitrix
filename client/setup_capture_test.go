@@ -33,6 +33,9 @@ type setupCaptureCase struct {
 	cols, rows  int
 	dark, tail  bool
 	menu, small bool
+	swap        bool   // the menu lists the seats to swap with
+	player      string // the player's name
+	focus       bool   // the name takes typing
 	play        bool
 	hover       string
 	progress    float64 // fraction of page or player-list scroll
@@ -70,6 +73,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		a.sc, a.set.Marks = &schemes[themeDark], true
 	}
 	a.set.Marks = a.set.Marks || c.marks
+	a.set.Name = c.player
 	a.set.seats[1], _ = parseSeat("raider")
 	if c.cols > 0 {
 		a.set.Cols, a.set.Rows = c.cols, c.rows
@@ -80,7 +84,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		s.scroll = s.maxScroll
 	}
 	if c.menu {
-		s.menu = 1
+		s.menu, s.swap = 1, c.swap
 	}
 	if c.small {
 		a.set.Cols, a.set.Rows = 3, 3
@@ -104,6 +108,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 	case "home":
 		h := newHome()
 		h.layout(a)
+		h.name.focused = c.focus
 		for range 120 {
 			h.demo.tick()
 		}
@@ -299,6 +304,9 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "home-dark-1040", w: 1040, h: 640, players: 4, screen: "home", dark: true},
 		{name: "home-mobile", w: 390, h: 844, players: 4, screen: "home"},
 		{name: "home-landscape", w: 844, h: 390, players: 4, screen: "home"},
+		{name: "home-named-780", w: 780, h: 360, players: 4, screen: "home", player: "Ana"},
+		{name: "home-typing-mobile", w: 390, h: 844, players: 4, screen: "home", player: "Bartholomew", focus: true},
+		{name: "home-modes-780", w: 780, h: 360, players: 4, screen: "modes", player: "Ana"},
 		{name: "settings-desktop", w: 1440, h: 900, players: 2, screen: "settings"},
 		{name: "settings-mobile-dark", w: 390, h: 844, players: 2, screen: "settings", dark: true},
 		{name: "pause-desktop", w: 1440, h: 900, players: 4, screen: "pause"},
@@ -346,6 +354,9 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "setup-landscape", w: 844, h: 390, players: 12},
 		{name: "setup-landscape-mid", w: 844, h: 390, players: 12, progress: 0.5},
 		{name: "setup-menu", w: 1040, h: 640, players: 2, menu: true},
+		{name: "setup-swap", w: 1040, h: 640, players: 4, menu: true, swap: true, player: "Ana"},
+		{name: "setup-menu-4", w: 1040, h: 640, players: 4, menu: true},
+		{name: "setup-menu-2", w: 1040, h: 640, players: 2, menu: true},
 		{name: "setup-board-too-small", w: 1040, h: 640, players: 12, small: true, tail: true},
 		{name: "setup-player-hover", w: 1040, h: 640, players: 2, hover: "player"},
 		{name: "setup-preset-hover", w: 1040, h: 640, players: 2, hover: "preset"},

@@ -129,8 +129,8 @@ func newPlay(a *app, cols, rows int, seats []int) (*playScene, error) {
 		return nil, fmt.Errorf("new game: %w", err)
 	}
 	labels := make([]string, len(seats))
-	for i, s := range seats {
-		labels[i] = seatLabels[s]
+	for i := range seats {
+		labels[i] = a.set.label(seats, i)
 	}
 	return newPlayOn(a, g, seats, labels, pauseLocal), nil
 }

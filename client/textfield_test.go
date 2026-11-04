@@ -16,6 +16,8 @@ func TestFieldFilters(t *testing.T) {
 		{"code composition", codeField(), "K7", "qx3mz", "K7", "K7QX3M"},
 		{"password keeps symbols", passwordField(), "aB3$ x", "", "aB3$ x", "aB3$ x"},
 		{"password drops controls", passwordField(), "a\tb\nc", "d", "abc", "abcd"},
+		{"name stops at its bytes", nameField(), "Ana✨✨✨✨✨", "", "Ana✨✨✨✨", "Ana✨✨✨✨"},
+		{"name composition", nameField(), "Bartholomew", "Smithe", "Bartholomew", "BartholomewSmith"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			c.f.set(c.set)

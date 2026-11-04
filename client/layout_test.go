@@ -267,12 +267,24 @@ func TestHomeLayout(t *testing.T) {
 				"wordmark": {s.x, s.logoY - s.logo.Size/2, s.w, s.logo.Size},
 				"dots":     {s.x, s.dotsY - s.dotR, s.w, 2 * s.dotR},
 				"play":     s.playRect(),
+				"name":     s.plaque,
 				"mat":      s.demo.b.bounds(),
+			}
+			// The ways to play take the place of PLAY and its buttons, under the name.
+			modes := map[string]rect{"wordmark": parts["wordmark"], "dots": parts["dots"], "mat": parts["mat"]}
+			if !s.plaqueOff {
+				modes["name"] = s.plaque
+			}
+			for _, it := range s.modes {
+				modes[it.label] = it.r
 			}
 			for _, it := range s.items {
 				parts[it.label] = it.r
 			}
-			t.Run(fmt.Sprintf("%.0fx%.0f/u%g", size[0], size[1], u), func(t *testing.T) { checkParts(t, v, parts) })
+			t.Run(fmt.Sprintf("%.0fx%.0f/u%g", size[0], size[1], u), func(t *testing.T) {
+				checkParts(t, v, parts)
+				checkParts(t, v, modes)
+			})
 		}
 	}
 }

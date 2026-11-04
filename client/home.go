@@ -1,6 +1,8 @@
 package client
 
 import (
+	"cmp"
+	"image"
 	"math"
 	"runtime"
 
@@ -13,14 +15,23 @@ import (
 )
 
 // homeScene is the title screen: one column as wide as the wordmark (the wordmark, the twelve seat dots spread
-// across it, the PLAY dot centred in it, and a stack of full-width buttons), beside a live demo mat where four AIs
-// play real chain reactions. On a screen taller than wide the column opens around the mat instead: wordmark and
-// dots above it, PLAY and the buttons below it. The button stack is a list so the Local, LAN and Online entries
-// can join it later.
+// across it, the welcome plaque with the player's name, the PLAY dot centred in it, and a stack of full-width
+// buttons), beside a live demo mat where four AIs play real chain reactions. On a screen taller than wide the column
+// opens around the mat instead: wordmark and dots above it, the plaque, PLAY and the buttons below it. The button
+// stack is a list so the Local, LAN and Online entries can join it later.
 type homeScene struct {
 	demo     *demo
 	choosing bool       // PLAY was pressed: the column offers the ways to play instead
 	ask      *askDialog // the warning before Windows' firewall question, while it is open
+
+	// The welcome plaque: the name field, the edits saved and measured so far, and the plaque as drawn, which hugs
+	// its line and so changes with the name. plaqueOff: the ways to play need its room on this screen.
+	name                            *field
+	named, measured                 int
+	nameText                        string
+	greetW, nameW, bangW, plaqueMin float64
+	plaque                          rect
+	plaqueOff                       bool
 
 	// Layout in device px, recomputed when the screen size changes.
 	lv                  rect
@@ -43,14 +54,27 @@ type homeItem struct {
 
 var logoLetters = [...]string{"O", "R", "B", "I", "T", "R", "I", "X"}
 
+// The welcome plaque: its height and the greeting around the name, set in the buttons' label face (logical px).
+const (
+	plaqueH   = 34
+	plaquePad = 16
+	caretRoom = 3 // between the name and its "!" while typing
+	greeting  = "Welcome, "
+)
+
 func newHome() *homeScene { return &homeScene{} }
 
 func (s *homeScene) layout(a *app) {
+	if s.name == nil {
+		s.name = nameField()
+		s.name.set(a.set.Name)
+		s.named = s.name.edits
+	}
 	v := a.safe()
 	if v == s.lv {
 		return
 	}
-	s.lv = v
+	s.lv, s.measured = v, -1
 	u := a.u
 	portrait := a.portrait()
 	pad := 64 * u
@@ -93,15 +117,21 @@ func (s *homeScene) layout(a *app) {
 	s.playFace = newFace(srcDisplay, s.playR*0.34, 800) // the label grows with the dot
 	s.items = s.items[:0]
 	buttonW := min(2*s.playR, quietButtonMaxWidth*u)
+	s.plaqueMin = buttonW
 	for _, l := range labels {
 		s.items = append(s.items, homeItem{l, rect{s.playX - buttonW/2, y, buttonW, bh}})
 		y += bh + gap
 	}
 
-	// The ways to play stand where PLAY and its buttons stood, centred on them.
+	// The ways to play stand where PLAY and its buttons stood, centred on them, under the plaque. On a screen too short
+	// for that they take the plaque's room too, and it steps aside until Back.
 	labels = append(playModes(), "Back")
 	modesH := float64(len(labels))*(bh+gap) - gap
-	my := (s.playY - s.playR + y - gap - modesH) / 2
+	top, bottom := s.plaque.bottom()+gap, y-gap
+	if s.plaqueOff = modesH > bottom-top; s.plaqueOff {
+		top = s.dotsY + s.dotR + gap
+	}
+	my := max(top, min((s.playY-s.playR+bottom-modesH)/2, bottom-modesH))
 	modeW := min(s.w, max(buttonW, 220*u))
 	s.modes = s.modes[:0]
 	for _, l := range labels {
@@ -115,22 +145,28 @@ func (s *homeScene) layout(a *app) {
 		s.demo = newDemo(cols, rows, a.rng.Uint64())
 	}
 	s.demo.layout(s.mat, u)
+	s.fitName(a)
 }
 
 // layoutBeside puts the column left of the mat, centred top to bottom, and returns the top of its button stack. On a
-// screen too short for it, the gaps tighten and the PLAY dot shrinks until the column fits.
+// screen too short for it, the gaps tighten and the PLAY dot shrinks until the column fits; on one shorter still, only
+// the gaps give again, so the plaque never makes anything smaller.
 func (s *homeScene) layoutBeside(a *app, v rect, size, stack, col float64) float64 {
 	u := a.u
-	gLogo, gDots, gPlay := 30*u, 44*u, 32*u
-	rest := func() float64 { return size + gLogo + 2*s.dotR + gDots + gPlay + stack }
+	gLogo, gDots, gName, gPlay := 30*u, 24*u, 20*u, 32*u
+	rest := func() float64 { return size + gLogo + 2*s.dotR + gDots + plaqueH*u + gName + gPlay + stack }
 	s.playR = max(64*u, min(s.w*0.3, v.h*0.17, 150*u))
 	if rest()+2*s.playR > v.h-32*u {
-		gLogo, gDots, gPlay = 16*u, 20*u, 20*u
-		s.playR = max(40*u, min(s.playR, (v.h-32*u-rest())/2))
+		gLogo, gDots, gName, gPlay = 16*u, 12*u, 12*u, 20*u
 	}
+	if rest()+80*u > v.h-32*u { // too short even for the smallest PLAY dot
+		gLogo, gDots, gName, gPlay = 12*u, 8*u, 8*u, 12*u
+	}
+	s.playR = max(40*u, min(s.playR, (v.h-32*u-rest())/2))
 	s.logoY = v.y + (v.h-rest()-2*s.playR)/2 + size/2
 	s.dotsY = s.logoY + size/2 + gLogo + s.dotR
-	s.playY = s.dotsY + s.dotR + gDots + s.playR
+	s.plaque = rect{s.playX, s.dotsY + s.dotR + gDots, 0, plaqueH * u} // its width follows the name
+	s.playY = s.plaque.bottom() + gName + s.playR
 	s.mat = rect{v.x + col, v.y + 24*u, v.w - col - 24*u, v.h - 48*u}
 	return s.playY + s.playR + gPlay
 }
@@ -144,8 +180,9 @@ func (s *homeScene) layoutPortrait(a *app, v rect, size, stack float64) float64 
 	s.dotsY = s.logoY + size/2 + 24*u + s.dotR
 	stackY := v.bottom() - 24*u - stack
 	s.playY = stackY - 24*u - s.playR
+	s.plaque = rect{s.playX, s.playY - s.playR - 20*u - plaqueH*u, 0, plaqueH * u}
 	top := s.dotsY + s.dotR + 24*u
-	s.mat = rect{v.x + 16*u, top, v.w - 32*u, max(1, s.playY-s.playR-24*u-top)}
+	s.mat = rect{v.x + 16*u, top, v.w - 32*u, max(1, s.plaque.y-20*u-top)}
 	return stackY
 }
 
@@ -160,6 +197,7 @@ func (s *homeScene) update(a *app) error {
 		s.updateAsk(a)
 		return nil
 	}
+	s.updateName(a)
 	if s.choosing {
 		s.updateModes(a)
 		return nil
@@ -202,6 +240,9 @@ func (s *homeScene) draw(dst *ebiten.Image, a *app) {
 	step := (s.w - 2*s.dotR) / (core.MaxPlayers - 1)
 	for p := range core.MaxPlayers {
 		seatDot(dst, sc, p, s.x+s.dotR+float64(p)*step, s.dotsY, s.dotR, false, a.set.Marks)
+	}
+	if !s.choosing || !s.plaqueOff {
+		s.drawName(dst, a)
 	}
 
 	if s.choosing {
@@ -315,6 +356,68 @@ func waysToPlay(browser bool, origin string) []string {
 		modes = append(modes, "Online")
 	}
 	return modes
+}
+
+// updateName runs the plaque's name: a tap on the plaque takes typing, Enter (or on a touch screen a tap elsewhere)
+// gives it back, and each change is saved before anything else this update can leave Home.
+func (s *homeScene) updateName(a *app) {
+	s.fitName(a)
+	if s.choosing && s.plaqueOff {
+		s.name.focused = false
+	} else {
+		s.name.tap(a, compactHit(s.plaque, a.u))
+	}
+	if s.name.update(a) {
+		s.name.focus(a, false)
+	}
+	if s.name.edits == s.named {
+		return
+	}
+	s.named = s.name.edits
+	if t := string(s.name.text); t != a.set.Name {
+		a.set.Name = t
+		a.set.save()
+	}
+}
+
+// fitName measures the plaque's line after an edit and sizes the plaque to hug it: at least as wide as the buttons
+// under PLAY, at most the column.
+func (s *homeScene) fitName(a *app) {
+	if s.name.edits == s.measured {
+		return
+	}
+	f, u := &a.f, a.u
+	s.measured, s.nameText = s.name.edits, string(s.name.shown)
+	s.greetW, s.bangW = textWidth(greeting, f.labelBold), textWidth("!", f.labelBold)
+	s.nameW = textWidth(cmp.Or(s.nameText, seatLabels[seatHuman]), f.labelBold)
+	w := min(s.w, max(s.plaqueMin, s.greetW+s.nameW+caretRoom*u+s.bangW+2*plaquePad*u)) // typing never widens it
+	s.plaque.x, s.plaque.w = s.playX-w/2, w
+	s.name.caret = image.Rect(int(s.plaque.x), int(s.plaque.y), int(s.plaque.right()), int(s.plaque.bottom()))
+}
+
+// drawName draws the welcome plaque, bare words with no fill or border: "Welcome, Ana!", the name in ink between the
+// dim greeting and its mark, or Human dimmed while there is none. While the name takes typing a caret follows it.
+func (s *homeScene) drawName(dst *ebiten.Image, a *app) {
+	s.fitName(a)
+	sc, f, u, p := a.sc, &a.f, a.u, s.plaque
+	x := p.cx() - (s.greetW+s.nameW+s.bangW)/2
+	drawText(dst, greeting, f.labelBold, x, p.cy(), text.AlignStart, sc.dim)
+	name, ink := s.nameText, sc.ink
+	if name == "" {
+		name, ink = seatLabels[seatHuman], sc.dim
+	}
+	drawText(dst, name, f.labelBold, x+s.greetW, p.cy(), text.AlignStart, ink)
+	mark := x + s.greetW + s.nameW
+	if s.name.focused {
+		caret := mark + u
+		if s.nameText == "" {
+			caret = x + s.greetW - u // where typing starts, before the dimmed Human
+		} else {
+			mark += caretRoom * u // the caret stands between the name and its mark
+		}
+		fillRound(dst, rect{caret, p.cy() - 9*u, 2 * u, 18 * u}, u, sc.ink)
+	}
+	drawText(dst, "!", f.labelBold, mark, p.cy(), text.AlignStart, sc.dim)
 }
 
 // updateAsk runs the firewall warning: Continue goes on to Same Wi-Fi, where Windows asks; it isn't shown again.

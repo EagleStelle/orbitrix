@@ -479,12 +479,12 @@ func (h *hostRoom) pollOpen(a *app, s *setupScene) bool {
 	h.opening = false
 	switch {
 	case o.err == nil && o.lan != nil:
-		n := hostSession(o.lan.Room, online.NewLink(o.lan.Me))
+		n := hostSession(o.lan.Room, online.NewLink(o.lan.Me), a.set.name())
 		n.lan, n.addr, n.code, n.private = o.lan, o.lan.Addr, o.code, h.private
 		h.net, a.net = n, n
 	case o.err == nil:
 		a.set.save() // keeps the password that worked
-		n := hostSession(o.h.Room, o.h.Me)
+		n := hostSession(o.h.Room, o.h.Me, a.set.name())
 		n.host, n.private = o.h, h.private
 		h.net, a.net = n, n
 	case errors.Is(o.err, online.ErrPassword), errors.Is(o.err, online.ErrRefused):
@@ -678,7 +678,7 @@ func (h *hostRoom) seat(a *app, i int) (label string, opt int, state chip) {
 	n := h.net
 	if n == nil || !n.got || i >= len(n.lobby.Seats) {
 		opt = a.set.seats[i]
-		label = seatLabels[opt]
+		label = a.set.label(a.set.seats, i)
 		if i == firstHuman(a.set.seats) {
 			label += " (you)"
 		}
@@ -693,6 +693,18 @@ func (h *hostRoom) seat(a *app, i int) (label string, opt int, state chip) {
 		return label, 1 + int(st.AI), chip{}
 	}
 	return label, seatHuman, seatState(st)
+}
+
+// seatType is seat i's type as seat shows it: the lobby's once the room is open, Setup's before.
+func (h *hostRoom) seatType(a *app, i int) int {
+	n := h.net
+	switch {
+	case n == nil || !n.got || i >= len(n.lobby.Seats):
+		return a.set.seats[i]
+	case n.lobby.Seats[i].State == proto.SeatAI:
+		return 1 + int(n.lobby.Seats[i].AI)
+	}
+	return seatHuman
 }
 
 // firstHuman is the seat the host takes when the room opens: its first human one.

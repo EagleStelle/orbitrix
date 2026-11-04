@@ -125,7 +125,7 @@ func (g *goneScene) retry(a *app) bool {
 		var ctx context.Context
 		ctx, g.cancel = context.WithCancel(context.Background())
 		g.trying = true
-		go joinLAN(ctx, []string{g.addr}, g.code, g.token, g.result)
+		go joinLAN(ctx, []string{g.addr}, a.set.name(), g.code, g.token, g.result)
 	case g.left == 0:
 		if g.why == "Host disconnected" {
 			g.why = "Connection lost"

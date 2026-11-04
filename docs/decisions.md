@@ -388,3 +388,20 @@ New, not from the prototype; they use real search or learning instead of more he
   Welcome with their new seat. Seat holds now take room-wide numbers, so a grace timer whose seat moved does nothing,
   and a moved away seat starts its grace again. It is drawn in a danger ink (user request), the one colour outside
   the player inks.
+- **Players name themselves on Home** (user request): one name per device, saved as typed (`settings.Name`;
+  `settings.name()` falls back to "Human"). It sits in a welcome plaque above PLAY, "Welcome, Ana!" after PopCap's
+  greeting (user choice, after rendered mockups of a plaque, a name tag and a captioned box): bare words in the
+  buttons' label face, the name in ink between the dim greeting and its mark, no fill and no border (user
+  direction: a pill read as a button). It hugs its line (at least the buttons' width), and a tap gives it the
+  keyboard, with a caret after the name. Nothing shrinks for it (user direction): on a short landscape phone only the
+  column's gaps tighten, and when the ways to play need its room they take it until Back. It labels this
+  player's first human seat in local Setup, the game rail and Results, and is the name a host's own Hello and a
+  joiner's Hello and signaling `join` carry, so the hub's lobby and the Let in snackbar show it. Text fields now cap
+  bytes, not runes: a name takes at most 16 (within `proto.MaxName`'s 24, which signaling enforces), short enough
+  for a seat pill; Setup measures the names it shows and lays out again when the lobby changes.
+- **Swap position** (user request): the seat dropdown's option above Remove player turns the dropdown into the seats
+  this one may trade with; a tap trades them, choices and all. Two humans never trade, on this device or in a room
+  (user decision): a human seat lists only the bots, judged by the lobby's seat types once a room is open, and
+  `hub.Room.SwapSeats` refuses two human seats. In an open room the hub moves the players and sends each a Welcome
+  with their new seat, as Remove player does (`Room.moved`). Swap position and Remove player are always listed (user
+  request), greyed out where they can't act: no seat to trade with, or two players left.

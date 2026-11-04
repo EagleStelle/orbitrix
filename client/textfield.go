@@ -4,6 +4,7 @@ import (
 	"image"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/exp/textinput"
@@ -16,10 +17,10 @@ import (
 // field takes text from the device's own keyboard: a physical one, or the on-screen keyboard Android and phone
 // browsers show while the field has the focus (Ebitengine's exp/textinput). The page draws the text.
 type field struct {
-	text    []rune // what the keyboard has committed
-	shown   []rune // text plus the word the keyboard is still composing: what the page draws
-	edits   int    // counts changes to shown, so a page can cache what it draws
-	max     int
+	text    []rune          // what the keyboard has committed
+	shown   []rune          // text plus the word the keyboard is still composing: what the page draws
+	edits   int             // counts changes to shown, so a page can cache what it draws
+	max     int             // in bytes, as the wire counts a name
 	keep    func(rune) rune // the rune a typed one becomes, or 0 to drop it
 	secret  bool            // a password, which the keyboard must not suggest or learn
 	caret   image.Rectangle // where the text goes, so an on-screen keyboard keeps it in view
@@ -59,18 +60,21 @@ func codeField() *field {
 }
 
 // passwordField takes the host password: any printable character.
-func passwordField() *field {
-	return newField(maxPassword, true, func(r rune) rune {
-		if unicode.IsPrint(r) {
-			return r
-		}
-		return 0
-	})
+func passwordField() *field { return newField(maxPassword, true, printable) }
+
+// nameField takes a player's name: any printable character.
+func nameField() *field { return newField(maxName, false, printable) }
+
+func printable(r rune) rune {
+	if unicode.IsPrint(r) {
+		return r
+	}
+	return 0
 }
 
 func (f *field) add(s string) {
 	for _, r := range s {
-		if r = f.keep(r); r != 0 && len(f.text) < f.max {
+		if r = f.keep(r); r != 0 && fits(f.text, r, f.max) {
 			f.text = append(f.text, r)
 		}
 	}
@@ -81,10 +85,19 @@ func (f *field) show(composing string) {
 	f.edits++
 	f.shown = append(f.shown[:0], f.text...)
 	for _, r := range composing {
-		if r = f.keep(r); r != 0 && len(f.shown) < f.max {
+		if r = f.keep(r); r != 0 && fits(f.shown, r, f.max) {
 			f.shown = append(f.shown, r)
 		}
 	}
+}
+
+// fits reports whether text with r after it stays within max bytes.
+func fits(text []rune, r rune, max int) bool {
+	n := utf8.RuneLen(r)
+	for _, c := range text {
+		n += utf8.RuneLen(c)
+	}
+	return n <= max
 }
 
 // set replaces the text, between the keyboard's sessions.

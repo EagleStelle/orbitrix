@@ -53,11 +53,11 @@ func TestOnlineRoom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := testRoom{host: hostSession(h.Room, h.Me), code: h.Code()}
+	r := testRoom{host: hostSession(h.Room, h.Me, "Human"), code: h.Code()}
 	r.host.host = h
 	joined := make(chan joinResult, 1)
 	go func() {
-		c, err := online.Join(ctx, url, h.Code(), onlineName, proto.Token{}, false, func() {})
+		c, err := online.Join(ctx, url, h.Code(), "Human", proto.Token{}, false, func() {})
 		joined <- joinResult{c: c, err: err}
 	}()
 	r.joined = func() *session {
@@ -68,7 +68,7 @@ func TestOnlineRoom(t *testing.T) {
 			}
 			n := newSession(online.NewLink(jr.c))
 			n.code = h.Code()
-			n.link.Send(proto.Hello{Name: onlineName})
+			n.link.Send(proto.Hello{Name: "Human"})
 			return n
 		default:
 			return nil
@@ -93,10 +93,10 @@ func TestLANRoom(t *testing.T) {
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	r := testRoom{host: hostSession(l.Room, online.NewLink(l.Me)), approve: func() {}}
+	r := testRoom{host: hostSession(l.Room, online.NewLink(l.Me), "Human"), approve: func() {}}
 	r.host.lan, r.host.addr = l, l.Addr
 	joined := make(chan lanResult, 1)
-	go joinLAN(ctx, []string{l.Addr}, "", proto.Token{}, joined)
+	go joinLAN(ctx, []string{l.Addr}, "Human", "", proto.Token{}, joined)
 	r.joined = func() *session {
 		select {
 		case jr := <-joined:
@@ -349,8 +349,8 @@ func TestRoomSetup(t *testing.T) {
 	wait("the joiner never showed", func() bool { return s.room.held(int(w.Seat)) })
 	s.layout(a)
 	click(s.seatHit[w.Seat])
-	if s.menu != int(w.Seat) || s.menuCount(a) != len(seatLabels)+1 {
-		t.Fatal("a seat's menu must offer Remove player")
+	if s.menu != int(w.Seat) || s.menuCount(a) != len(seatLabels)+2 {
+		t.Fatal("a seat's menu must offer Swap position and Remove player")
 	}
 	panel, first := s.menuRects(a)
 	click(setupMenuOption(panel, first, 1, a.u)) // Jester
@@ -373,10 +373,38 @@ func TestRoomSetup(t *testing.T) {
 	s.layout(a)
 	click(s.seatHit[w.Seat])
 	panel, first = s.menuRects(a)
-	click(setupMenuOption(panel, first, len(seatLabels), a.u)) // Remove player
+	click(setupMenuOption(panel, first, len(seatLabels)+1, a.u)) // Remove player
 	wait("the seat never went", func() bool { return len(n().lobby.Seats) == 2 && a.set.Players == 2 })
 	if !s.room.held(int(w2.Seat) - 1) {
 		t.Fatal("the player behind a removed seat must move up with it")
 	}
+
+	// That player can't trade with the host, only with a bot, which the player then swaps places with.
+	s.layout(a)
+	click(s.seatHit[1])
+	if s.swaps(a) != 0 || s.menuCount(a) != len(seatLabels)+2 {
+		t.Fatal("two players must find Swap position listed with nobody to trade with")
+	}
+	panel, first = s.menuRects(a)
+	click(setupMenuOption(panel, first, len(seatLabels), a.u))
+	if s.swap {
+		t.Fatal("two players must never swap")
+	}
+	click(rect{1, 1, 1, 1})
+	s.layout(a)
+	click(setupStepHit(s.plusP, a.u))
+	wait("the room never got its bot", func() bool { return len(n().lobby.Seats) == 3 })
+	s.layout(a)
+	click(s.seatHit[1])
+	panel, first = s.menuRects(a)
+	click(setupMenuOption(panel, first, len(seatLabels), a.u)) // Swap position
+	if s.swaps(a) != 1 || s.swapTarget(a, 0) != 2 {
+		t.Fatal("a player's seat must list only the bot")
+	}
+	panel, first = s.menuRects(a)
+	click(setupMenuOption(panel, first, 0, a.u))
+	wait("the swap never reached the room", func() bool {
+		return s.room.held(2) && n().lobby.Seats[1].State == proto.SeatAI
+	})
 	s.leave(a)
 }

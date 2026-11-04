@@ -23,9 +23,6 @@ func signalURL() string { return "ws" + strings.TrimPrefix(origin, "http") + "/s
 // joinLink is the address that opens the game with room code filled in.
 func joinLink(code string) string { return origin + "/join/" + code }
 
-// onlineName is what this player is called in a room. Players can't name themselves yet, so it is the seat type.
-const onlineName = "Human"
-
 // hostAIDelay paces the host's AI seats, so a browser host's thinking leaves it time to draw between moves.
 const hostAIDelay = 400 * time.Millisecond
 
@@ -54,11 +51,11 @@ type session struct {
 
 func newSession(link *online.Link) *session { return &session{link: link, seat: -1} }
 
-// hostSession seats this player in the room they host, through me, the hub's in-process connection.
-func hostSession(room *hub.Room, me *online.Link) *session {
+// hostSession seats this player, called name, in the room they host, through me, the hub's in-process connection.
+func hostSession(room *hub.Room, me *online.Link, name string) *session {
 	s := newSession(me)
 	s.room = room
-	s.link.Send(proto.Hello{Name: onlineName})
+	s.link.Send(proto.Hello{Name: name})
 	platform.Hosting(true)
 	return s
 }

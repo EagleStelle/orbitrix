@@ -296,16 +296,17 @@ func (s *joinScene) start(a *app, addr, code string, typed bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel, s.joining, s.status = cancel, addr+code, ""
 	s.waiting.Store(false)
+	name := a.set.name()
 	if s.lan {
 		go func() {
-			joinLAN(ctx, addrs, code, token, s.local)
+			joinLAN(ctx, addrs, name, code, token, s.local)
 			cancel()
 		}()
 		return
 	}
 	relay, url := a.set.Relay, signalURL()
 	go func() {
-		c, err := online.Join(ctx, url, code, onlineName, token, relay, func() { s.waiting.Store(true) })
+		c, err := online.Join(ctx, url, code, name, token, relay, func() { s.waiting.Store(true) })
 		cancel()
 		s.online <- joinResult{c: c, err: err, code: code, token: token}
 	}()
@@ -314,10 +315,10 @@ func (s *joinScene) start(a *app, addr, code string, typed bool) {
 // joinLAN asks the hosts at addrs in turn for a seat, with code for a private room, and puts the first seat it gets on
 // result, or the most telling refusal: a wrong code only when no host said anything else. It blocks: run it off the
 // game loop.
-func joinLAN(ctx context.Context, addrs []string, code string, token proto.Token, result chan<- lanResult) {
+func joinLAN(ctx context.Context, addrs []string, name, code string, token proto.Token, result chan<- lanResult) {
 	err := error(lan.Refused{Reason: proto.ReasonBadCode})
 	for _, addr := range addrs {
-		c, w, e := lan.Join(ctx, addr, proto.Hello{Name: onlineName, Code: code, Token: token})
+		c, w, e := lan.Join(ctx, addr, proto.Hello{Name: name, Code: code, Token: token})
 		if e == nil {
 			result <- lanResult{c, w, addr, code, nil}
 			return
@@ -361,7 +362,7 @@ func (s *joinScene) joinedOnline(a *app, r joinResult) {
 	default:
 		n := newSession(online.NewLink(r.c))
 		n.code = r.code
-		n.link.Send(proto.Hello{Name: onlineName, Token: r.token})
+		n.link.Send(proto.Hello{Name: a.set.name(), Token: r.token})
 		a.net, a.next = n, newRoom(n)
 	}
 }

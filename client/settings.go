@@ -1,9 +1,11 @@
 package client
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"orbitrix/client/platform"
 	"orbitrix/core"
@@ -25,6 +27,8 @@ type settings struct {
 	// Fullscreen is the desktop/browser window mode; Marks draws each player's shape mark on their orbs and dots.
 	Fullscreen bool `json:"fullscreen"`
 	Marks      bool `json:"marks"`
+	// Name is what this player called themselves on Home, as typed; name() is what they go by.
+	Name string `json:"name,omitempty"`
 	// Online: the host password this device hosts with (cleared when the server refuses it), the Force relay debug
 	// switch, and the seat a joiner can take back after the app was closed. Joiners save no password.
 	Password string  `json:"password,omitempty"`
@@ -46,6 +50,21 @@ type rejoin struct {
 	Code  string `json:"code"`
 	Addr  string `json:"addr,omitempty"`
 	Token string `json:"token"`
+}
+
+// maxName caps a player's name in bytes: within the wire's proto.MaxName, and short enough for a seat pill.
+const maxName = 16
+
+// name is what this player goes by: the name they gave on Home, or Human.
+func (s *settings) name() string { return cmp.Or(strings.TrimSpace(s.Name), seatLabels[seatHuman]) }
+
+// label is what seat i of seats is called on this device: this player's name on the first human seat (the one they
+// take in a room they host), and every other seat's type.
+func (s *settings) label(seats []int, i int) string {
+	if i == firstHuman(seats) {
+		return s.name()
+	}
+	return seatLabels[seats[i]]
 }
 
 var themeNames = [2]string{themeLight: "light", themeDark: "dark"}
@@ -94,6 +113,9 @@ func loadSettings(rng *core.RNG) *settings {
 	s.Cols = clampInt(s.Cols, core.MinSize, core.MaxSize, 9)
 	s.Rows = clampInt(s.Rows, core.MinSize, core.MaxSize, 9)
 	s.Players = clampInt(s.Players, core.MinPlayers, core.MaxPlayers, 2)
+	if len(s.Name) > maxName {
+		s.Name = ""
+	}
 	for _, name := range s.Seats {
 		opt, ok := parseSeat(name)
 		if !ok {

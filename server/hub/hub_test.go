@@ -365,6 +365,26 @@ func TestRemoveSeat(t *testing.T) {
 	}
 }
 
+// TestSwapSeats trades a player's seat with a bot's in a lobby: the player is told their new seat and the bot moves.
+// Two players can't trade.
+func TestSwapSeats(t *testing.T) {
+	room := newRoom(t, hub.Config{Seats: humans(2, hub.Seat{AI: ai.Spy})})
+	a, b := join(t, room, "", proto.Token{}), join(t, room, "", proto.Token{})
+	if err := room.SwapSeats(1, 2); err != nil {
+		t.Fatal(err)
+	}
+	if w := waitFor[proto.Welcome](b); w.Seat != 2 || w.Token != b.token {
+		t.Fatalf("the moved player: seat %d", w.Seat)
+	}
+	l := a.lobbyWhere(func(l proto.Lobby) bool { return l.Seats[1].State == proto.SeatAI })
+	if l.Seats[1].AI != uint8(ai.Spy) || l.Seats[2].State != proto.SeatHere {
+		t.Fatalf("lobby: %+v", l.Seats)
+	}
+	if room.SwapSeats(1, 1) != hub.ErrSeat || room.SwapSeats(0, 3) != hub.ErrSeat || room.SwapSeats(0, 2) != hub.ErrSeat {
+		t.Fatal("swapped a seat with itself, one past the end, or two players")
+	}
+}
+
 func TestRejects(t *testing.T) {
 	room := newRoom(t, hub.Config{Seats: humans(1, hub.Seat{AI: ai.Jester})})
 	for name, tc := range map[string]struct {
