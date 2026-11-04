@@ -14,9 +14,14 @@ ARG TARGETOS TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /orbitrix-server ./cmd/orbitrix-server
 
-FROM gcr.io/distroless/static-debian12:nonroot
+# A static Go binary needs only CA roots (for Cloudflare's TURN API) beside it; distroless's tzdata and the rest
+# would be dead weight.
+FROM scratch
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /orbitrix-server /orbitrix-server
 COPY --from=build /src/dist/web /web
+# distroless's nonroot user.
+USER 65532:65532
 EXPOSE 1212
 ENTRYPOINT ["/orbitrix-server", "-web", "/web", "-downloads", "/downloads"]
 
@@ -30,6 +35,5 @@ LABEL org.opencontainers.image.title="orbitrix-server" \
       org.opencontainers.image.url="https://github.com/EagleStelle/orbitrix" \
       org.opencontainers.image.source="https://github.com/EagleStelle/orbitrix" \
       org.opencontainers.image.documentation="https://github.com/EagleStelle/orbitrix/blob/main/PRODUCT.md" \
-      org.opencontainers.image.base.name="gcr.io/distroless/static-debian12:nonroot" \
       org.opencontainers.image.revision="$REVISION" \
       org.opencontainers.image.created="$CREATED"

@@ -256,12 +256,16 @@ New, not from the prototype; they use real search or learning instead of more he
   for the twelve seats. Windows reserves nothing there, and it stays clear of the LAN hub's 7777.
 - **Multi-stage Dockerfile** (user decision, replacing an earlier package-only one). A Go stage runs
   `go tool mage web` and cross-compiles the server for the target platform (the stage runs on the build machine's,
-  so an ARM image needs no emulation); the final stage is distroless static (non-root; compose runs it read-only
-  with no capabilities). The build context is an allowlist (`deploy/Dockerfile.dockerignore`), so `.env` and local
+  so an ARM image needs no emulation); the final stage is scratch with the CA roots for Cloudflare's TURN API, run as
+  distroless's nonroot UID 65532 (user decision, replacing distroless static, whose tzdata alone was 4 MB the server
+  never reads); compose runs it read-only with no capabilities. With no `/etc/mime.types` there, the server registers
+  `.ttf` itself. `cmd/webdist` keeps served files only as `.gz` and `.br`: the plain copies (34 MB of wasm) only
+  served clients that take neither encoding, which the server now answers by unzipping the `.gz`. Together these
+  cut the image from about 65 MB to 25 MB per platform. The build context is an allowlist (`deploy/Dockerfile.dockerignore`), so `.env` and local
   files never reach it. Compose runs the `eaglestelle/orbitrix-server` image (user's Docker Hub name) and never
   builds. The image is multi-platform, linux/amd64 and linux/arm64 (user request), built with buildx: the web build
   comes before the target platform's arguments, so it runs once for both. CI builds both on a docker-container builder
-  without loading them, since loading a multi-platform image takes the containerd image store. The image carries OCI labels (title, description, author, repo, docs, base image, and the commit and build
+  without loading them, since loading a multi-platform image takes the containerd image store. The image carries OCI labels (title, description, author, repo, docs, and the commit and build
   time that `go tool mage image` passes), set last in the Dockerfile so they never invalidate a cached layer. There is
   no license label or version label: the repo has no license file and no tags yet.
 - **Downloads stay out of the image** (user decision): compose mounts `deploy/downloads` read-only, so publishing a

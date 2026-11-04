@@ -139,7 +139,7 @@ go tool mage <target>      # go tool mage -l lists the targets
 | `desktop` | `dist/orbitrix.exe`, the Windows client, from any OS |
 | `mac` | `dist/orbitrix-mac.zip`: `Orbitrix.app` with one universal binary (Apple silicon + Intel), from any OS |
 | `linux` | `dist/orbitrix-linux.zip`: the amd64 Linux client, from any OS. It needs X11 or XWayland, OpenGL and ALSA or PulseAudio at run time; Copy uses `wl-copy` or `xclip` when one is installed |
-| `web` | `dist/web/`: `game.wasm`, `wasm_exec.js`, the wordmark font and `favicon.svg` (the logo) under content-hashed names, `index.html` (the game's loader) and `landing.html`; each served file with `.gz` and `.br` copies (`cmd/webdist`) |
+| `web` | `dist/web/`: `game.wasm`, `wasm_exec.js`, the wordmark font and `favicon.svg` (the logo) under content-hashed names, `index.html` (the game's loader) and `landing.html`; each served file kept only as `.gz` and `.br` copies (`cmd/webdist`; the server unzips the `.gz` for a client that takes neither) |
 | `android` | `dist/orbitrix.aar` (the Go game, arm64 + x86_64) and `dist/orbitrix.apk` (installable) |
 | `image` | the `eaglestelle/orbitrix-server` Docker image for linux/amd64 and linux/arm64, compiled inside Docker by `deploy/Dockerfile` (the web build plus a Linux server), labelled with its commit and build time |
 | `all` | every target above, in that order |
@@ -167,7 +167,7 @@ precompressed copies to browsers that accept them. It reads its settings from th
 folder on the landing page, each once it is there.
 
 The `eaglestelle/orbitrix-server` image is built in two stages: a Go stage compiles the web build and the server, and
-the final distroless image holds only those. `go tool mage image` builds it with buildx for linux/amd64 and
+the final image, from scratch, holds only those and the CA roots (about 25 MB per platform). `go tool mage image` builds it with buildx for linux/amd64 and
 linux/arm64 at once, natively on the build machine, and loads both into Docker, which takes Docker's containerd image
 store (Docker Desktop's default). On a machine without Go: `docker buildx build --platform linux/amd64,linux/arm64
 -t eaglestelle/orbitrix-server -f deploy/Dockerfile --load .` from the repo root, which leaves the commit and

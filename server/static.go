@@ -1,6 +1,7 @@
 package server
 
 import (
+	"compress/gzip"
 	"html/template"
 	"io"
 	"io/fs"
@@ -14,6 +15,9 @@ import (
 
 // encodings are the precompressed siblings cmd/webdist writes, best first.
 var encodings = [...]struct{ token, ext string }{{"br", ".br"}, {"gzip", ".gz"}}
+
+// Go's built-in table lacks .ttf, and the scratch image has no /etc/mime.types to fill it in.
+func init() { _ = mime.AddExtensionType(".ttf", "font/ttf") }
 
 // downloads are the files /download/ offers, by name, and the landing page field that shows each.
 var downloads = map[string]string{"orbitrix.exe": "Windows", "orbitrix.apk": "Android",
@@ -103,7 +107,33 @@ func serve(w http.ResponseWriter, r *http.Request, fsys fs.FS, name string) {
 			return
 		}
 	}
-	http.ServeFileFS(w, r, fsys, name)
+	if !serveDecoded(w, fsys, name) {
+		http.ServeFileFS(w, r, fsys, name)
+	}
+}
+
+// serveDecoded unzips name's .gz sibling for a client that takes neither encoding, since cmd/webdist keeps no
+// uncompressed copy. Browsers and Cloudflare all take gzip, so this streams, with no Range or Content-Length.
+func serveDecoded(w http.ResponseWriter, fsys fs.FS, name string) bool {
+	f, err := fsys.Open(name + ".gz")
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	z, err := gzip.NewReader(f)
+	if err != nil {
+		return false
+	}
+	w.Header().Set("Content-Type", contentType(name))
+	_, _ = io.Copy(w, z) // only fails if the client went away
+	return true
+}
+
+func contentType(name string) string {
+	if ctype := mime.TypeByExtension(path.Ext(name)); ctype != "" {
+		return ctype
+	}
+	return "application/octet-stream"
 }
 
 // serveEncoded sends name's precompressed sibling, if there is one.
@@ -118,11 +148,7 @@ func serveEncoded(w http.ResponseWriter, r *http.Request, fsys fs.FS, name, toke
 	if err != nil || !seekable || st.IsDir() {
 		return false
 	}
-	ctype := mime.TypeByExtension(path.Ext(name))
-	if ctype == "" {
-		ctype = "application/octet-stream"
-	}
-	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Content-Type", contentType(name))
 	w.Header().Set("Content-Encoding", token)
 	http.ServeContent(w, r, name, st.ModTime(), rs)
 	return true

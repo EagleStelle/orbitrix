@@ -1,7 +1,7 @@
 // Command webdist finishes a web build in a folder (default dist/web). It writes game.wasm's size into index.html for
 // the loading dots, draws the logo as favicon.svg, renames the build's files after their content hash so the edge can cache them for good, points
-// the pages at the new names, and saves a gzip and a brotli copy of each served file beside it, so a server sends
-// them as they are. landing.html stays uncompressed: the server renders it as a template.
+// the pages at the new names, and replaces each served file with a gzip and a brotli copy, so a server sends them as
+// they are. landing.html stays uncompressed: the server renders it as a template.
 package main
 
 import (
@@ -97,6 +97,10 @@ func run(dir string) error {
 			if err := compress(filepath.Join(dir, name+ext), data, enc); err != nil {
 				return err
 			}
+		}
+		// The server unzips the .gz for the rare client that takes neither, so the plain copy is dead weight.
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			return err
 		}
 	}
 	return nil

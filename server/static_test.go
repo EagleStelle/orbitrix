@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"compress/gzip"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,13 +12,21 @@ import (
 	"testing/fstest"
 )
 
+// build is laid out like cmd/webdist's output: served files only as .gz and .br.
 var build = fstest.MapFS{
-	"index.html":            {Data: []byte("game page")},
+	"index.html.gz":         {Data: gz("game page")},
 	"index.html.br":         {Data: []byte("game page, brotli")},
 	"landing.html":          {Data: []byte(`<p>{{if .Windows}}exe{{end}}{{if .Android}}apk{{end}}</p>`)},
-	"game.0123abcd.wasm":    {Data: []byte("plain")},
-	"game.0123abcd.wasm.gz": {Data: []byte("gzipped")},
+	"game.0123abcd.wasm.gz": {Data: gz("plain")},
 	"game.0123abcd.wasm.br": {Data: []byte("brotli")},
+}
+
+func gz(s string) []byte {
+	var b bytes.Buffer
+	z := gzip.NewWriter(&b)
+	_, _ = z.Write([]byte(s))
+	_ = z.Close()
+	return b.Bytes()
 }
 
 func site(t *testing.T, downloads string) http.Handler {
@@ -44,8 +54,8 @@ func TestStatic(t *testing.T) {
 		path, accept, body, encoding string
 	}{
 		{"/game.0123abcd.wasm", "gzip, deflate, br", "brotli", "br"},
-		{"/game.0123abcd.wasm", "gzip", "gzipped", "gzip"},
-		{"/game.0123abcd.wasm", "br;q=0, gzip;q=0.5", "gzipped", "gzip"},
+		{"/game.0123abcd.wasm", "gzip", string(gz("plain")), "gzip"},
+		{"/game.0123abcd.wasm", "br;q=0, gzip;q=0.5", string(gz("plain")), "gzip"},
 		{"/game.0123abcd.wasm", "br;q=0.0, gzip;q=0", "plain", ""},
 		{"/game.0123abcd.wasm", "", "plain", ""},
 	} {
@@ -58,6 +68,10 @@ func TestStatic(t *testing.T) {
 			!strings.Contains(rec.Header().Get("Cache-Control"), "immutable") {
 			t.Errorf("%s with %q: headers %v", tc.path, tc.accept, rec.Header())
 		}
+	}
+	// The scratch image has no /etc/mime.types, so the font's type must come from the server itself.
+	if got := contentType("Unbounded.0123abcd.ttf"); got != "font/ttf" {
+		t.Errorf("ttf Content-Type %q, want font/ttf", got)
 	}
 }
 
