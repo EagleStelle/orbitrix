@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -32,7 +36,7 @@ jobs:
           go tool mage image
 
   # The runner comes with the Android SDK, an NDK and JDK 17; Gradle fetches the platform it lacks. No release key
-  # here, so the APK is debug-signed and not kept: published APKs are built locally with the key.
+  # here, so the APK is debug-signed and not kept: the release workflow builds the published one with the key.
   android:
     runs-on: ubuntu-latest
     steps:

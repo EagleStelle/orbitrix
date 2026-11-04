@@ -25,15 +25,17 @@ USER 65532:65532
 EXPOSE 1212
 ENTRYPOINT ["/orbitrix-server", "-web", "/web", "-downloads", "/downloads"]
 
-# Last, so a new commit or build time only relabels the image. `go tool mage image` passes both; a plain build leaves
-# them empty.
-ARG REVISION CREATED
+# Last, so a new version, commit or build time only relabels the image. `go tool mage image` passes all three; a plain
+# build leaves them empty.
+ARG VERSION REVISION CREATED
 LABEL org.opencontainers.image.title="orbitrix-server" \
       org.opencontainers.image.description="Orbitrix website and signaling server: the landing page, the web game, room codes, join approval and TURN credentials. No game traffic passes through it." \
       org.opencontainers.image.authors="EagleStelle (https://github.com/EagleStelle)" \
       org.opencontainers.image.vendor="EagleStelle" \
       org.opencontainers.image.url="https://github.com/EagleStelle/orbitrix" \
       org.opencontainers.image.source="https://github.com/EagleStelle/orbitrix" \
-      org.opencontainers.image.documentation="https://github.com/EagleStelle/orbitrix/blob/main/PRODUCT.md" \
+      org.opencontainers.image.documentation="https://github.com/EagleStelle/orbitrix/blob/main/docs/deployment.md" \
+      org.opencontainers.image.licenses="GPL-3.0-only" \
+      org.opencontainers.image.version="$VERSION" \
       org.opencontainers.image.revision="$REVISION" \
       org.opencontainers.image.created="$CREATED"

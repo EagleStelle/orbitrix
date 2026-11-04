@@ -1,0 +1,38 @@
+version: 2
+
+# Weekly. Minor and patch updates come as one pull request per ecosystem; majors come one by one. CI runs on each
+# pull request, and they are merged by hand.
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        update-types: [minor, patch]
+
+  # The Go image deploy/Dockerfile builds the web game and the server in.
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule:
+      interval: weekly
+    groups:
+      docker:
+        update-types: [minor, patch]
+
+  # The Android Gradle plugin and the Gradle wrapper.
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly
+    groups:
+      gradle:
+        update-types: [minor, patch]

@@ -1,0 +1,112 @@
+name: release
+
+# A version tag (v1.0.0) publishes a GitHub release with the four native clients, and pushes the server image to
+# Docker Hub. Repository settings it needs:
+#   secrets   ORBITRIX_KEYSTORE_BASE64 (the PKCS12 release keystore, base64), ORBITRIX_KEYSTORE_PASSWORD,
+#             DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (a Docker Hub access token with write access)
+#   variable  ORBITRIX_SERVER (https://your.site), the server the native clients play online through
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Build and publish the clients
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the previous tag, for the changelog link
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Check the tag matches the version
+        run: |
+          mage=$(sed -n 's/^const version = "\(.*\)"/\1/p' magefile.go)
+          android=$(sed -n 's/.*versionName = "\(.*\)"/\1/p' android/build.gradle.kts)
+          if [ "v$mage" != "$GITHUB_REF_NAME" ] || [ "v$android" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME must match version ($mage) in magefile.go and versionName ($android) in android/build.gradle.kts"
+            exit 1
+          fi
+
+      # A debug-signed APK can never be updated by a release-signed one, and a client without a server offers no
+      # Online, so a missing secret or variable stops the release here.
+      - name: Set up release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ORBITRIX_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ORBITRIX_KEYSTORE_PASSWORD }}
+          SERVER: ${{ vars.ORBITRIX_SERVER }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::Set the ORBITRIX_KEYSTORE_BASE64 and ORBITRIX_KEYSTORE_PASSWORD repository secrets"
+            exit 1
+          fi
+          if [ -z "$SERVER" ]; then
+            echo "::error::Set the ORBITRIX_SERVER repository variable"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/orbitrix-release.p12"
+          echo "ORBITRIX_KEYSTORE=$RUNNER_TEMP/orbitrix-release.p12" >> "$GITHUB_ENV"
+
+      - name: Build the clients (windows, macOS, linux, android)
+        env:
+          ORBITRIX_KEYSTORE_PASSWORD: ${{ secrets.ORBITRIX_KEYSTORE_PASSWORD }}
+          ORBITRIX_SERVER: ${{ vars.ORBITRIX_SERVER }}
+        run: |
+          go tool mage desktop mac linux android
+          cd dist && sha256sum orbitrix.exe orbitrix.apk orbitrix-mac.zip orbitrix-linux.zip > SHA256SUMS.txt
+
+      # The notes are the Full Changelog link alone: since the previous tag, or every commit for the first release.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          repo="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null); then
+            link="$repo/compare/$previous...$GITHUB_REF_NAME"
+          else
+            link="$repo/commits/$GITHUB_REF_NAME"
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/orbitrix.exe dist/orbitrix.apk dist/orbitrix-mac.zip \
+            dist/orbitrix-linux.zip dist/SHA256SUMS.txt \
+            --verify-tag --title "Orbitrix $GITHUB_REF_NAME" --notes "**Full Changelog**: $link"
+
+  image:
+    name: Push the server image
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Log in to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::error::Set the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets"
+            exit 1
+          fi
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+
+      # Tags eaglestelle/orbitrix-server with the version and latest. A docker-container builder pushes both
+      # platforms whatever image store the runner's Docker uses.
+      - name: Build and push (amd64 + arm64)
+        run: |
+          docker buildx create --use
+          go tool mage push

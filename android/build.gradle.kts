@@ -12,8 +12,9 @@ android {
         applicationId = "com.orbitrix"
         minSdk = 24
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.4.0"
+        // Phones only update to a higher versionCode: raise it with every release.
+        versionCode = 2
+        versionName = "1.0.0"
     }
 
     // The release key comes from the environment: ORBITRIX_KEYSTORE, a PKCS12 keystore holding the key "orbitrix",

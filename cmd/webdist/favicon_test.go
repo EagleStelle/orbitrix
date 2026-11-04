@@ -4,9 +4,32 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
+	"flag"
 	"io"
+	"os"
 	"testing"
 )
+
+var update = flag.Bool("update", false, "rewrite docs/logo.svg and docs/logo-dark.svg")
+
+// TestDocsLogos keeps the README's logos equal to the drawn logo. After changing the logo, rewrite them with
+// `go test ./cmd/webdist -run TestDocsLogos -update`.
+func TestDocsLogos(t *testing.T) {
+	for path, want := range map[string][]byte{"../../docs/logo.svg": favicon(), "../../docs/logo-dark.svg": darkLogo()} {
+		if *update {
+			if err := os.WriteFile(path, want, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s differs from the drawn logo: run go test ./cmd/webdist -run TestDocsLogos -update", path)
+		}
+	}
+}
 
 func TestFaviconIsWellFormedSVG(t *testing.T) {
 	d := xml.NewDecoder(bytes.NewReader(favicon()))

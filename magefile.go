@@ -22,6 +22,10 @@ import (
 
 const out = "dist"
 
+// version is the release version, matching versionName in android/build.gradle.kts. The release workflow refuses a
+// tag that differs from either.
+const version = "1.0.0"
+
 // ldflags strips debug info and stamps ORBITRIX_SERVER (https://your.site), the server native clients play online
 // through; without it they offer no Online. The web build ignores the stamp and uses the server it was loaded from.
 var ldflags = "-s -w -X orbitrix/client/platform.origin=" + os.Getenv("ORBITRIX_SERVER")
@@ -62,7 +66,8 @@ const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
 	<key>CFBundleIdentifier</key><string>com.orbitrix</string>
 	<key>CFBundleName</key><string>Orbitrix</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
-	<key>CFBundleShortVersionString</key><string>0.4.0</string>
+	<key>CFBundleShortVersionString</key><string>` + version + `</string>
+	<key>CFBundleVersion</key><string>` + version + `</string>
 	<key>NSHighResolutionCapable</key><true/>
 	<key>NSLocalNetworkUsageDescription</key><string>Orbitrix finds and hosts Same Wi-Fi rooms.</string>
 </dict>
@@ -213,6 +218,10 @@ func Android() error {
 		}
 		os.Setenv("ANDROID_HOME", sdk)
 	}
+	// gomobile writes the .aar without creating its folder, which a fresh checkout lacks.
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		return err
+	}
 	// -checklinkname=0: pion's Android interface lookup (github.com/wlynxg/anet) links to a net internal that Go's
 	// linker otherwise refuses.
 	if err := sh.RunV("go", "tool", "ebitenmobile", "bind", "-target", "android/arm64,android/amd64", "-androidapi", "24",
@@ -231,19 +240,31 @@ func Android() error {
 }
 
 // Image builds the eaglestelle/orbitrix-server Docker image (website and signaling server) from deploy/Dockerfile for
-// linux/amd64 and linux/arm64, labelled with the commit it was built from and when, and loads it into Docker. Needs
-// Docker with its containerd image store (Docker Desktop's default) and git.
+// linux/amd64 and linux/arm64, tagged latest and with the version, labelled with the commit it was built from and
+// when, and loads it into Docker. Needs Docker with its containerd image store (Docker Desktop's default) and git.
 func Image() error {
+	// CI only checks that both platforms build: loading them takes the containerd image store, which a runner may lack.
+	if os.Getenv("CI") != "" {
+		return image()
+	}
+	return image("--load")
+}
+
+// Push builds the image as Image does and pushes both platforms to Docker Hub. Needs `docker login` first and a
+// buildx builder that pushes (the docker-container driver, or Docker's containerd image store).
+func Push() error {
+	return image("--push")
+}
+
+func image(output ...string) error {
 	rev, err := sh.Output("git", "rev-parse", "HEAD")
 	if err != nil {
 		return err
 	}
-	args := []string{"buildx", "build", "--platform", "linux/amd64,linux/arm64", "-t", "eaglestelle/orbitrix-server",
-		"-f", "deploy/Dockerfile", "--build-arg", "REVISION=" + rev,
-		"--build-arg", "CREATED=" + time.Now().UTC().Format(time.RFC3339)}
-	// CI only checks that both platforms build: loading them takes the containerd image store, which a runner may lack.
-	if os.Getenv("CI") == "" {
-		args = append(args, "--load")
-	}
+	const name = "eaglestelle/orbitrix-server"
+	args := append([]string{"buildx", "build", "--platform", "linux/amd64,linux/arm64",
+		"-t", name + ":latest", "-t", name + ":" + version, "-f", "deploy/Dockerfile",
+		"--build-arg", "VERSION=" + version, "--build-arg", "REVISION=" + rev,
+		"--build-arg", "CREATED=" + time.Now().UTC().Format(time.RFC3339)}, output...)
 	return sh.RunV("docker", append(args, ".")...)
 }
