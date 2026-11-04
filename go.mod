@@ -8,7 +8,8 @@ require (
 	github.com/hajimehoshi/ebiten/v2 v2.10.5
 	github.com/magefile/mage v1.17.2
 	github.com/pion/webrtc/v4 v4.2.26
-	golang.org/x/time v0.14.0
+	github.com/wlynxg/anet v0.0.5
+	golang.org/x/time v0.16.0
 )
 
 require (
@@ -35,7 +36,6 @@ require (
 	github.com/pion/transport/v5 v5.1.4 // indirect
 	github.com/pion/turn/v5 v5.1.3 // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
-	github.com/wlynxg/anet v0.0.5 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/image v0.47.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
