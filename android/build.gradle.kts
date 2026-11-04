@@ -1,7 +1,7 @@
 // Wraps the game, bound from Go by `ebitenmobile bind` into ../dist/orbitrix.aar, in an installable APK.
 // Build it with `go tool mage android`, which binds the AAR first.
 plugins {
-    id("com.android.application") version "9.4.1"
+    id("com.android.application") version "9.5.0"
 }
 
 android {
