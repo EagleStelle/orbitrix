@@ -1,6 +1,7 @@
 # The website and signaling server, from the orbitrix-server image deploy/Dockerfile builds. Values come
 # from deploy/.env (start from .env.example). The port is published on 127.0.0.1 only: put your own reverse proxy in
-# front of it to make it public.
+# front of it to make it public, taking connections from Cloudflare's IP ranges only (the server believes the
+# CF-Connecting-IP header the proxy passes on).
 #
 #   docker compose up -d                                          # on the server
 #   docker compose -f docker-compose.yml -f compose.dev.yml up    # locally, at http://localhost:1212

@@ -325,6 +325,21 @@ func TestRevocation(t *testing.T) {
 	expect(t, j, "error")
 }
 
+// TestPeerIDsAcrossRestarts: a host keeps its joiners' peer ids, and revokes by them, after the server restarts and it
+// opens a new room. The new server must never hand out one of those ids again.
+func TestPeerIDsAcrossRestarts(t *testing.T) {
+	seen := map[string]bool{}
+	for range 2 { // a restarted server is a new Server
+		_, url := setup(t, testPassword)
+		h, rm := host(t, url, 2)
+		_, p := joinRoom(t, url, h, rm.Code)
+		if seen[p] {
+			t.Fatalf("peer id %q handed out again after a restart", p)
+		}
+		seen[p] = true
+	}
+}
+
 func TestReclaim(t *testing.T) {
 	_, url := setup(t, testPassword)
 	h, rm := host(t, url, 2)
@@ -453,6 +468,8 @@ func TestMessageOrder(t *testing.T) {
 		},
 		"no name":              func(ch Msg) []Msg { return []Msg{hello, answer(ch), {T: "join", Code: "AAAAAA"}} },
 		"rejoin without token": func(ch Msg) []Msg { return []Msg{hello, answer(ch), {T: "rejoin", Code: "AAAAAA", Name: "x"}} },
+		// One saved from a quiet moment would skip the work a flood has raised.
+		"another socket's challenge": func(Msg) []Msg { _, other := raw(t, url); return []Msg{hello, answer(other)} },
 	} {
 		c, ch := raw(t, url)
 		if !closes(t, c, msgs(ch)...) {

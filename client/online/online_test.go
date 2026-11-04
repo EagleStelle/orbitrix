@@ -4,12 +4,17 @@ package online
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 
 	"orbitrix/core/ai"
 	"orbitrix/proto"
@@ -79,6 +84,44 @@ func TestHostJoinRejoinClose(t *testing.T) {
 	h.Close()
 	if b := wait[proto.Bye](t, l); b.Reason != proto.ReasonClosed {
 		t.Fatalf("bye %d", b.Reason)
+	}
+}
+
+// TestListSurvivesRedial: the server ends a listing socket after a while, as it ends every socket that never hosts or
+// joins. The list stays up while Rooms dials again, instead of blinking empty.
+func TestListSurvivesRedial(t *testing.T) {
+	var dials atomic.Int32
+	redialled := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		ctx := context.Background()
+		if dials.Add(1) > 1 {
+			close(redialled)
+			c.Read(ctx) // until Rooms closes
+			return
+		}
+		ch, _ := json.Marshal(signal.Msg{T: "challenge", V: signal.Version, C: "x"})
+		c.Write(ctx, websocket.MessageText, ch)
+		for range 3 { // hello, the proof of work, list
+			c.Read(ctx)
+		}
+		rooms, _ := json.Marshal(signal.Msg{T: "rooms", Rooms: []signal.Listed{{Code: "ABC234", Cols: 5, Rows: 5, Open: 1}}})
+		c.Write(ctx, websocket.MessageText, rooms) // then the socket ends
+	}))
+	defer srv.Close()
+	rooms := ListRooms("ws" + strings.TrimPrefix(srv.URL, "http"))
+	defer rooms.Close()
+	select {
+	case <-redialled:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Rooms never dialled again")
+	}
+	if l := rooms.Get(nil); len(l) != 1 {
+		t.Fatalf("listed %v while dialling again", l)
 	}
 }
 

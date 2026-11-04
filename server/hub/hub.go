@@ -174,6 +174,9 @@ func (r *Room) read(p *peer) {
 		b, err := p.conn.Receive()
 		r.mu.Lock()
 		switch {
+		case p.closed:
+			// Let go meanwhile (a kick, a removed seat): what it sent before then still arrives, but its seat is gone or
+			// someone else's now.
 		case err != nil:
 			r.drop(p)
 		case len(b) > MaxMessage:

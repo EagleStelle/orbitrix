@@ -17,7 +17,6 @@ import (
 	"net/netip"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -94,11 +93,10 @@ type Server struct {
 
 	failDelay, hostGrace time.Duration
 
-	mu       sync.Mutex
-	rooms    map[string]*room
-	sockets  int
-	perIP    map[string]int
-	nextPeer uint64
+	mu      sync.Mutex
+	rooms   map[string]*room
+	sockets int
+	perIP   map[string]int
 }
 
 type state int
@@ -112,7 +110,7 @@ const (
 	stApproved              // an approved joiner exchanging descriptions with the host
 )
 
-// sock is one WebSocket. Everything but c and lim is guarded by Server.mu.
+// sock is one WebSocket. Everything but c, lim and challenge is guarded by Server.mu.
 type sock struct {
 	s      *Server
 	c      *websocket.Conn
@@ -126,6 +124,9 @@ type sock struct {
 	id     string // joiners: the peer id the host knows them by
 	name   string
 	token  string
+
+	// challenge is the proof of work this socket must answer: no other socket's counts, even an unanswered one.
+	challenge string
 }
 
 type room struct {
@@ -197,8 +198,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	bits := s.load.add(ip, now)
+	k.challenge = s.pow.Issue(bits, challengeTTL, now)
 	s.mu.Lock()
-	k.send(Msg{T: "challenge", V: Version, C: s.pow.Issue(bits, challengeTTL, now), Bits: bits, Open: s.open})
+	k.send(Msg{T: "challenge", V: Version, C: k.challenge, Bits: bits, Open: s.open})
 	s.mu.Unlock()
 	k.run(now)
 	s.drop(k)
@@ -297,7 +299,7 @@ func (k *sock) handle(m Msg) bool {
 		k.set(stPoW)
 		return true
 	case stPoW:
-		if m.T != "pow" || k.s.pow.Check(m.C, m.N, time.Now()) != nil {
+		if m.T != "pow" || m.C != k.challenge || k.s.pow.Check(m.C, m.N, time.Now()) != nil {
 			return false
 		}
 		k.set(stAuth)
@@ -431,8 +433,8 @@ func (k *sock) join(m Msg) bool {
 	rm := s.rooms[normCode(m.Code)]
 	ok := rm != nil && rm.pending() < maxPending
 	if ok {
-		s.nextPeer++
-		k.id, k.name, k.token = "p"+strconv.FormatUint(s.nextPeer, 36), m.Name, m.Token
+		// Random, not counted: a host keeps its joiners' ids across a server restart, and revokes by them.
+		k.id, k.name, k.token = "p"+random(9), m.Name, m.Token
 		k.room, k.state = rm, stPending
 		rm.joiners[k.id] = k
 		k.send(Msg{T: "wait"})

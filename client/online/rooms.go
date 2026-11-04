@@ -12,7 +12,8 @@ import (
 const listEvery = 3 * time.Second
 
 // Rooms keeps the server's list of public rooms, asked for every few seconds on one signaling socket while the Online
-// page is open. A dropped socket is dialled again with backoff; meanwhile the list is empty.
+// page is open. A dropped socket is dialled again with backoff, and the list stays up until a dial fails: the server
+// ends every socket that hasn't hosted or joined within 30 s, so a page left open redials twice a minute.
 type Rooms struct {
 	mu     sync.Mutex
 	rooms  []signal.Listed
@@ -34,8 +35,9 @@ func (r *Rooms) run(ctx context.Context, url string) {
 			wait = backoffMin
 			r.poll(ctx, k)
 			k.Close()
+		} else {
+			r.set(nil)
 		}
-		r.set(nil)
 		select {
 		case <-ctx.Done():
 			return

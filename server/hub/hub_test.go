@@ -365,6 +365,45 @@ func TestRemoveSeat(t *testing.T) {
 	}
 }
 
+// lateConn is a connection whose messages still arrive after the hub lets it go, as a data channel's queued ones do.
+type lateConn struct{ in, out chan []byte }
+
+func (c lateConn) Send(m []byte) error { c.out <- m; return nil }
+func (c lateConn) Close() error        { return nil }
+func (c lateConn) Receive() ([]byte, error) {
+	if b, ok := <-c.in; ok {
+		return b, nil
+	}
+	return nil, errors.New("closed")
+}
+
+// TestLateMessage: a message sent just before the host removed its sender's seat lands after the removal. It must not
+// act on that seat, which is gone or someone else's now.
+func TestLateMessage(t *testing.T) {
+	room := newRoom(t, hub.Config{Seats: humans(3)})
+	a := join(t, room, "", proto.Token{})
+	join(t, room, "", proto.Token{})
+	late := lateConn{in: make(chan []byte, 1), out: make(chan []byte, 64)}
+	t.Cleanup(func() { close(late.in) })
+	room.Add(late)
+	late.in <- proto.Append(nil, proto.Hello{Code: "ABC234"})
+	for seated := false; !seated; {
+		select {
+		case b := <-late.out:
+			m, _ := proto.Decode(b)
+			_, seated = m.(proto.Welcome)
+		case <-time.After(5 * time.Second):
+			t.Fatal("no Welcome")
+		}
+	}
+	if err := room.RemoveSeat(2); err != nil {
+		t.Fatal(err)
+	}
+	late.in <- proto.Append(nil, proto.Ready{On: true}) // for seat 2, which no longer exists
+	a.send(proto.Ready{On: true})                       // the room still answers
+	a.lobbyWhere(func(l proto.Lobby) bool { return len(l.Seats) == 2 && l.Seats[0].Ready })
+}
+
 // TestSwapSeats trades a player's seat with a bot's in a lobby: the player is told their new seat and the bot moves.
 // Two players can't trade.
 func TestSwapSeats(t *testing.T) {

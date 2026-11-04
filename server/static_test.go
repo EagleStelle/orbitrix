@@ -86,8 +86,12 @@ func TestPages(t *testing.T) {
 		if rec.Code != tc.status || tc.status == 200 && rec.Body.String() != tc.body {
 			t.Errorf("%s: %d %q, want %d %q", tc.path, rec.Code, rec.Body.String(), tc.status, tc.body)
 		}
-		if tc.status == 200 && tc.path != "/healthz" && rec.Header().Get("Cache-Control") != "no-cache" {
-			t.Errorf("%s: Cache-Control %q", tc.path, rec.Header().Get("Cache-Control"))
+		want := "no-cache"
+		if strings.HasPrefix(tc.path, "/download/") {
+			want = "public, max-age=300" // the edge serves downloads, which a no-cache would stop
+		}
+		if tc.status == 200 && tc.path != "/healthz" && rec.Header().Get("Cache-Control") != want {
+			t.Errorf("%s: Cache-Control %q, want %q", tc.path, rec.Header().Get("Cache-Control"), want)
 		}
 	}
 }

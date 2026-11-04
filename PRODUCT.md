@@ -168,8 +168,10 @@ final distroless image holds only those. Build it with `go tool mage image`, or 
 server). An image built on another machine goes to the server with
 `docker save orbitrix-server | ssh <server> docker load`. On the server, copy `deploy/.env.example` to
 `deploy/.env`, fill it in and run `docker compose up -d` in `deploy/`. The server listens on `127.0.0.1:1212` only;
-put your own reverse proxy in front of it to make it public. To try the image locally with hosting open (no
-password), at `http://localhost:1212`:
+put your own reverse proxy in front of it to make it public. The proxy must accept connections only from
+[Cloudflare's IP ranges](https://www.cloudflare.com/ips/) and pass `CF-Connecting-IP` on. The server believes that
+header from any private peer, so a request that reached the proxy around Cloudflare could name its own address and
+slip every per-IP limit. To try the image locally with hosting open (no password), at `http://localhost:1212`:
 
 ```sh
 cd deploy && docker compose -f docker-compose.yml -f compose.dev.yml up

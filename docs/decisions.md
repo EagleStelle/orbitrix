@@ -230,19 +230,24 @@ New, not from the prototype; they use real search or learning instead of more he
   rejoin carries the hub token and passes a lock. Joins that arrive while the host reconnects wait and are asked
   about again after `host.reclaim`. An approved joiner's credential outlives its signaling socket, because it carries
   the game until the host revokes it.
-- **Proof of work:** HMAC-signed challenges with a bounded cache (100,000) of answered ones. Difficulty follows
+- **Proof of work:** HMAC-signed challenges with a bounded cache (100,000) of answered ones. A socket must answer the
+  challenge it was given, so challenges saved from a quiet moment can't skip the work a flood raises. Difficulty follows
   anonymous connections over a sliding 10 s window: free up to 200 globally and 20 per IP, then 8 bits, plus 2 bits
   each time the rate doubles, capped at 18. 18 bits take about 37 ms on the development desktop; the web build on a
   phone is estimated at about 2 s and not yet measured.
 - **Client IP:** `CF-Connecting-IP` is believed only from a private or loopback peer: the self-hoster's proxy, since
-  the container publishes its port on 127.0.0.1 only. IPv6 callers are counted by their /64.
+  the container publishes its port on 127.0.0.1 only. IPv6 callers are counted by their /64. The proxy must take
+  connections only from Cloudflare's IP ranges, or a request sent around Cloudflare names its own address.
+- **Peer ids are random**, not counted: a host keeps its joiners' ids across a server restart and revokes TURN
+  credentials by them, so a restarted server's counter would hand an old id to a new joiner and revoke theirs.
 - **Where "never blocked" ends:** the per-IP socket cap (100). The flood test keeps its bots under it; a flood that
   fills it sheds the honest socket from that IP too, as the edge rule does.
 - **Website:** `/` is the landing page, mirroring Home in HTML (user choice). Its wordmark and PLAY use Unbounded,
   served from the build; its quiet labels use the system font, so Archivo isn't downloaded. `/play` and
   `/join/<code>` serve the game's loader. `cmd/webdist` renames `game.wasm`, `wasm_exec.js` and the font after their
   content hash and the pages refer to them by absolute path, so a LAN host can serve the same build at its root.
-  Hashed files are cached for a year; pages revalidate. Downloads are offered only when the file is in `-downloads`.
+  Hashed files are cached for a year; pages revalidate. Downloads are offered only when the file is in `-downloads`,
+  and cached for 5 minutes, so the edge serves them (a no-cache kept Cloudflare from storing them at all).
 - **Server port 1212** (user request: not 8000, 8080 or another common port, yet easy to remember): "twelve twelve",
   for the twelve seats. Windows reserves nothing there, and it stays clear of the LAN hub's 7777.
 - **Multi-stage Dockerfile** (user decision, replacing an earlier package-only one). A Go stage runs
