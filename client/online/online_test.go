@@ -5,10 +5,13 @@ package online
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -21,6 +24,61 @@ import (
 	"orbitrix/server/hub"
 	"orbitrix/server/signal"
 )
+
+// Approval starts a bounded connection attempt; waiting for the host's decision remains separate.
+func TestJoinProgressAndTimeout(t *testing.T) {
+	for _, approved := range []bool{false, true} {
+		t.Run(fmt.Sprint(approved), func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				c, err := websocket.Accept(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer c.CloseNow()
+				ctx := context.Background()
+				send := func(m signal.Msg) {
+					b, _ := json.Marshal(m)
+					c.Write(ctx, websocket.MessageText, b)
+				}
+				send(signal.Msg{T: "challenge", V: signal.Version, C: "test"})
+				for range 3 { // hello, proof of work, join
+					if _, _, err := c.Read(ctx); err != nil {
+						return
+					}
+				}
+				send(signal.Msg{T: "wait"})
+				if approved {
+					send(signal.Msg{T: "approved", ICE: json.RawMessage(`[]`)})
+				}
+				c.Read(ctx) // the host never sends an offer
+			}))
+			defer srv.Close()
+			limit := 200 * time.Millisecond
+			if approved {
+				limit = connectWait + 5*time.Second
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), limit)
+			defer cancel()
+			var progress []bool
+			_, err := Join(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), "ABC234", "Guest", proto.Token{}, false,
+				func(waiting bool) { progress = append(progress, waiting) })
+			if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrConnect) != approved {
+				t.Fatalf("approval %v: %v", approved, err)
+			}
+			if approved && ctx.Err() != nil {
+				t.Fatal("join waited for the caller's deadline instead of timing out its connection attempt")
+			}
+			want := []bool{true}
+			if approved {
+				want = append(want, false)
+			}
+			if !slices.Equal(progress, want) {
+				t.Fatalf("progress %v, want %v", progress, want)
+			}
+		})
+	}
+}
 
 // TestHostJoinRejoinClose walks an online room through its life: a joiner waits for the host's approval and takes a
 // seat, drops, comes back with its token without being asked about, and hears the room close when the host leaves.
@@ -52,7 +110,7 @@ func TestHostJoinRejoinClose(t *testing.T) {
 
 	joined := make(chan hub.Conn, 1)
 	join := func(token proto.Token) {
-		c, err := Join(ctx, url, h.Code(), "Bo", token, false, func() {})
+		c, err := Join(ctx, url, h.Code(), "Bo", token, false, func(bool) {})
 		if err != nil {
 			t.Error(err)
 		}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ const (
 	inQueue     = 256     // received messages waiting for Receive; a hub reads far faster than peers may send
 	maxBuffered = 1 << 20 // bytes queued for sending before Send gives up on a stalled peer
 	flushWait   = time.Second
+	gatherWait  = 5 * time.Second // leave time to exchange descriptions and open the channel
 )
 
 // Peer is one side of a connection while it is being set up.
@@ -33,8 +35,8 @@ type Peer struct {
 // joiner. iceServers is the list signaling issued, as JSON; relay limits the connection to TURN relays (the Force relay
 // setting, iceTransportPolicy=relay).
 //
-// shortcut: candidates are gathered before the description is sent instead of trickled, which adds the gathering
-// time (well under a second with reachable STUN/TURN) to each join; trickle them if joins feel slow.
+// shortcut: descriptions include the candidates found within gatherWait; trickle candidates if slower networks need
+// addresses that arrive later. An unreachable ICE server must not hold up the working addresses.
 func Offer(ctx context.Context, iceServers json.RawMessage, relay bool) (*Peer, string, error) {
 	p, err := newPeer(iceServers, relay)
 	if err != nil {
@@ -78,6 +80,9 @@ func Answer(ctx context.Context, iceServers json.RawMessage, offer string, relay
 	return p.describe(ctx, answer)
 }
 
+// Close abandons a connection still being set up: an invite nobody answered.
+func (p *Peer) Close() { p.pc.Close() }
+
 // Conn waits for the data channel to open.
 func (p *Peer) Conn(ctx context.Context) (*Conn, error) {
 	select {
@@ -111,18 +116,25 @@ func (p *Peer) fail(err error) (*Peer, string, error) {
 	return nil, "", err
 }
 
-// describe sets d as the local description and returns it once every candidate is in it.
+// describe waits for gathering to finish, or sends the addresses already found after gatherWait.
 func (p *Peer) describe(ctx context.Context, d webrtc.SessionDescription) (*Peer, string, error) {
 	gathered := webrtc.GatheringCompletePromise(p.pc)
 	if err := p.pc.SetLocalDescription(d); err != nil {
 		return p.fail(fmt.Errorf("rtc: local description: %w", err))
 	}
+	timer := time.NewTimer(gatherWait)
+	defer timer.Stop()
 	select {
 	case <-gathered:
-		return p, p.pc.LocalDescription().SDP, nil
+	case <-timer.C:
 	case <-ctx.Done():
 		return p.fail(fmt.Errorf("rtc: gathering: %w", ctx.Err()))
 	}
+	sdp := p.pc.LocalDescription().SDP
+	if !strings.Contains(sdp, "\na=candidate:") {
+		return p.fail(errors.New("rtc: no connection addresses found"))
+	}
+	return p, sdp, nil
 }
 
 func (p *Peer) attach(dc *webrtc.DataChannel) {

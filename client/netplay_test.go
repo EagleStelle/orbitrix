@@ -57,7 +57,7 @@ func TestOnlineRoom(t *testing.T) {
 	r.host.host = h
 	joined := make(chan joinResult, 1)
 	go func() {
-		c, err := online.Join(ctx, url, h.Code(), "Human", proto.Token{}, false, func() {})
+		c, err := online.Join(ctx, url, h.Code(), "Human", proto.Token{}, false, func(bool) {})
 		joined <- joinResult{c: c, err: err}
 	}()
 	r.joined = func() *session {

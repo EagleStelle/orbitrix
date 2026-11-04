@@ -37,13 +37,15 @@ type joinScene struct {
 		heard  []lan.Room
 		listed []signal.Listed
 	}
-	rows    []joinRow
-	joining string      // the room being joined (its address or code), or ""
-	waiting atomic.Bool // the join request is in front of the host
-	status  string      // why the last try failed, or ""
-	cancel  context.CancelFunc
-	online  chan joinResult
-	local   chan lanResult
+	rows        []joinRow
+	joining     string      // the room being joined (its address or code), or ""
+	waiting     atomic.Bool // the join request is in front of the host
+	status      string      // why the last try failed, or ""
+	statusLines []string
+	lstatus     string
+	cancel      context.CancelFunc
+	online      chan joinResult
+	local       chan lanResult
 
 	loff               float64
 	lrows              int
@@ -163,10 +165,11 @@ func boardName(cols, rows int) string {
 }
 
 func (s *joinScene) layout(a *app) {
-	if !s.frame(a, false) && s.view.offset == s.loff && len(s.rows) == s.lrows {
+	if !s.frame(a, false) && s.view.offset == s.loff && len(s.rows) == s.lrows && s.status == s.lstatus {
 		return
 	}
 	s.lrows = len(s.rows)
+	s.lstatus = s.status
 	u, bp := a.u, s.bp
 	v := s.view.viewport
 	w := min(v.w, 640*u)
@@ -174,9 +177,14 @@ func (s *joinScene) layout(a *app) {
 	pitch := (compactButtonTarget + 8) * u
 	slot := min(56*u, (w-2*bp-(proto.CodeLen-1)*8*u)/proto.CodeLen)
 	listH := float64(max(1, len(s.rows))) * pitch
+	statusH := 44 * u
+	if s.status != "" {
+		s.statusLines = wrap(s.status, a.f.label, w-2*bp)
+		statusH = max(statusH, float64(len(s.statusLines))*24*u+16*u)
+	}
 	hostH := bp + 32*u + 52*u + bp
 	// Two groups: the listed rooms under their label, a hairline, then Join by code.
-	joinH := bp + 32*u + 28*u + listH + 4*u + 20*u + 28*u + slot + 44*u + 52*u + bp
+	joinH := bp + 32*u + 28*u + listH + 4*u + 20*u + 28*u + slot + statusH + 52*u + bp
 	y := s.centred(hostH + s.gap + joinH)
 	s.loff = s.view.offset
 	s.hostB = rect{x, y, w, hostH}
@@ -200,7 +208,7 @@ func (s *joinScene) layout(a *app) {
 	s.code.caret = image.Rect(int(s.slotRow.x), int(s.slotRow.y), int(s.slotRow.right()), int(s.slotRow.bottom()))
 	s.slotFace = newFace(srcDisplay, slot*0.5, 700)
 	s.statusY = s.slotRow.bottom() + 22*u
-	s.join = rect{x + bp, s.slotRow.bottom() + 44*u, w - 2*bp, 52 * u}
+	s.join = rect{x + bp, s.slotRow.bottom() + statusH, w - 2*bp, 52 * u}
 }
 
 func (s *joinScene) update(a *app) error {
@@ -306,7 +314,7 @@ func (s *joinScene) start(a *app, addr, code string, typed bool) {
 	}
 	relay, url := a.set.Relay, signalURL()
 	go func() {
-		c, err := online.Join(ctx, url, code, name, token, relay, func() { s.waiting.Store(true) })
+		c, err := online.Join(ctx, url, code, name, token, relay, s.waiting.Store)
 		cancel()
 		s.online <- joinResult{c: c, err: err, code: code, token: token}
 	}()
@@ -356,11 +364,13 @@ func (s *joinScene) joinedOnline(a *app, r joinResult) {
 	switch {
 	case errors.Is(r.err, context.Canceled):
 	case errors.Is(r.err, online.ErrRefused):
-		s.status = "That code didn't work"
+		s.status = "Couldn't join. Check the code or ask the host."
 	case errors.Is(r.err, signal.ErrVersion):
 		s.status = byeWhy(proto.ReasonVersion)
+	case errors.Is(r.err, online.ErrConnect):
+		s.status = "Couldn't connect to the host. Try again or use another network."
 	case r.err != nil:
-		s.status = "Can't reach the server"
+		s.status = "Can't reach online rooms. Check your internet connection and try again."
 	default:
 		n := newSession(online.NewLink(r.c))
 		n.code = r.code
@@ -419,15 +429,15 @@ func (s *joinScene) draw(dst *ebiten.Image, a *app) {
 	code := s.code.shown
 	drawCodeSlots(b, a, s.slots[:], s.slotFace, code, s.code.focused)
 	if s.joining != "" {
-		status := "Connecting"
+		status := "Connecting to the host"
 		if s.waiting.Load() {
 			status = "Waiting for the host"
 		}
 		drawText(b, status, f.label, s.joinB.cx(), s.statusY, text.AlignCenter, sc.dim)
 	} else if s.status != "" {
-		const status = "Failed"
-		w := chipWidth(a, status, chipHeight*u)
-		drawChip(b, a, chip{status, chipDanger}, s.joinB.cx()+w/2, s.statusY, chipHeight*u)
+		for i, line := range s.statusLines {
+			drawText(b, line, f.label, s.joinB.cx(), s.statusY+float64(i)*24*u, text.AlignCenter, sc.ink)
+		}
 	}
 	switch {
 	case s.joining != "":

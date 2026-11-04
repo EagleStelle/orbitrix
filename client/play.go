@@ -171,7 +171,7 @@ func (p *playScene) settle() {
 		p.winTitle = p.labels[p.shown] + " wins!"
 		p.results = strconv.Itoa(p.game.Moves) + " moves"
 		if p.biggest >= 2 { // a chain only counts from two waves, as the callout does
-			p.results += "  ·  biggest chain ×" + strconv.Itoa(p.biggest)
+			p.results += ", biggest chain ×" + strconv.Itoa(p.biggest)
 		}
 	}
 }
