@@ -16,11 +16,24 @@ android {
         versionName = "0.4.0"
     }
 
+    // The release key comes from the environment: ORBITRIX_KEYSTORE, a PKCS12 keystore holding the key "orbitrix",
+    // and ORBITRIX_KEYSTORE_PASSWORD. Without them the APK is signed with the debug key (CI, testing), which phones
+    // refuse to update to or from the release-signed one.
+    val keystore = providers.environmentVariable("ORBITRIX_KEYSTORE").orNull
+    signingConfigs {
+        if (keystore != null) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = providers.environmentVariable("ORBITRIX_KEYSTORE_PASSWORD").orNull
+                keyAlias = "orbitrix"
+                keyPassword = storePassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // shortcut: signed with the debug key so friends can install it directly; use a real keystore before any
-            // store release.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 

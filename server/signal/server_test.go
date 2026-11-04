@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -493,6 +494,25 @@ func TestMessageOrder(t *testing.T) {
 	b, _ := raw(t, url)
 	if !closes(t, b, hello, answer(ch)) {
 		t.Error("reused challenge accepted")
+	}
+}
+
+func TestDialOtherVersion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		b, _ := json.Marshal(Msg{T: "challenge", V: Version + 1, C: "x"})
+		_ = c.Write(r.Context(), websocket.MessageText, b)
+		_, _, _ = c.Read(r.Context()) // until the client hangs up
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")); !errors.Is(err, ErrVersion) {
+		t.Fatalf("Dial: %v, want ErrVersion", err)
 	}
 }
 

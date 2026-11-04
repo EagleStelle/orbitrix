@@ -6,6 +6,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -76,8 +77,12 @@ func Web() error {
 }
 
 // Android binds ./mobile into dist/orbitrix.aar (arm64 for phones, x86_64 for emulators and Chromebooks) and wraps it
-// in dist/orbitrix.apk. Needs the Android SDK with an NDK (ANDROID_HOME, or its default folder) and a JDK.
+// in dist/orbitrix.apk, signed with the key in ORBITRIX_KEYSTORE (password ORBITRIX_KEYSTORE_PASSWORD), or with the
+// debug key without one. Needs the Android SDK with an NDK (ANDROID_HOME, or its default folder) and a JDK.
 func Android() error {
+	if os.Getenv("ORBITRIX_KEYSTORE") == "" {
+		fmt.Println("android: ORBITRIX_KEYSTORE is unset, so the APK is signed with the debug key: don't publish it")
+	}
 	if os.Getenv("ANDROID_HOME") == "" {
 		sdk := filepath.Join(os.Getenv("HOME"), "Android", "Sdk")
 		if runtime.GOOS == "windows" {

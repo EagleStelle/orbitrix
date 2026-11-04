@@ -16,6 +16,7 @@ import (
 	"orbitrix/core/ai"
 	"orbitrix/proto"
 	"orbitrix/server/lan"
+	"orbitrix/server/signal"
 )
 
 // accessNames are a room's two kinds of access. A public room is listed (on the network, or on the server's list); a
@@ -495,6 +496,8 @@ func (h *hostRoom) pollOpen(a *app, s *setupScene) bool {
 		return true
 	case errors.Is(o.err, online.ErrBusy):
 		h.note = "Server full"
+	case errors.Is(o.err, signal.ErrVersion):
+		h.note = "Update Orbitrix"
 	case errors.Is(o.err, lan.ErrNoNetwork):
 		h.note = "No local network"
 	case h.lan:

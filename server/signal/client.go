@@ -3,12 +3,16 @@ package signal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/coder/websocket"
 
 	"orbitrix/server/signal/pow"
 )
+
+// ErrVersion means the server speaks another signaling version: this client, or the server, needs updating.
+var ErrVersion = errors.New("signal: other version")
 
 // Client is a game client's signaling connection, already past hello and the proof of work.
 type Client struct {
@@ -28,8 +32,12 @@ func Dial(ctx context.Context, url string) (*Client, error) {
 	c.SetReadLimit(MaxMessage)
 	k := &Client{c: c}
 	ch, err := k.Receive(ctx)
-	if err == nil && (ch.T != "challenge" || ch.V != Version) {
-		err = fmt.Errorf("signal: server speaks version %d", ch.V)
+	switch {
+	case err != nil:
+	case ch.T != "challenge":
+		err = fmt.Errorf("signal: expected challenge, got %q", ch.T)
+	case ch.V != Version:
+		err = fmt.Errorf("%w: server %d, client %d", ErrVersion, ch.V, Version)
 	}
 	if err == nil {
 		err = k.Send(ctx, Msg{T: "hello", V: Version})

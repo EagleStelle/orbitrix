@@ -248,6 +248,10 @@ New, not from the prototype; they use real search or learning instead of more he
   content hash and the pages refer to them by absolute path, so a LAN host can serve the same build at its root.
   Hashed files are cached for a year; pages revalidate. Downloads are offered only when the file is in `-downloads`,
   and cached for 5 minutes, so the edge serves them (a no-cache kept Cloudflare from storing them at all).
+- **Logo and favicon** (user's mockup, redrawn from its measurements): a Vermilion orb, four small orbs on the axes, and
+  in each corner an Ink leaf and crescent whose facing edges are arcs around the centre, with no background (user choice). `cmd/webdist` draws
+  it as `favicon.svg` from its constants (no image file in the repo) and hashes it like the other files. SVG only, with
+  no `.ico` or PNG fallback: every current browser takes an SVG icon.
 - **Server port 1212** (user request: not 8000, 8080 or another common port, yet easy to remember): "twelve twelve",
   for the twelve seats. Windows reserves nothing there, and it stays clear of the LAN hub's 7777.
 - **Multi-stage Dockerfile** (user decision, replacing an earlier package-only one). A Go stage runs
@@ -415,3 +419,29 @@ New, not from the prototype; they use real search or learning instead of more he
   `hub.Room.SwapSeats` refuses two human seats. In an open room the hub moves the players and sends each a Welcome
   with their new seat, as Remove player does (`Room.moved`). Swap position and Remove player are always listed (user
   request), greyed out where they can't act: no seat to trade with, or two players left.
+
+## Deployment and hardening (Phase 8)
+
+- **Deploy guide in `PRODUCT.md`** (no README, per the user): server, `.env`, Cloudflare in front, Cache Rules, the
+  two WAF custom rules, the `/signal` rate limiting rule, the budget alert, publishing the downloads, updating, and a
+  production checklist with one check per abuse or cost guard. Written for a Cloudflare Tunnel (`cloudflared` runs
+  beside compose, never in it) or a proxy that admits only Cloudflare's ranges.
+- **WAF without regex:** the free plan has no `matches`, so "site only" is an allowlist of exact paths plus
+  `starts_with`/`ends_with` for `/join/` and the content-hashed `.wasm`, `.js`, `.ttf` and `.svg`. `/index.html` and
+  `/landing.html`, which the static handler would otherwise serve raw, are blocked at the edge with everything else.
+- **Pages cached at the edge for 1 minute** while browsers still get `no-cache`: a deploy purges the cache, so no
+  cached page points at game files the new image no longer has.
+- **Protocol version check:** `proto.Version` mismatches were already refused (hub `Bye{ReasonVersion}`, LAN
+  announcements filtered). Signaling now returns `signal.ErrVersion` when the server's challenge carries another
+  version, and the client says "Update Orbitrix" (join page) or shows it as the Room page's note (hosting), instead of
+  "Can't reach the server". The web build always matches its server, so this is for old native clients.
+- **Release signing:** `android/build.gradle.kts` signs with `ORBITRIX_KEYSTORE` (PKCS12, alias `orbitrix`, key
+  password = store password, `keytool`'s PKCS12 default) and `ORBITRIX_KEYSTORE_PASSWORD`, and falls back to the
+  debug key without them, so CI and testing need no secrets; Mage prints a warning when it does. No `release` Mage
+  target: `all` runs every target and would then need the key on every machine. Keystores (`*.p12`, `*.jks`) are
+  gitignored.
+- **Android in CI:** a second job runs `go tool mage android` on the runner's own Android SDK, NDK and JDK 17 (AGP
+  9.4's minimum). It is debug-signed and not kept; published APKs are built locally with the key.
+- **Verified against the live site** (2026-11-04): a host and a joiner, both with `iceTransportPolicy=relay`, played
+  a game through production signaling with the host password, so TURN credentials and the relay work end to end.
+  The real-phone test is the user's (checklist).

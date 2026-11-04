@@ -136,7 +136,7 @@ go tool mage <target>      # go tool mage -l lists the targets
 |---|---|
 | `check` | gofmt, `go vet ./...`, `go test ./...` |
 | `desktop` | `dist/orbitrix.exe`, the Windows client, from any OS |
-| `web` | `dist/web/`: `game.wasm`, `wasm_exec.js` and the wordmark font under content-hashed names, `index.html` (the game's loader) and `landing.html`; each served file with `.gz` and `.br` copies (`cmd/webdist`) |
+| `web` | `dist/web/`: `game.wasm`, `wasm_exec.js`, the wordmark font and `favicon.svg` (the logo) under content-hashed names, `index.html` (the game's loader) and `landing.html`; each served file with `.gz` and `.br` copies (`cmd/webdist`) |
 | `android` | `dist/orbitrix.aar` (the Go game, arm64 + x86_64) and `dist/orbitrix.apk` (installable) |
 | `image` | the `eaglestelle/orbitrix-server` Docker image for linux/amd64 and linux/arm64, compiled inside Docker by `deploy/Dockerfile` (the web build plus a Linux server), labelled with its commit and build time |
 | `all` | every target above, in that order |
@@ -167,23 +167,16 @@ the final distroless image holds only those. `go tool mage image` builds it with
 linux/arm64 at once, natively on the build machine, and loads both into Docker, which takes Docker's containerd image
 store (Docker Desktop's default). On a machine without Go: `docker buildx build --platform linux/amd64,linux/arm64
 -t eaglestelle/orbitrix-server -f deploy/Dockerfile --load .` from the repo root, which leaves the commit and
-build-time labels empty. To get it to the server, either push it (`docker push eaglestelle/orbitrix-server` sends both
-platforms) and run `docker compose pull` there, or send only the server's platform:
-`docker save --platform linux/arm64 eaglestelle/orbitrix-server | ssh <server> docker load`. On the server, copy
-`deploy/.env.example` to `deploy/.env`, fill it in and run `docker compose up -d` in `deploy/`. The server listens on
-`127.0.0.1:1212` only; put your own reverse proxy in front of it to make it public. The proxy must accept connections
-only from [Cloudflare's IP ranges](https://www.cloudflare.com/ips/) and pass `CF-Connecting-IP` on. The server
-believes that header from any private peer, so a request that reached the proxy around Cloudflare could name its own
-address and slip every per-IP limit. A Cloudflare Tunnel (`cloudflared`) to `http://localhost:1212` meets this by
-itself: nothing reaches the server except through Cloudflare. To try the image locally with hosting open (no
+build-time labels empty. [Deploying](#deploying) puts it on a server. To try the image locally with hosting open (no
 password), at `http://localhost:1212`:
 
 ```sh
 cd deploy && docker compose -f docker-compose.yml -f compose.dev.yml up
 ```
 
-Install the Android build on a connected phone or emulator with `adb install -r dist/orbitrix.apk`. It is signed
-with the debug key, so it installs directly (no store).
+Install the Android build on a connected phone or emulator with `adb install -r dist/orbitrix.apk`. Without a release
+key (see [Publishing the downloads](#7-publish-the-downloads)) it is signed with the debug key, which is fine for
+testing but not for publishing.
 
 The AI tournament plays every pair of AI strategies and prints win rates and move times:
 
@@ -233,6 +226,183 @@ ORBITRIX_MATCH_BOT=sovereign ORBITRIX_MATCH_GAMES=100 go test -tags train -run T
 $env:ORBITRIX_MATCH_BOT="sovereign"; $env:ORBITRIX_MATCH_GAMES=100; go test -tags train -run TestMatches -timeout 0 -v ./core/ai
 ```
 
+## Deploying
+
+From a fresh server to a public site, here `https://orbitrix.example.com`. The container serves the website and
+signaling only; games run between the players. Cloudflare's free plan covers everything except TURN egress past
+1,000 GB a month (see step 6). Cloudflare renames dashboard menus now and then: where a path below has moved, search
+the dashboard for the setting's name.
+
+### 1. Server
+
+Any Linux machine with Docker Engine and its Compose plugin, amd64 or arm64. Make a folder for Orbitrix and copy
+`deploy/docker-compose.yml` and `deploy/.env.example` into it:
+
+```sh
+mkdir -p ~/orbitrix/downloads && cd ~/orbitrix
+cp .env.example .env && chmod 600 .env
+```
+
+Get the image onto the server. Either push it from the build machine (`docker login`, then
+`docker push eaglestelle/orbitrix-server` sends both platforms) and run `docker compose pull` on the server, or send
+only the server's platform: `docker save --platform linux/arm64 eaglestelle/orbitrix-server | ssh <server> docker load`
+(`linux/amd64` for an x86 server).
+
+### 2. Secrets (`.env`)
+
+| Variable | Value |
+|---|---|
+| `PUBLIC_ORIGIN` | `https://orbitrix.example.com`. Browsers may open `/signal` only from this site. |
+| `HOST_PASSWORD` | A random password of at least 20 characters from a password manager. Hosts type it once; their client saves it. |
+| `CF_TURN_KEY_ID`, `CF_TURN_API_TOKEN` | Cloudflare dashboard → Realtime → TURN Server → Create: the key's ID and its API token. |
+
+TURN needs all three: without the key, or with a shorter password, the server falls back to STUN, which costs nothing
+but leaves some players behind CGNAT unable to connect. Never put these values in a client build or a log.
+
+```sh
+docker compose up -d
+docker compose logs     # no "HOST_PASSWORD" or "TURN" warning should appear
+curl http://127.0.0.1:1212/healthz     # ok
+```
+
+### 3. Cloudflare in front
+
+1. Add the domain to Cloudflare (free plan) and move its nameservers there.
+2. Reach the server through a Cloudflare Tunnel: Zero Trust → Networks → Tunnels → Create a tunnel (Cloudflared),
+   install the connector on the server with the command the dashboard shows, then add a public hostname
+   `orbitrix.example.com` → service `HTTP`, `localhost:1212`. The tunnel connects outwards, so the server needs no open
+   port, and nothing reaches Orbitrix except through Cloudflare. If cloudflared runs in a container, give it host
+   networking: the compose port listens on the host's `127.0.0.1` only. A reverse proxy works instead, as long as it
+   accepts connections only from [Cloudflare's IP ranges](https://www.cloudflare.com/ips/) and passes
+   `CF-Connecting-IP` on: the server believes that header from any private or loopback peer, so a request that went
+   around Cloudflare could name any address and slip every per-IP limit.
+3. SSL/TLS → Edge Certificates: Always Use HTTPS on. Network: WebSockets on (the default).
+4. Caching → Configuration: Browser Cache TTL "Respect Existing Headers", so the site's own cache headers reach
+   browsers.
+
+Open `https://orbitrix.example.com/play`: the game loads.
+
+### 4. Cache Rules
+
+Caching → Cache Rules. Cloudflare caches `.js`, `.ttf`, `.svg`, `.exe` and `.apk` on its own but not `.wasm` or pages. With
+these two rules a flood on the website is answered at the edge and barely reaches the server.
+
+| Rule | When incoming requests match (Edit expression) | Then |
+|---|---|---|
+| Game files | `ends_with(http.request.uri.path, ".wasm") or ends_with(http.request.uri.path, ".js") or ends_with(http.request.uri.path, ".ttf") or ends_with(http.request.uri.path, ".svg")` | Eligible for cache. Edge TTL: use cache-control header if present (the files are content-hashed and marked immutable for a year). |
+| Pages | `http.request.uri.path in {"/" "/play"} or starts_with(http.request.uri.path, "/join/")` | Eligible for cache. Edge TTL: ignore cache-control header, 1 minute. Browser TTL: respect origin. |
+
+Check: request the `game.<hash>.wasm` named in `/play`'s source twice; the second answer has `cf-cache-status: HIT`.
+
+### 5. Security rules
+
+Security → WAF → Custom rules (the free plan allows five). Two rules, both with the action **Block**:
+
+**Site only.** Lets through only the site's own paths, GET and HEAD, `/signal` only as a WebSocket upgrade, and no
+query strings outside `/signal`, so cache-busting URLs never reach the server:
+
+```
+not (http.request.method in {"GET" "HEAD"})
+or (http.request.uri.query ne "" and http.request.uri.path ne "/signal")
+or (http.request.uri.path eq "/signal" and not any(lower(http.request.headers["upgrade"][*])[*] eq "websocket"))
+or not (
+  http.request.uri.path in {"/" "/play" "/signal" "/healthz" "/download/orbitrix.exe" "/download/orbitrix.apk"}
+  or starts_with(http.request.uri.path, "/join/")
+  or ends_with(http.request.uri.path, ".wasm")
+  or ends_with(http.request.uri.path, ".js")
+  or ends_with(http.request.uri.path, ".ttf")
+  or ends_with(http.request.uri.path, ".svg")
+)
+```
+
+A web build that ever adds another kind of file needs its extension in this rule and in the Game files cache rule.
+
+**No Tor or datacenters on signaling.** Blocks Tor and the large clouds (AWS, Google, Azure, Hetzner, OVH,
+DigitalOcean, Linode, Vultr) from `/signal` only; the website stays open to everyone. Cloudflare's own network (13335)
+stays allowed, because WARP and iCloud Private Relay users come from it. A friend on a VPN hosted in one of these
+clouds can't reach `/signal` while the rule is on; switch it off in the dashboard if that matters.
+
+```
+http.request.uri.path eq "/signal" and (ip.src.continent eq "T1"
+  or ip.src.asnum in {16509 14618 15169 396982 8075 24940 213230 16276 14061 63949 20473})
+```
+
+Security → WAF → Rate limiting rules (one on the free plan): **Signal connections**, when URI Path equals `/signal`,
+counted per IP, 30 requests per 10 seconds, action Block for 10 seconds. A real client opens one connection per
+session, plus reconnects with backoff.
+
+Leave these off: Security → Bots → **Bot Fight Mode** (it can't skip one path and would challenge the native clients'
+`/signal` connections) and **I'm Under Attack** mode (native clients can't answer its challenge). No Turnstile or
+CAPTCHA anywhere, for the same reason.
+
+### 6. Billing alert
+
+TURN is the only metered service: 1,000 GB of egress a month free (shared with Cloudflare's SFU), then $0.05/GB, with
+no hard spend cap. Manage Account → Billing → Budget alerts: set a small threshold (e.g. $1). Realtime → TURN Server
+shows the egress used. The server already limits who can get TURN credentials (the host password, approved joiners
+only, at most one per human seat plus four rejoins per room, 6-hour lifetime, revoked when a seat or room closes).
+
+### 7. Publish the downloads
+
+Native clients play online through the server stamped into them at build time, and Android only updates an app
+signed with the same key, so published builds need both.
+
+Create the release key once, with the JDK's `keytool`, and keep the file and its password in the password manager. A
+lost key means every phone has to uninstall Orbitrix (losing its settings) to take the next build.
+
+```sh
+keytool -genkeypair -keystore orbitrix-release.p12 -storetype PKCS12 -alias orbitrix -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=Orbitrix"
+```
+
+Build both clients with the key and the site's address, then copy them into the server's `downloads/` folder. The
+landing page offers each file once it is there; Cloudflare keeps serving the old one for up to 5 minutes (Caching →
+Purge Cache to skip that).
+
+```sh
+ORBITRIX_SERVER=https://orbitrix.example.com ORBITRIX_KEYSTORE=/path/to/orbitrix-release.p12 ORBITRIX_KEYSTORE_PASSWORD=… go tool mage desktop android
+scp dist/orbitrix.exe dist/orbitrix.apk <server>:orbitrix/downloads/
+```
+
+```powershell
+$env:ORBITRIX_SERVER="https://orbitrix.example.com"; $env:ORBITRIX_KEYSTORE="C:\path\to\orbitrix-release.p12"; $env:ORBITRIX_KEYSTORE_PASSWORD="…"; go tool mage desktop android
+scp dist/orbitrix.exe dist/orbitrix.apk <server>:orbitrix/downloads/
+```
+
+A phone holding a debug-signed build must uninstall it once before installing the first release-signed one. Windows
+SmartScreen warns about the unsigned `.exe` until it has been downloaded often enough: More info → Run anyway.
+
+### Updating
+
+- **New server version:** get the new image onto the server (step 1), then `docker compose up -d`. Rooms live in
+  memory, so they are lost, but running games go on over WebRTC and hosts open a new room on their own. Purge
+  Cloudflare's cache afterwards, so no cached page points at old game files.
+- **New protocol version:** when `proto.Version` or `signal.Version` changes, older native clients say "Update
+  Orbitrix" instead of joining; publish new downloads (step 7) along with the server.
+- **Rotating the host password:** change `HOST_PASSWORD` in `.env` and run `docker compose up -d`. Hosts are asked for
+  the new one the next time they open a room.
+
+### Production checklist
+
+Every abuse and cost guard, and how to see it working. Most are built into the server; the rest are the steps above.
+
+| Guard | Check |
+|---|---|
+| Port on 127.0.0.1 only | `docker compose ps` shows `127.0.0.1:1212->1212`; `curl http://<server-lan-ip>:1212/healthz` from another machine fails. |
+| Only Cloudflare reaches the server | Tunnel (or proxy allowlist) as in step 3. |
+| Host password | `docker compose logs` has no `HOST_PASSWORD` warning. Hosting from a fresh client asks for it, and asks again after a wrong one. |
+| TURN, and STUN fallback | Settings → Network → Force relay on two devices on different networks (a phone on mobile data and a PC), then play an online game. |
+| TURN credential limits, 50 rooms, 3 pending approvals, gone hosts' rooms closed | Built in. A room's code dies when its host leaves. |
+| Origin check | `PUBLIC_ORIGIN` is exactly the site's address. |
+| Edge cache | Step 4's check: `cf-cache-status: HIT`. |
+| Site-only rule | `curl -X POST https://orbitrix.example.com/`, `curl "https://orbitrix.example.com/play?x=1"`, `curl https://orbitrix.example.com/signal` and `curl https://orbitrix.example.com/nope` each answer 403 from Cloudflare. |
+| Signal rate limit | `for i in $(seq 40); do curl -s -o /dev/null -w "%{http_code} " -H "Upgrade: websocket" https://orbitrix.example.com/signal; done` ends in 429s. |
+| Tor and datacenter rule | Security → Events lists its blocks. |
+| Proof of work, socket caps (2,000, 100 per IP), message limits, 5-second first message | Built in; they rise or apply only under a flood. |
+| Bot Fight Mode and I'm Under Attack off | Step 5. |
+| Budget alert | Step 6. |
+| No secrets in logs | `docker compose logs` names no password, room secret, rejoin token or TURN credential. |
+| Real phone | Install the APK from the landing page on a real Android phone. Play a local game; a Same Wi-Fi game with the PC (Windows asks to let Orbitrix on the network once); an online game on mobile data, joining and hosting, with Force relay on and off; and the web game at `/play` in the phone's browser. |
+
 ## Layout
 
 | Path | Contents |
@@ -240,7 +410,7 @@ $env:ORBITRIX_MATCH_BOT="sovereign"; $env:ORBITRIX_MATCH_GAMES=100; go test -tag
 | `core/` | Pure game rules (board, moves, wave resolution, win/turn order, seeded RNG). No Ebitengine, net or OS imports. |
 | `core/ai/` | The twelve AI personalities, and Prodigy's and Sovereign's training and match harness (build tag `train`). |
 | `cmd/aitourney/` | Headless AI-vs-AI tournament. |
-| `cmd/webdist/` | Finishes a web build: loading-progress size and precompressed copies. |
+| `cmd/webdist/` | Finishes a web build: loading-progress size, the logo as `favicon.svg` and precompressed copies. |
 | `proto/` | Binary wire protocol. |
 | `client/` | Ebitengine game: scenes, rendering, input, audio, settings. `client/fonts/` holds the two OFL fonts and their licences. |
 | `client/online/` | A client's side of an online room: hosting (signaling, the hub, a WebRTC channel per joiner, reconnects) and joining. |

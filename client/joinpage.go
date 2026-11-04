@@ -357,6 +357,8 @@ func (s *joinScene) joinedOnline(a *app, r joinResult) {
 	case errors.Is(r.err, context.Canceled):
 	case errors.Is(r.err, online.ErrRefused):
 		s.status = "That code didn't work"
+	case errors.Is(r.err, signal.ErrVersion):
+		s.status = byeWhy(proto.ReasonVersion)
 	case r.err != nil:
 		s.status = "Can't reach the server"
 	default:

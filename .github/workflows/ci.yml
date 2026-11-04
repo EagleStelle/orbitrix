@@ -30,3 +30,15 @@ jobs:
         run: |
           docker buildx create --use
           go tool mage image
+
+  # The runner comes with the Android SDK, an NDK and JDK 17; Gradle fetches the platform it lacks. No release key
+  # here, so the APK is debug-signed and not kept: published APKs are built locally with the key.
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: build android
+        run: go tool mage android

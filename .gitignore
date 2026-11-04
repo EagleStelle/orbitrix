@@ -23,3 +23,7 @@ local.properties
 # Server deployment secrets and published downloads
 /deploy/.env
 /deploy/downloads/
+
+# Release signing keys
+*.p12
+*.jks
