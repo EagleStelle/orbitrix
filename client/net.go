@@ -29,9 +29,11 @@ const hostAIDelay = 400 * time.Millisecond
 // session is one online or LAN room as this player sees it, kept across the lobby, the game and its results. Scenes
 // call pump every update, so the connection never backs up.
 type session struct {
-	room    *hub.Room    // the room this player hosts, or nil for a joiner
-	host    *online.Host // an online host's signaling, or nil
-	lan     *lan.Host    // a LAN host's listener, or nil
+	room    *hub.Room      // the room this player hosts, or nil for a joiner
+	host    *online.Host   // an online host's signaling, or nil
+	lan     *lan.Host      // a LAN host's listener, or nil
+	direct  *online.Direct // a server-free room's invites, for its host, or nil
+	invited bool           // this player joined a server-free room by its invite
 	link    *online.Link
 	code    string     // the room's code: the one a joiner came in with, or a private LAN room's
 	addr    string     // a LAN room's host:port, or "" online
@@ -105,7 +107,7 @@ func (s *session) pump(a *app) {
 		}
 	}
 	if s.end == "" && s.link.Closed() {
-		s.end, s.lost = "Connection lost", s.room == nil
+		s.end, s.lost = "Connection lost", s.room == nil && !s.invited // an invite is used up: no way back in
 		if s.lost && s.addr != "" {
 			s.end = "Host disconnected" // a LAN host whose device slept or left the app; the joiner retries
 		}
@@ -136,10 +138,14 @@ func (s *session) describe() {
 	s.host.Update(m.Public, m.Humans, l)
 }
 
-// welcome takes the seat the host gave this player. A joiner remembers it, to rejoin after the app closes.
+// wifi reports a Same Wi-Fi room: on the LAN, or server-free.
+func (s *session) wifi() bool { return s.addr != "" || s.direct != nil || s.invited }
+
+// welcome takes the seat the host gave this player. A joiner remembers it, to rejoin after the app closes; a
+// server-free room's joiner can't, needing a new invite.
 func (s *session) welcome(a *app, m proto.Welcome) {
 	s.seat, s.token = int(m.Seat), m.Token
-	if s.room == nil {
+	if s.room == nil && !s.invited {
 		a.set.Rejoin = &rejoin{Code: s.code, Addr: s.addr, Token: hexenc.EncodeToString(m.Token[:])}
 		a.set.save()
 	}
@@ -168,6 +174,8 @@ func (s *session) leave(a *app) {
 		s.host.Close()
 	case s.lan != nil:
 		s.lan.Close()
+	case s.direct != nil:
+		s.direct.Close()
 	default:
 		s.link.Send(proto.Leave{})
 		s.link.Close()

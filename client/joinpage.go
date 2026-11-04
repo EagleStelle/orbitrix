@@ -6,6 +6,7 @@ import (
 	"errors"
 	"image"
 	"log"
+	"runtime"
 	"slices"
 	"sync/atomic"
 
@@ -24,28 +25,33 @@ import (
 // Room page) above a Join block. Join lists the public rooms, heard on the network or listed by the server, and a tap
 // joins one (online, once its host lets the player in). Under the list, the code's six slots, typed on the device's
 // own keyboard, join a private room. On Android the multicast lock lets the Wi-Fi pass the hosts' announcements on
-// while the page is open.
+// while the page is open. A browser's Same Wi-Fi page hears only the LAN host that served it, and explains why nearby
+// rooms cannot be found: a browser's server-free rooms are joined by invite links.
 type joinScene struct {
 	page
-	lan     bool
-	code    *field
-	finder  *lan.Finder   // Same Wi-Fi; nil when another program has the discovery port
-	lister  *online.Rooms // Online
-	heard   []lan.Room
-	listed  []signal.Listed
-	scratch struct {
+	lan         bool
+	canJoin     bool // nearby rooms and short codes work here; the Join block is always visible
+	hostBlocked bool
+	joinNote    string
+	joinLines   []string
+	statusLines []string
+	lstatus     string
+	code        *field
+	finder      *lan.Finder   // Same Wi-Fi; nil when another program has the discovery port
+	lister      *online.Rooms // Online
+	heard       []lan.Room
+	listed      []signal.Listed
+	scratch     struct {
 		heard  []lan.Room
 		listed []signal.Listed
 	}
-	rows        []joinRow
-	joining     string      // the room being joined (its address or code), or ""
-	waiting     atomic.Bool // the join request is in front of the host
-	status      string      // why the last try failed, or ""
-	statusLines []string
-	lstatus     string
-	cancel      context.CancelFunc
-	online      chan joinResult
-	local       chan lanResult
+	rows    []joinRow
+	joining string      // the room being joined (its address or code), or ""
+	waiting atomic.Bool // the join request is in front of the host
+	status  string      // why the last try failed, or ""
+	cancel  context.CancelFunc
+	online  chan joinResult
+	local   chan lanResult
 
 	loff               float64
 	lrows              int
@@ -89,11 +95,34 @@ func newJoin(a *app, lanRoom bool, code string) *joinScene {
 	if r := a.set.Rejoin; code == "" && r != nil && (r.Addr != "") == lanRoom {
 		code = r.Code
 	}
-	s := &joinScene{lan: lanRoom, code: codeField(), online: make(chan joinResult, 1), local: make(chan lanResult, 1)}
+	host := platform.LANHost()
+	s := &joinScene{lan: lanRoom, canJoin: !lanRoom || runtime.GOOS != "js" || host != "", code: codeField(),
+		online: make(chan joinResult, 1), local: make(chan lanResult, 1)}
 	s.code.set(code)
-	s.code.focused = !a.in.finger
-	if !lanRoom {
+	if runtime.GOOS == "js" {
+		s.hostBlocked = !platform.HasWebRTC
+		if lanRoom {
+			s.joinNote = "Browsers cannot search your Wi-Fi for rooms. Ask the host for an invite link."
+			if host != "" {
+				s.joinNote = "Browsers cannot search your Wi-Fi for rooms. Only this host's room appears here."
+			}
+		} else if s.hostBlocked {
+			s.canJoin = false
+			s.joinNote = "This browser can't connect players. Use another browser or the app to join."
+		}
+		if lanRoom && host == "" && s.hostBlocked {
+			s.joinNote = "This browser cannot connect to browser hosts. Open a link from a host using the app, or use another browser."
+		}
+	}
+	s.code.focused = !a.in.finger && s.canJoin
+	switch {
+	case !lanRoom:
 		s.lister = online.ListRooms(signalURL())
+		return s
+	case runtime.GOOS == "js": // a page can't hear broadcasts: it asks the host that served it, if one did
+		if host != "" {
+			s.finder = lan.Watch(host)
+		}
 		return s
 	}
 	platform.Discover(true)
@@ -175,7 +204,7 @@ func (s *joinScene) layout(a *app) {
 	w := min(v.w, 640*u)
 	x := v.cx() - w/2
 	pitch := (compactButtonTarget + 8) * u
-	slot := min(56*u, (w-2*bp-(proto.CodeLen-1)*8*u)/proto.CodeLen)
+	slot := codeSlotSize(u, w-2*bp)
 	listH := float64(max(1, len(s.rows))) * pitch
 	statusH := 44 * u
 	if s.status != "" {
@@ -183,16 +212,28 @@ func (s *joinScene) layout(a *app) {
 		statusH = max(statusH, float64(len(s.statusLines))*24*u+16*u)
 	}
 	hostH := bp + 32*u + 52*u + bp
+	joinNoteH := 0.0
+	if s.joinNote != "" {
+		s.joinLines = wrap(s.joinNote, a.f.label, w-2*bp)
+		joinNoteH = float64(len(s.joinLines))*24*u + 12*u
+	}
 	// Two groups: the listed rooms under their label, a hairline, then Join by code.
 	joinH := bp + 32*u + 28*u + listH + 4*u + 20*u + 28*u + slot + statusH + 52*u + bp
+	if !s.canJoin {
+		joinH = bp + 32*u + bp
+	}
+	joinH += joinNoteH
 	y := s.centred(hostH + s.gap + joinH)
 	s.loff = s.view.offset
 	s.hostB = rect{x, y, w, hostH}
 	s.host = rect{x + bp, y + bp + 32*u, w - 2*bp, 52 * u}
 	s.joinB = rect{x, s.hostB.bottom() + s.gap, w, joinH}
+	if !s.canJoin {
+		return
+	}
 
-	s.listY = s.joinB.y + bp + 32*u + 10*u
-	top := s.joinB.y + bp + 32*u + 28*u
+	s.listY = s.joinB.y + bp + 32*u + joinNoteH + 10*u
+	top := s.joinB.y + bp + 32*u + joinNoteH + 28*u
 	s.rowR = s.rowR[:0]
 	for i := range s.rows {
 		s.rowR = append(s.rowR, rect{x + bp, top + float64(i)*pitch, w - 2*bp, compactButtonHeight * u})
@@ -236,8 +277,11 @@ func (s *joinScene) update(a *app) error {
 		a.next = newHome()
 		return nil
 	}
-	if in && a.clicked(s.host) {
+	if in && !s.hostBlocked && a.clicked(s.host) {
 		a.next = newRoomSetup(a, s.lan)
+		return nil
+	}
+	if !s.canJoin {
 		return nil
 	}
 	if in {
@@ -291,7 +335,7 @@ func (s *joinScene) start(a *app, addr, code string, typed bool) {
 			addrs = append(addrs, r.Addr)
 		}
 		for _, h := range s.heard {
-			if h.Private && !slices.Contains(addrs, h.Addr) {
+			if (h.Private || lan.PublicCode(h.ID) == code) && !slices.Contains(addrs, h.Addr) {
 				addrs = append(addrs, h.Addr)
 			}
 		}
@@ -390,14 +434,21 @@ func (s *joinScene) draw(dst *ebiten.Image, a *app) {
 	b := s.body(dst)
 	fillRound(b, s.hostB, 24*u, sc.tile)
 	drawText(b, "Host", f.heading, s.hostB.x+s.bp, s.hostB.y+s.bp+10*u, text.AlignStart, sc.ink)
-	if s.joining != "" {
+	if s.hostBlocked {
+		drawButton(b, a, s.host, "This browser can't host", "", btnTile, false)
+	} else if s.joining != "" {
 		drawButton(b, a, s.host, "Set up a room", "", btnTile, false)
 	} else {
 		drawButton(b, a, s.host, "Set up a room", "", btnGround, true)
 	}
-
 	fillRound(b, s.joinB, 24*u, sc.tile)
 	drawText(b, "Join", f.heading, s.joinB.x+s.bp, s.joinB.y+s.bp+10*u, text.AlignStart, sc.ink)
+	for i, line := range s.joinLines {
+		drawText(b, line, f.label, s.joinB.x+s.bp, s.joinB.y+s.bp+32*u+(float64(i)+0.5)*24*u, text.AlignStart, sc.dim)
+	}
+	if !s.canJoin {
+		return
+	}
 	listLabel := "Public rooms"
 	if s.lan {
 		listLabel = "Rooms nearby"
@@ -450,7 +501,7 @@ func (s *joinScene) draw(dst *ebiten.Image, a *app) {
 }
 
 // drawCodeSlots draws a room code as the printed tiles it is typed into, one per character, like the board's; while
-// caret is set, the next tile is outlined. The Room dialog shows its code in the same tiles, read-only.
+// caret is set, the next tile is outlined. The Invite players dialog shows its code in the same tiles, read-only.
 func drawCodeSlots(dst *ebiten.Image, a *app, slots []rect, face *text.GoTextFace, code []rune, caret bool) {
 	for i, r := range slots {
 		fillRound(dst, r, r.w*tileRadius, a.sc.ground)

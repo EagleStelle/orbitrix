@@ -234,9 +234,15 @@ func New() *Game {
 	a.u = 1
 	a.f = newFonts(1)
 	a.in.finger = true // no pointer until the mouse moves or a finger lands
-	g.scene = newHome()
-	if code := platform.JoinCode(); code != "" && origin != "" { // opened from a /join/ link
+	switch code := platform.JoinCode(); {
+	case platform.Invite() != "": // opened from a server-free room's invite link
+		g.scene = newReply(platform.Invite())
+	case platform.LANHost() != "": // opened from a LAN host's page: its room, and a private one's code
+		g.scene = newJoin(a, true, code)
+	case code != "" && origin != "": // opened from a /join/ link
 		g.scene = newJoin(a, false, code)
+	default:
+		g.scene = newHome()
 	}
 	// Closing the window while hosting closes the room first, so the other players hear why.
 	ebiten.SetWindowClosingHandled(true)

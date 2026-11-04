@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"math"
 	"runtime"
 	"time"
 
@@ -33,8 +34,9 @@ const snackH, snackIn = 56, 12
 var moreWaiting = [maxRequests]string{"", "+1", "+2"}
 
 // hostRoom is the Same Wi-Fi or Online room a player hosts from Setup, which keeps its Players and Board blocks as
-// This Device has them. Its action reads Open room, then Start, with an invite button beside it that opens the Room
-// dialog: Public or Private, and the code with Share. Join requests show one at a time as a snackbar.
+// This Device has them. Its action reads Open room, then Start, with an invite button beside it that opens the Invite
+// players dialog: access, QR, code, Copy code and Copy link together; the first Open room shows it too. Join requests
+// show as a snackbar.
 type hostRoom struct {
 	lan, private bool
 	net          *session // nil until the room opens
@@ -46,37 +48,32 @@ type hostRoom struct {
 	snackPeer    string
 	snackMsg     string
 	snackT       int  // ticks since the request on the bar arrived
-	copiedT      int  // ticks the copy button shows its check
-	open         bool // the Room dialog is showing
+	open         bool // the Invite players dialog is showing
 	draft        bool // the dialog's Private, until Confirm
 	inviteCode   string
+	invite       inviteView
+	replyT       int // ticks, for looking out for a server-free room's replies now and then
 
 	// Layout in device px.
 	snack, snackNo, snackYes rect
-	dv                       rect // the safe area the dialog was laid out for
-	dcode                    string
-	ddraft                   bool
-	panel                    rect
-	titleY, noteY            float64
 	opts                     [2]rect // Public, Private
-	slots                    [proto.CodeLen]rect
-	slotFace                 *text.GoTextFace
-	codeRunes                []rune
-	copyB, confirmB          rect
+	confirmB                 rect
 }
 
 type openResult struct {
-	h    *online.Host
-	lan  *lan.Host
-	code string // a private LAN room's
-	err  error
+	h      *online.Host
+	lan    *lan.Host
+	direct *online.Direct
+	code   string // a private LAN room's
+	err    error
 }
 
-// newRoomSetup opens Setup for a room this player is about to host, public or private as Settings says.
+// newRoomSetup opens Setup for a room this player is about to host, public or private as Settings says. A browser's
+// Same Wi-Fi room is server-free, and only its invites let anyone in.
 func newRoomSetup(a *app, lanRoom bool) *setupScene {
 	private := !a.set.OnlinePublic
 	if lanRoom {
-		private = a.set.WifiPrivate
+		private = a.set.WifiPrivate && runtime.GOOS != "js"
 	}
 	return &setupScene{menu: -1, room: &hostRoom{lan: lanRoom, private: private, opened: make(chan openResult, 1)}}
 }
@@ -84,33 +81,57 @@ func newRoomSetup(a *app, lanRoom bool) *setupScene {
 // newRoom shows the room n is in: Setup with the room for its host, back from a game; the seats for a joiner.
 func newRoom(n *session) scene {
 	if n.room != nil {
-		return &setupScene{menu: -1, room: &hostRoom{lan: n.addr != "", private: n.private, net: n,
+		return &setupScene{menu: -1, room: &hostRoom{lan: n.wifi(), private: n.private, net: n,
 			opened: make(chan openResult, 1)}}
 	}
 	return &roomScene{net: n}
 }
 
-// code is the room's invite code, prepared before opening when private, or "" for a public Same Wi-Fi room.
+// direct reports a server-free room: a browser's Same Wi-Fi room.
+func (h *hostRoom) direct() bool { return h.lan && runtime.GOOS == "js" }
+
+// invitation keeps the QR link separate from the written code copied by every platform.
+func (h *hostRoom) invitation() (link, code string) {
+	n := h.net
+	if n == nil || h.open && h.draft != h.private {
+		return "", ""
+	}
+	if n.direct != nil {
+		code = n.direct.Invite()
+		if code != "" {
+			link = platform.Address() + "/play#i=" + code
+		}
+		return link, code
+	}
+	code = h.code()
+	if n.host != nil {
+		if n.host.Offline() {
+			return "", code
+		}
+		return joinLink(code), code
+	}
+	if n.lan != nil && n.lan.Web {
+		link = "http://" + n.addr + "/join/" + code
+	}
+	return link, code
+}
+
+// code is the room's short invite code, prepared before opening when private.
 func (h *hostRoom) code() string {
+	draft := h.open && h.draft
 	switch n := h.net; {
 	case n == nil:
 		return h.inviteCode
 	case n.host != nil:
 		return n.host.Code()
-	case h.draft && n.code == "":
+	case n.lan != nil && !h.private && !draft:
+		return n.lan.Code
+	case draft && n.code == "":
 		return h.inviteCode
-	case h.private || h.draft:
+	case h.private || draft:
 		return n.code
 	}
 	return ""
-}
-
-// shareText is what Share sends: the join link online, the code on Same Wi-Fi.
-func (h *hostRoom) shareText() string {
-	if h.lan {
-		return h.code()
-	}
-	return joinLink(h.code())
 }
 
 // hostNote is the host's reminder of what keeps the room alive, or signaling's state; "" when there is nothing to say.
@@ -137,72 +158,26 @@ func (h *hostRoom) layoutSnack(a *app, viewport, action rect, gap float64) {
 	h.snackNo = rect{h.snackYes.x - 4*u - 64*u, h.snackYes.y, 64 * u, 40 * u}
 }
 
-// openDialog shows the Room dialog with the room's access as its draft.
+// openDialog shows the Invite players dialog with the room's access as its draft.
 func (h *hostRoom) openDialog() {
-	h.open, h.draft, h.dv = true, h.private, rect{}
+	h.open, h.draft = true, h.private
 	if h.draft && h.code() == "" {
 		h.inviteCode = proto.NewCode()
 	}
 }
 
-// layoutDialog centres the Room dialog in the pause menu's style: its title, Public and Private side by side, for a
-// private room its code in the join page's six full-width tiles (read-only), and Confirm with a round copy button.
+// layoutDialog uses the shared invitation surface for both access and joining.
 func (h *hostRoom) layoutDialog(a *app) {
-	v, u := a.safe(), a.u
-	code := h.code()
-	if v == h.dv && code == h.dcode && h.draft == h.ddraft && h.slotFace != nil {
-		return
-	}
-	h.dv, h.dcode, h.ddraft, h.codeRunes = v, code, h.draft, []rune(code)
-	btnH, pad, gap := quietButtonHeight*u, 28*u, 8*u
-	w := min(420*u, v.w-32*u)
-	inner := w - 2*pad
-	copyW := 52 * u
-	slot := min(56*u, (inner-float64(proto.CodeLen-1)*gap)/proto.CodeLen)
-	hgt := pad + 40*u + 24*u + btnH + 24*u + btnH + pad
-	if h.hostNote() != "" {
-		hgt += 28 * u
-	}
-	full := hgt + 20*u + slot // the top stays where the private dialog's is, so a choice never moves under the pointer
-	if h.draft {
-		hgt = full
-	}
-	h.panel = rect{v.cx() - w/2, v.cy() - full/2, w, hgt}
-	h.titleY = h.panel.y + pad + 20*u
-	y := h.panel.y + pad + 40*u + 24*u
-	ow := (inner - gap) / 2
-	h.opts = [2]rect{{h.panel.x + pad, y, ow, btnH}, {h.panel.x + pad + ow + gap, y, ow, btnH}}
-	y += btnH
-	if h.draft {
-		y += 20 * u
-		rowW := proto.CodeLen*slot + (proto.CodeLen-1)*gap
-		x := h.panel.cx() - rowW/2
-		for i := range h.slots {
-			h.slots[i] = rect{x + float64(i)*(slot+gap), y, slot, slot}
-		}
-		h.slotFace = newFace(srcDisplay, slot*0.5, 700)
-		y += slot
-	} else if h.slotFace == nil {
-		h.slotFace = newFace(srcDisplay, 24*u, 700) // marks the layout done
-	}
-	h.noteY = y + 18*u
-	if h.hostNote() != "" {
-		y += 28 * u
-	}
-	y += 24 * u
-	h.confirmB = rect{h.panel.x + pad, y, inner, btnH}
-	if h.draft {
-		h.confirmB.w -= gap + copyW
-		h.copyB = rect{h.confirmB.right() + gap, y + (btnH-copyW)/2, copyW, copyW}
-	}
+	h.invite.settings = true
+	link, _ := h.invitation()
+	h.invite.qr.set(link)
+	h.invite.layout(a)
+	h.opts, h.confirmB = h.invite.opts, h.invite.done
 }
 
 // pre runs the room before Setup's own update: the open session's messages and its scene changes, an Open room
 // under way, the join requests. It reports whether the scene changes.
 func (h *hostRoom) pre(a *app, s *setupScene) bool {
-	if h.copiedT > 0 {
-		h.copiedT--
-	}
 	if h.net == nil {
 		return h.pollOpen(a, s)
 	}
@@ -211,6 +186,13 @@ func (h *hostRoom) pre(a *app, s *setupScene) bool {
 		return true
 	}
 	h.requests()
+	if d := h.net.direct; d != nil {
+		if h.replyT++; h.replyT%15 == 0 { // a quarter second: localStorage is no place to read every frame
+			if reply := platform.Reply(); reply != "" {
+				d.Take(reply)
+			}
+		}
+	}
 	return false
 }
 
@@ -253,29 +235,33 @@ func (h *hostRoom) answerSnack(a *app) bool {
 	return a.over(h.snack)
 }
 
-// updateDialog runs the Room dialog. Public and Private change only its draft, which Confirm applies to the room;
-// Esc or a tap outside drops it. The copy button works at once.
+// Access remains a draft until Confirm; no unconfirmed QR or code is shared.
 func (h *hostRoom) updateDialog(a *app) {
 	h.layoutDialog(a)
+	link, code := h.invitation()
+	if h.invite.update(a, link, code) {
+		h.open = false
+		return
+	}
 	switch {
-	case a.in.esc || a.in.clicked && !h.panel.contains(a.in.x, a.in.y):
-		h.open = false
 	case a.clicked(h.confirmB):
-		h.open = false
-		if h.private != h.draft {
+		if h.net == nil {
+			if h.canAct(a) {
+				h.private = h.draft
+				h.openRoom(a, a.set.Password)
+			}
+		} else if h.private != h.draft {
 			h.private = h.draft
 			h.apply(a)
+		} else {
+			h.open = false
 		}
-	case a.clicked(h.opts[0]):
+	case !h.direct() && a.clicked(h.opts[0]):
 		h.draft = false
-	case a.clicked(h.opts[1]):
+	case !h.direct() && a.clicked(h.opts[1]):
 		h.draft = true
 		if h.code() == "" {
 			h.inviteCode = proto.NewCode()
-		}
-	case h.draft && h.code() != "" && a.clicked(compactHit(h.copyB, a.u)):
-		if platform.Share(h.shareText()) {
-			h.copiedT = 120
 		}
 	}
 }
@@ -317,10 +303,13 @@ func (h *hostRoom) minPlayers() int {
 func (h *hostRoom) leave(a *app) {
 	if h.opening { // a room that opens after all closes again at once
 		go func() {
-			if o := <-h.opened; o.h != nil {
+			switch o := <-h.opened; {
+			case o.h != nil:
 				o.h.Close()
-			} else if o.lan != nil {
+			case o.lan != nil:
 				o.lan.Close()
+			case o.direct != nil:
+				o.direct.Close()
 			}
 		}()
 	}
@@ -383,6 +372,7 @@ func (h *hostRoom) act(a *app) {
 	n := h.net
 	if n == nil {
 		h.openRoom(a, a.set.Password)
+		h.openDialog() // the invite shows as soon as the room opens
 		return
 	}
 	for i, st := range n.lobby.Seats {
@@ -450,10 +440,17 @@ func (h *hostRoom) openRoom(a *app, password string) {
 		}
 		cfg.Code = h.inviteCode
 	}
-	if h.lan && runtime.GOOS != "js" { // a browser never hosts: the constant keeps lan.Open out of its build
+	if h.lan && runtime.GOOS != "js" { // a browser never hosts on the LAN: the constant keeps lan.Open out of its build
 		go func() {
 			l, err := lan.Open(cfg, name)
 			h.opened <- openResult{lan: l, code: cfg.Code, err: err}
+		}()
+		return
+	}
+	if h.lan { // a browser's: server-free, and only invites let anyone in
+		go func() {
+			d, err := online.OpenDirect(cfg)
+			h.opened <- openResult{direct: d, err: err}
 		}()
 		return
 	}
@@ -483,6 +480,10 @@ func (h *hostRoom) pollOpen(a *app, s *setupScene) bool {
 		n := hostSession(o.lan.Room, online.NewLink(o.lan.Me), a.set.name())
 		n.lan, n.addr, n.code, n.private = o.lan, o.lan.Addr, o.code, h.private
 		h.net, a.net = n, n
+	case o.err == nil && o.direct != nil:
+		n := hostSession(o.direct.Room, o.direct.Me, a.set.name())
+		n.direct = o.direct
+		h.net, a.net = n, n
 	case o.err == nil:
 		a.set.save() // keeps the password that worked
 		n := hostSession(o.h.Room, o.h.Me, a.set.name())
@@ -511,54 +512,95 @@ func (h *hostRoom) pollOpen(a *app, s *setupScene) bool {
 	return false
 }
 
-// drawRoomButton draws the round button beside the action that opens the Room dialog, with a key: the room's access
-// and its code.
+// drawRoomButton draws the round button beside the action that opens the Invite players dialog: a person with a plus.
 func drawRoomButton(dst *ebiten.Image, a *app, r rect) {
 	u := a.u
-	ink := drawButtonSurface(dst, a, r, btnTile, true, a.over(r))
+	hot := a.over(r)
+	ink := drawButtonSurface(dst, a, r, btnTile, true, hot)
+	fill, _ := buttonColors(a.sc, btnTile, true, hot)
 	cx, cy := r.cx(), r.cy()
-	strokeRound(dst, rect{cx - 12*u, cy - 6*u, 12 * u, 12 * u}, 6*u, 2.25*u, ink) // the bow
-	line(dst, cx, cy, cx+12*u, cy, 2.25*u, ink)                                   // the shaft
-	line(dst, cx+7*u, cy, cx+7*u, cy+5*u, 2.25*u, ink)                            // the teeth
-	line(dst, cx+11*u, cy, cx+11*u, cy+6*u, 2.25*u, ink)
+	ring(dst, cx-4*u, cy-4.5*u, 4.5*u, 2.25*u, ink)                    // the head
+	ring(dst, cx-4*u, cy+10*u, 8*u, 2.25*u, ink)                       // the shoulders: a ring's top half,
+	fillRound(dst, rect{cx - 13*u, cy + 10*u, 18 * u, 9 * u}, 0, fill) // its lower half covered
+	line(dst, cx+8*u, cy-6*u, cx+8*u, cy+2*u, 2.25*u, ink)             // the plus
+	line(dst, cx+4*u, cy-2*u, cx+12*u, cy-2*u, 2.25*u, ink)
 }
 
-// drawDialog draws the Room dialog over an 80% veil of the mat: Public and Private (the draft outlined); for a private
-// room the code in its tiles with the copy button, which shows a check for a moment once it has copied; the host's
-// note; Confirm and the copy button.
+// drawDialog keeps access and the active invitation in one room surface.
 func (h *hostRoom) drawDialog(dst *ebiten.Image, a *app) {
 	h.layoutDialog(a)
-	sc, f, u := a.sc, &a.f, a.u
+	sc, f := a.sc, &a.f
+	link, code := h.invitation()
+	// The action stays short beside the copy buttons; why the room can't open shows where the QR goes.
+	action, enabled := "Done", true
+	switch {
+	case h.net == nil && h.opening:
+		action, enabled = "Opening", false
+	case h.net == nil:
+		action, enabled = "Open room", h.canAct(a)
+	case h.private != h.draft:
+		action = "Confirm"
+	}
 	fillRound(dst, rect{0, 0, a.w, a.h}, 0, withAlpha(sc.ground, 0.8))
-	fillRound(dst, h.panel, 28*u, sc.tile)
-	drawText(dst, "Room", f.title, h.panel.cx(), h.titleY, text.AlignCenter, sc.ink)
-	for i, o := range h.opts {
-		style := btnGround
-		if h.draft == (i == 1) {
-			style = btnChosen
-		}
-		drawButton(dst, a, o, accessNames[i], "", style, true)
-	}
-	if h.draft {
-		drawCodeSlots(dst, a, h.slots[:], h.slotFace, h.codeRunes, false)
-		on := h.code() != ""
-		hot := a.over(compactHit(h.copyB, u))
-		ink := drawButtonSurface(dst, a, h.copyB, btnGround, on, hot)
-		fill, _ := buttonColors(sc, btnGround, on, hot)
-		cx, cy := h.copyB.cx(), h.copyB.cy()
-		if h.copiedT > 0 { // a check: copied
-			line(dst, cx-6*u, cy, cx-2*u, cy+4*u, 2.25*u, ink)
-			line(dst, cx-2*u, cy+4*u, cx+6*u, cy-4*u, 2.25*u, ink)
-		} else { // two sheets, the front one over the back
-			strokeRound(dst, rect{cx - 8*u, cy - 8*u, 12 * u, 12 * u}, 3*u, 2*u, ink)
-			fillRound(dst, rect{cx - 4*u, cy - 4*u, 12 * u, 12 * u}, 3*u, fill)
-			strokeRound(dst, rect{cx - 4*u, cy - 4*u, 12 * u, 12 * u}, 3*u, 2*u, ink)
+	h.invite.draw(dst, a, "Invite players", link, code, action, enabled)
+	if h.direct() {
+		r := h.opts[0]
+		r.w = h.opts[1].right() - r.x
+		fillPill(dst, r, sc.ground)
+		drawText(dst, "Invite only", f.labelBold, r.cx(), r.cy(), text.AlignCenter, sc.dim)
+	} else {
+		for i, o := range h.opts {
+			style := btnGround
+			if h.draft == (i == 1) {
+				style = btnChosen
+			}
+			drawButton(dst, a, o, accessNames[i], "", style, true)
 		}
 	}
-	if note := h.hostNote(); note != "" {
-		drawText(dst, note, f.label, h.panel.cx(), h.noteY, text.AlignCenter, sc.dim)
+	if link == "" {
+		state := "Preparing invite"
+		switch {
+		case h.noteT > 0:
+			state = h.note
+		case h.opening:
+			state = "Opening room"
+		case h.net == nil && !h.canAct(a):
+			state = h.actionLabel(a) // Board too small, Needs a human seat
+		case h.net == nil:
+			state = "Room not open"
+		case h.private != h.draft:
+			state = "Confirm to update invite"
+		case h.net.lan != nil && !h.net.lan.Web:
+			state = "Browser game not included"
+		case h.hostNote() != "":
+			state = h.hostNote()
+		}
+		h.invite.drawState(dst, a, state)
 	}
-	drawButton(dst, a, h.confirmB, "Confirm", "", btnInk, true)
+}
+
+// drawCopyButton draws a round copy button: three tiles for the code, or two chain rings for the link; a check for a
+// moment once it has copied.
+func drawCopyButton(dst *ebiten.Image, a *app, r rect, link, on, copied bool) {
+	u := a.u
+	ink := drawButtonSurface(dst, a, r, btnGround, on, a.over(compactHit(r, u)))
+	cx, cy := r.cx(), r.cy()
+	switch {
+	case copied:
+		line(dst, cx-6*u, cy, cx-2*u, cy+4*u, 2.25*u, ink)
+		line(dst, cx-2*u, cy+4*u, cx+6*u, cy-4*u, 2.25*u, ink)
+	case link:
+		var g ebiten.GeoM
+		g.Rotate(-math.Pi / 4)
+		g.Translate(cx, cy)
+		for _, x := range [2]float64{-11, -2} {
+			drawShapes(dst, queueRound(rect{x * u, -4.5 * u, 13 * u, 9 * u}, 4.5*u, 2.25*u, &g, ink))
+		}
+	default:
+		for i := range 3 {
+			strokeRound(dst, rect{cx + (float64(i)*9-13)*u, cy - 4*u, 8 * u, 8 * u}, 2*u, 2*u, ink)
+		}
+	}
 }
 
 // drawSnack shows the oldest join request as a snackbar over the foot of the page, in the inverse of the page (ink,
@@ -635,7 +677,7 @@ func (r *roomScene) update(a *app) error {
 	switch {
 	case r.backed(a):
 		n.leave(a)
-		a.net, a.next = nil, newJoin(a, n.addr != "", "")
+		a.net, a.next = nil, newJoin(a, n.wifi(), "")
 	case a.clicked(r.action) && n.got && n.seat >= 0:
 		n.link.Send(proto.Ready{On: !n.lobby.Seats[n.seat].Ready})
 	}

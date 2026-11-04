@@ -11,6 +11,9 @@ const Version = 1
 // MaxMessage is the largest frame either side accepts. It fits an SDP with its ICE candidates.
 const MaxMessage = 16 << 10
 
+// DefaultSTUN is what iceServers holds when no TURN is configured, and what a browser's server-free rooms use.
+var DefaultSTUN = []string{"stun:stun.cloudflare.com:3478"}
+
 // Msg is every signaling message: T names it and the other fields are those it uses.
 //
 // Client to server: hello{v}, pow{c, n}, list, host.create{password, humans, public}, host.reclaim{code, secret},

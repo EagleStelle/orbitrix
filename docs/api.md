@@ -87,3 +87,9 @@ The hub's limits on every connection: `Hello` within 5 s, messages of at most 12
 A host broadcasts an announcement every second to UDP port 7778 on each private IPv4 network it is on. The packet is `ORBX`, the protocol version, a random 4-byte room id, flags (1 playing, 2 private), open human seats, the hub's port and the host device's name. A room not heard for 3 s is dropped from the list.
 
 The hub listens on each private IPv4 address at port 7777, or the next free port up to 15 more, and serves the game protocol over WebSocket at `ws://<host>:<port>/ws`. A private room's `Hello` must carry its code.
+
+Public LAN room codes are the first six characters of the announcement ID encoded in `proto.CodeAlphabet` using base32. A public code identifies the host among heard announcements; it is not an admission secret. Private codes remain randomly generated and checked by the hub.
+
+`GET /room` returns the same binary announcement with `Cache-Control: no-store`; browsers use it instead of UDP discovery. Native Mage builds also serve the bundled web game at `/`, `/play` and `/join/<CODE>` plus its content-hashed assets. Those pages are marked `data-lan` and join the host over the same origin's `/ws`.
+
+Browser-hosted Same Wi-Fi rooms exchange compressed WebRTC descriptions through `/play#i=<invite>` and `/play#r=<reply>` links. These are browser URL fragments, never HTTP query parameters or signaling requests. The reply must open at the hosting tab's origin and browser profile. Each invite is used once, and these rooms provide no TURN or automatic rejoin.

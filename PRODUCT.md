@@ -40,13 +40,16 @@ fill empty seats with AI, and enjoy following a chain reaction as it plays out.
 ## Operating Context
 
 - Local games on one device, passed between players or alone against AIs.
-- Same Wi-Fi: a Windows, Android, macOS or Linux device hosts; the others find it in the list of rooms they hear
-  (public) or by its code (private). Browsers don't play on the LAN.
+- Same Wi-Fi: native devices find a host by its broadcast or private code; browsers load the game from the native
+  host's QR/address and join there. Browser hosts use manual WebRTC invite/reply links, without signaling or TURN.
 - Online: any client hosts, a browser tab included, with the server's host password when it has one. Public rooms are
   listed; private ones are reached by code or a `/join/<CODE>` link. The host approves each player and can kick.
   Players connect to the host over WebRTC, through Cloudflare TURN when networks block a direct connection. The
   server only serves the website and signaling; no game traffic passes through it.
 - Codes, names and passwords are typed on the device's own keyboard, physical or on-screen.
+- Every platform uses the same Invite players dialog, shown on the first Open room and from the invite button: access,
+  the QR (the join link), the code, Copy code, Copy link and the action. No subtext, no written link. Each copy button
+  copies only its own value. Browser-only rooms use longer connection codes instead of a server lookup.
 
 ## Capabilities and Constraints
 
@@ -75,7 +78,8 @@ fill empty seats with AI, and enjoy following a chain reaction as it plays out.
 - Orb motion (idle orbit, frantic before exploding, per-cell variation) is the prototype's exactly and stays binding;
   only how orbs look follows the design system. Cells are rounded square tiles with gutters.
 - Labels plain and short ("Play", "Start", "Restart", "Settings", "Main menu", "Play again"). No key hints on
-  buttons, no explanatory subtext.
+  buttons. Host and Join groups stay visible with no descriptions; only the browser's Join group may explain a
+  limitation and how to continue, using plain words without jargon or center dots.
 
 ## Evidence on Hand
 

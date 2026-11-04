@@ -54,6 +54,7 @@ func Check() error {
 
 // Desktop builds the Windows client, dist/orbitrix.exe, from any OS.
 func Desktop() error {
+	mg.Deps(lanWeb)
 	icon, err := appicon.WindowsResource()
 	if err != nil {
 		return err
@@ -134,6 +135,7 @@ func Linux() error {
 
 // desktopBinary builds the desktop client for goos/goarch without cgo and returns it.
 func desktopBinary(goos, goarch string) ([]byte, error) {
+	mg.Deps(lanWeb)
 	tmp, err := os.MkdirTemp("", "orbitrix")
 	if err != nil {
 		return nil, err
@@ -228,10 +230,36 @@ func Web() error {
 	return sh.RunV("go", "run", "./cmd/webdist", dir)
 }
 
+// lanWeb bundles the current browser game into native clients so their LAN rooms can serve it offline.
+func lanWeb() error {
+	mg.Deps(Web)
+	dir := filepath.Join("server", "lan", "web")
+	old, err := filepath.Glob(filepath.Join(dir, "*.gz"))
+	if err != nil {
+		return err
+	}
+	for _, name := range old {
+		if err := os.Remove(name); err != nil {
+			return err
+		}
+	}
+	files, err := filepath.Glob(filepath.Join(out, "web", "*.gz"))
+	if err != nil {
+		return err
+	}
+	for _, name := range files {
+		if err := sh.Copy(filepath.Join(dir, filepath.Base(name)), name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Android binds ./mobile into dist/orbitrix.aar (arm64 for phones, x86_64 for emulators and Chromebooks) and wraps it
 // in dist/orbitrix.apk, signed with the key in ORBITRIX_KEYSTORE (password ORBITRIX_KEYSTORE_PASSWORD), or with the
 // debug key without one. Needs the Android SDK with an NDK (ANDROID_HOME, or its default folder) and a JDK.
 func Android() error {
+	mg.Deps(lanWeb)
 	if os.Getenv("ORBITRIX_KEYSTORE") == "" {
 		fmt.Println("android: ORBITRIX_KEYSTORE is unset, so the APK is signed with the debug key: don't publish it")
 	}

@@ -68,9 +68,6 @@ const (
 	maxBits    = 18
 )
 
-// DefaultSTUN is what iceServers holds when no TURN is configured.
-var DefaultSTUN = []string{"stun:stun.cloudflare.com:3478"}
-
 // Config is the signaling service's setup, from the server's environment.
 type Config struct {
 	Password string   // HOST_PASSWORD: empty opens hosting to anyone; under 20 characters keeps TURN off

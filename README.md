@@ -24,7 +24,7 @@ Every graphic is drawn in code and every sound is synthesised in code. The only 
 - 2 to 12 players on boards from 3×3 to 40×40, with eighteen presets in portrait, square and landscape shapes
 - Twelve bots, listed easiest to hardest: Jester, Mason, Warden, Gambler, Nomad, Raider, Spy, Prodigy, Tactician, Voyager, Hunter and Sovereign
 - This Device: play alone against bots, or pass one phone or PC around
-- Same Wi-Fi: rooms on the local network with no internet, found by name or by a private room code
+- Same Wi-Fi: native LAN rooms without internet, browser joining by QR, and browser rooms using invite/reply links
 - Online: any player can host, a browser tab included; public rooms are listed, private ones take a six-letter code or a `/join/<CODE>` link, and the host lets each player in
 - Rejoin after a dropped connection, with the seat held for 60 seconds
 - Exact wave-by-wave chain playback that speeds up on long chains, with Space to skip to the end

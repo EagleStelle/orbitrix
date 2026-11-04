@@ -24,14 +24,17 @@ const Port = 7777
 // ErrNoNetwork means the device is on no private network for players to reach it through.
 var ErrNoNetwork = errors.New("lan: not on a local network")
 
-// Host runs a LAN room in this process: the hub, a WebSocket listener (/ws) on each private network the device is
-// on, and the announcements that let joiners find it. A public room has no code: everyone on the network may join
-// and the host can kick. A private one is announced as private and takes its code. The host's own player talks to the
-// hub through Me.
+// Host runs a LAN room in this process: the hub, a listener on each private network the device is on, and the
+// announcements that let joiners find it. The listener takes players' WebSockets (/ws), tells how the room stands
+// (/room), and serves browsers the web game (web.go), which joins through the same /ws. A public room has no code:
+// everyone on the network may join and the host can kick. A private one is announced as private and takes its code.
+// The host's own player talks to the hub through Me.
 type Host struct {
 	Room *hub.Room
 	Me   hub.Conn
 	Addr string // host:port, on the network the other players most likely share
+	Web  bool   // browsers can load the game at http://Addr: this build carries the web game
+	Code string // the public room's code, derived from its announcement ID; private rooms use cfg.Code instead
 
 	// stop ends the listener and the announcements. A func, not the http.Server: a Host reachable by reflection would
 	// keep all of the server's methods, TLS included, in builds that never host (the browser's).
@@ -54,33 +57,42 @@ func Open(cfg hub.Config, name string) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	h := &Host{Room: room, Addr: net.JoinHostPort(preferred(nets).String(), strconv.Itoa(port))}
+	h.private.Store(cfg.Code != "")
+	var id [4]byte
+	_, _ = rand.Read(id[:]) // never fails
+	h.Code = PublicCode(binary.BigEndian.Uint32(id[:]))
+	now := func() Info {
+		i := info(room.Lobby(), binary.BigEndian.Uint32(id[:]), name, port)
+		i.Private = h.private.Load()
+		return i
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
 		if c, err := ws.Accept(w, r); err == nil { // on failure Accept has answered the request
 			room.Add(c)
 		}
 	})
+	// The announcement, for a browser on a page this host served, which can't hear the broadcasts (Watch).
+	mux.HandleFunc("GET /room", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(now().append(nil))
+	})
+	h.Web = routeWeb(mux, webBuild)
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 8 << 10}
 	for _, ln := range lns {
 		go srv.Serve(ln) // returns ErrServerClosed once Close has run
 	}
-	h := &Host{Room: room, Addr: net.JoinHostPort(preferred(nets).String(), strconv.Itoa(port))}
-	h.private.Store(cfg.Code != "")
 	mine, theirs := loopback.Pipe()
 	room.Add(theirs)
 	h.Me = mine
-	var id [4]byte
-	_, _ = rand.Read(id[:]) // never fails
 	ctx, cancel := context.WithCancel(context.Background())
 	h.stop = func() {
 		cancel()
 		srv.Close() // the players' WebSockets were handed to the room, which closes them
 	}
-	go announce(ctx, func() Info {
-		i := info(room.Lobby(), binary.BigEndian.Uint32(id[:]), name, port)
-		i.Private = h.private.Load()
-		return i
-	})
+	go announce(ctx, now)
 	return h, nil
 }
 

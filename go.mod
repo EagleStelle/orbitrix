@@ -10,6 +10,7 @@ require (
 	github.com/pion/webrtc/v4 v4.2.26
 	github.com/wlynxg/anet v0.0.5
 	golang.org/x/time v0.16.0
+	rsc.io/qr v0.2.0
 )
 
 require (

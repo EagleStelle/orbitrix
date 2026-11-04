@@ -70,10 +70,12 @@ Decisions that future changes have to respect, and why. How things work is in [a
 
 ## Same Wi-Fi
 
-- Everyone on the network is trusted: no approval, no join by IP. Private rooms are found by code among the rooms heard.
+- Everyone on the network is trusted: no approval. Native clients find rooms by code among the rooms heard; a public code is derived from the announcement ID and grants no privacy. Private admission codes remain independent secrets. Browser joiners use the native host's address or QR link.
 - Discovery uses subnet broadcast, not multicast: it needs no group joins, which Android 11 and later make awkward. `wlynxg/anet` reads interfaces where Android 11+ refuses Go's own lookup.
 - The host listens only on private IPv4 addresses, never 0.0.0.0, and leaves public-network detection to the OS firewall. A host whose address changes mid-session stops being reachable there.
-- Browsers never play on the LAN: a page can't listen on a port, and an HTTPS page can't open `ws://` to a LAN address. `lan.Open` sits behind a constant `runtime.GOOS` check so the web build carries no HTTP server.
+- Native hosts serve the embedded web game over plain HTTP on their LAN listener, so browser joiners can reach `/ws` at the same origin without mixed content. The local page has no secure-context clipboard or wake-lock guarantee. Mage bundles gzip assets; a browser build carries no embedded game or listener.
+- Browser hosts use WebRTC invite/reply links rather than a listener or UDP discovery. The page still needs loading; signaling and TURN are skipped, while public STUN may help. Replies must open in the host's browser at the same origin, with one hosting tab per origin. Each invite admits one player; reconnecting needs a new invite.
+- Every platform shares one Invite players dialog: access, QR, code, Copy code, Copy link and the action, without subtext or a written link. The QR always encodes the join link; Copy code copies only the code and Copy link only the link. Browser-only codes carry the full connection description; they cannot become short lookup codes without discovery or a server.
 
 ## Rooms and seats
 

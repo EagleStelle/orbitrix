@@ -18,10 +18,12 @@ import (
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
 	"orbitrix/client/online"
 	"orbitrix/core"
 	"orbitrix/proto"
+	"orbitrix/server/lan"
 	"orbitrix/server/signal"
 	"orbitrix/server/transport/loopback"
 )
@@ -123,7 +125,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		h.draw(out, a)
 	case "online", "wifi":
 		// Built by hand, so the capture neither listens on the network nor asks a server for its rooms.
-		o := &joinScene{lan: c.screen == "wifi", code: codeField()}
+		o := &joinScene{lan: c.screen == "wifi", canJoin: true, code: codeField()}
 		o.code.set("K7Q")
 		o.rows = []joinRow{{"Doormat 7 × 10", roomWord(2, false), "", "AB12CD", true},
 			{"Floor 13 × 18", roomWord(0, true), "", "EF34GH", false}}
@@ -148,6 +150,27 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		}
 		s.layout(a)
 		s.draw(out, a)
+	case "room-dialog", "room-dialog-long":
+		s = newRoomSetup(a, true)
+		s.room.net = &session{lan: &lan.Host{Web: true, Code: "K7QX3M"}, addr: "192.168.1.20:7777", code: "ABCDEF"}
+		s.room.private = c.hover == "private"
+		s.room.openDialog()
+		s.layout(a)
+		if c.screen == "room-dialog-long" {
+			s.room.open = false
+			s.draw(out, a)
+			v := &s.room.invite
+			v.settings = true
+			long := strings.Repeat("Ab3_xY7-", 90)
+			fillRound(out, rect{0, 0, a.w, a.h}, 0, withAlpha(a.sc.ground, 0.8))
+			v.draw(out, a, "Invite players", "https://orbitrix.example.com/play#i="+long, long, "Done", true)
+			r := v.opts[0]
+			r.w = v.opts[1].right() - r.x
+			fillPill(out, r, a.sc.ground)
+			drawText(out, "Invite only", a.f.labelBold, r.cx(), r.cy(), text.AlignCenter, a.sc.dim)
+		} else {
+			s.draw(out, a)
+		}
 	case "room-host", "room-joiner", "room-seat", "room-invite-open":
 		n := captureSession(c.screen != "room-joiner")
 		n.lobby.Seats = []proto.Seat{{State: proto.SeatHere, Ready: true, Name: "Human"}, {State: proto.SeatHere, Name: "Human"},
@@ -280,6 +303,13 @@ func TestCaptureSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := &setupCaptureGame{dir: dir, cases: []setupCaptureCase{
+		{name: "layout-room-desktop", w: 1040, h: 640, players: 3, screen: "room-dialog"},
+		{name: "layout-room-mobile", w: 390, h: 844, players: 3, screen: "room-dialog", hover: "private"},
+		{name: "layout-room-mobile-dark", w: 390, h: 844, players: 3, screen: "room-dialog", hover: "private", dark: true},
+		{name: "layout-room-landscape", w: 844, h: 390, players: 3, screen: "room-dialog"},
+		{name: "layout-room-short", w: 640, h: 320, players: 3, screen: "room-dialog"},
+		{name: "layout-room-long-mobile", w: 390, h: 844, players: 3, screen: "room-dialog-long"},
+		{name: "layout-room-long-landscape", w: 780, h: 360, players: 3, screen: "room-dialog-long", dark: true},
 		{name: "p7-room-setup", w: 1440, h: 900, players: 4, screen: "room-setup"},
 		{name: "p7-room-setup-mobile", w: 390, h: 844, players: 4, screen: "room-setup", dark: true},
 		{name: "p7-room-host", w: 1440, h: 900, players: 4, screen: "room-host"},

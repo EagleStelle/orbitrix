@@ -65,6 +65,10 @@ The hub runs the lobby (ready, seat changes, Swap and Remove, settings that stay
 
 `lan.Host` runs the hub behind `ws` on each private IPv4 address and announces the room by UDP broadcast every second. `lan.Find` listens for announcements; `lan.Join` connects to a room it heard. There is no signaling, TURN or approval on the LAN: a public room lets anyone in, a private one needs its code.
 
+Native Mage builds embed the web game's gzip files. The LAN host serves that game at `/`, `/play` and `/join/<code>`, marking its page so browsers join over the same origin's `/ws`. `lan.Watch` polls `/room` instead of listening to UDP. The shared Invite players dialog shows the join link as a QR beside the code, with Copy code and Copy link. Public LAN codes identify announcements; private codes authenticate admission.
+
+`client/online.Direct` hosts browser Same Wi-Fi rooms without signaling. Each invite carries one compressed WebRTC offer; the joiner returns an answer through a QR link opened on the host's device. The loader hands replies to the hosting tab through local storage. These connections use STUN but no TURN; invites are single-use, and disconnected players need new ones.
+
 ### `server`: the website
 
 `server.Site` serves the landing page, the game at `/play` and `/join/<code>`, the downloads, the web build's content-hashed files with precompressed copies, and mounts `/signal`. `cmd/orbitrix-server` configures it from flags and environment variables. It carries no game traffic.

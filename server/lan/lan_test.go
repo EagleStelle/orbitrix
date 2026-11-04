@@ -37,6 +37,14 @@ func TestAnnouncement(t *testing.T) {
 	}
 }
 
+func TestPublicCode(t *testing.T) {
+	for id, want := range map[uint32]string{0: "AAAAAA", 0x08000000: "BAAAAA", 0xffffffff: "999999"} {
+		if got := PublicCode(id); got != want {
+			t.Errorf("%08x: code %q, want %q", id, got, want)
+		}
+	}
+}
+
 // TestHost opens a room on this device's private networks, hears its announcement, joins it, and is turned away once
 // its one human seat is taken.
 func TestHost(t *testing.T) {
@@ -69,6 +77,31 @@ func TestHost(t *testing.T) {
 			}
 		}
 	}
+
+	watch := Watch(h.Addr) // as a browser on the page this host served finds it
+	defer watch.Close()
+	for start := time.Now(); ; time.Sleep(50 * time.Millisecond) {
+		rooms := watch.Rooms(nil)
+		if len(rooms) == 1 && rooms[0].Addr == h.Addr && rooms[0].Name == "desk" && rooms[0].Open == 1 && !rooms[0].Private {
+			if PublicCode(rooms[0].ID) != h.Code || len(h.Code) != proto.CodeLen {
+				t.Fatal("a public room's displayed code must match its announcement")
+			}
+			break
+		}
+		if time.Since(start) > 3*time.Second {
+			t.Fatalf("watching the host: %+v", rooms)
+		}
+	}
+	h.SetCode("ABCDEF")
+	for start := time.Now(); ; time.Sleep(50 * time.Millisecond) {
+		if rooms := watch.Rooms(nil); len(rooms) == 1 && rooms[0].Private {
+			break
+		}
+		if time.Since(start) > 3*time.Second {
+			t.Fatal("a watched room turned private still reads as public")
+		}
+	}
+	h.SetCode("")
 
 	if _, _, err := Join(ctx, "127.0.0.1:1", proto.Hello{}); err == nil {
 		t.Fatal("nobody there, yet joined")

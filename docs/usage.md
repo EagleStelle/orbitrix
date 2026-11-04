@@ -17,11 +17,13 @@ Tap the welcome line above PLAY ("Welcome, Human!" at first) to type your name o
 PLAY swaps itself for the ways to play:
 
 - This Device: alone against bots, or with friends passing one device around.
-- Same Wi-Fi: rooms on the local network. Native apps only; never in a browser.
+- Same Wi-Fi: native LAN rooms, browser joining by QR, and browser rooms joined by invite and reply links.
 - Online: rooms through the site's server. Present in the web build and in native builds made with `ORBITRIX_SERVER`.
 - Back.
 
-In a browser on a site without a server, PLAY goes straight to Setup.
+Browsers loading the game from a native LAN host offer This Device and Same Wi-Fi.
+
+Host and Join stay visible on every room page without descriptions. Only the browser's Join group explains limits and how to continue.
 
 ## Setup
 
@@ -77,17 +79,34 @@ Every bot is deterministic for a given position and seed, and each thinks for a 
 
 Every native build can host or join on the local network, with or without internet.
 
-1. One player opens Same Wi-Fi and taps Set up a room. The room page is Setup with a round key button beside the action.
-2. The key button opens the Room dialog: Public or Private. A private room shows its six-character code and a copy button. The choice applies on Confirm.
-3. Open room starts listening. Joiners find a public room under Rooms nearby, named after the host device, and tap it. A private room is joined by typing its code under Join by code.
+1. One player opens Same Wi-Fi and taps Set up a room. The room page is Setup with a round invite button beside the action.
+2. The invite button opens the Invite players dialog: Public or Private, the QR, the code, and Copy code and Copy link beside the action. Access changes apply on Confirm.
+3. Open room starts listening and shows the same dialog. The QR is the join link; Copy code copies the code and Copy link the link, on every platform. Joiners find a public room under Rooms nearby or type the public or private room's code under Join by code.
 4. Seats stay changeable until the host presses Start. Open seats are filled with bots.
 
 On Windows the first Same Wi-Fi tap explains that Windows will ask to let Orbitrix on the network. Allow it for private networks. If the host's device sleeps or the Android app goes to the background, the room pauses and joiners retry for 60 seconds.
 
+### Join an app host from a browser
+
+After opening the room, the host shows the Invite players dialog (it opens by itself the first time, then from the invite button). Scan its QR with the joining phone's camera on the same network. The host serves the game itself, so no website or internet connection is needed. The Same Wi-Fi page opens with the room's code filled in. Tap the room or Join; go Home first to set your name if needed.
+
+The host must use a Mage build that bundles the web game. Browsers can't discover other LAN hosts. Local HTTP pages use a selection-based clipboard fallback when needed; browser clipboard rules may still refuse copying. Keep the screen awake while playing, since the browser may not provide a wake lock on a local page.
+
+### Host in a browser without signaling
+
+1. Open the web game, choose Same Wi-Fi, set up a room, and tap Open room.
+2. The Invite players dialog shows the invite's QR and code. Each invite admits one player. The joining player scans the QR, or opens the link sent with Copy link.
+3. The joiner's game uses the same layout for Reply: QR, code, Done, Copy code and Copy link. Scan its QR on the host's device, in the same browser and site as the hosting tab. Return to the hosting tab; the joiner enters the room once connected.
+4. Use the next invite for another player, then start as usual.
+
+Keep one hosting tab per site in that browser. A reply opened in another browser or an app's embedded browser cannot reach it. The web page must load first; these rooms skip the signaling server and TURN, but may use public STUN to find a direct route. Networks that block direct connections need Online with TURN instead. A disconnected player needs a new invite; the old link cannot rejoin their seat.
+
+Browser-only invite and reply codes contain the full connection details, so they are longer than six characters. Copy code copies the entire code; Copy link copies the link the QR holds. This flow uses the two QR scans; short-code lookup without a server or LAN discovery is unavailable.
+
 ## Online
 
 1. The host opens Online and taps Set up a room. When the server has a host password, the host types it once; the client saves it and asks again only if the server refuses it.
-2. Open room creates the room. A public room is listed under Public rooms with its board size; a private one is reached by its code, or by the `https://<site>/join/<CODE>` link, which opens the game with the code filled in.
+2. Open room creates the room and shows the Invite players dialog: access, QR, code, Copy code and Copy link. A public room is listed under Public rooms with its board size; a private one is reached by its code or by scanning the QR.
 3. Each join request appears as a bar above the action with No and Let in. More waiting requests show as "+N".
 4. Start fills open seats with bots.
 
@@ -99,7 +118,7 @@ The game runs on the host's device. If the host leaves, the game ends for everyo
 |---|---|
 | Video | Theme (light or dark), Fullscreen (not on phones), Colorblind mode |
 | Audio | Sound, Volume |
-| Network | The access new Same Wi-Fi rooms and Online rooms start with (Public or Private), and Force relay in builds that play online |
+| Network | Default access for native Same Wi-Fi rooms and Online rooms (Public or Private), and Force relay for Online. Browser Same Wi-Fi rooms use invites instead. |
 
 Settings are saved to `%AppData%\Orbitrix\settings.json` on Windows, the app's files folder on Android and the browser's `localStorage` on the web.
 

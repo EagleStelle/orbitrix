@@ -19,8 +19,8 @@ type Host interface {
 	Rotate(landscape bool)
 	// KeepScreenOn keeps the screen awake while the player hosts a room, online or on the LAN.
 	KeepScreenOn(on bool)
-	// Share opens the share sheet with text: a room's join link.
-	Share(text string)
+	// Copy puts the invite code on the system clipboard.
+	Copy(text string) bool
 	// Keyboard sets up the on-screen keyboard for the next field: a password's (secret) or a room code's.
 	Keyboard(secret bool)
 	// Discover holds the Wi-Fi multicast lock while the player looks for LAN rooms, so hosts' broadcasts get through.
@@ -39,7 +39,7 @@ func Start(dataDir string, host Host) {
 		platform.Leave = host.Leave
 		platform.Rotate = host.Rotate
 		platform.Hosting = host.KeepScreenOn
-		platform.ShareSheet = host.Share
+		platform.Copy = func(text string, done func(bool)) { done(host.Copy(text)) }
 		platform.Keyboard = host.Keyboard
 		platform.Discover = host.Discover
 		platform.DeviceName = host.DeviceName

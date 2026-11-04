@@ -32,10 +32,26 @@
     document.documentElement.classList.add("dark");
     document.querySelector('meta[name="theme-color"]').content = "#1C1A18";
   }
-  const dots = inks[theme].map(() => document.getElementById("dots").appendChild(document.createElement("i")));
-  const light = (f) => dots.forEach((d, i) => { if (f * dots.length >= i + 1) d.style.backgroundColor = inks[theme][i]; });
+  const say = (words) => { document.getElementById("load").innerHTML = "<p>" + words + "</p>"; };
 
-  (async () => {
+  // A reply link (#r=...) is opened on the host's own device: it leaves the joiner's reply for the tab hosting the
+  // room (platform.Reply reads it there) instead of starting a second game.
+  if (location.hash.startsWith("#r=")) {
+    try {
+      localStorage.setItem("orbitrix/reply", location.hash.slice(3));
+      history.replaceState(null, "", location.pathname);
+      say("Reply saved. Return to your room in this browser. If your room is in another browser, open this link there.");
+    } catch (e) {
+      console.error(e);
+      say("This browser blocks saved data, so the reply cannot reach your room. Allow saved data, then open this link again.");
+    }
+  } else {
+    load();
+  }
+
+  async function load() {
+    const dots = inks[theme].map(() => document.getElementById("dots").appendChild(document.createElement("i")));
+    const light = (f) => dots.forEach((d, i) => { if (f * dots.length >= i + 1) d.style.backgroundColor = inks[theme][i]; });
     try {
       const res = await fetch("game.wasm");
       if (!res.ok) throw new Error("game.wasm: HTTP " + res.status);
@@ -57,8 +73,8 @@
       go.run(instance);
     } catch (e) {
       console.error(e);
-      document.getElementById("load").innerHTML = "<p>Orbitrix didn't load. Reload the page to try again.</p>";
+      say("Orbitrix didn't load. Reload the page to try again.");
     }
-  })();
+  }
 </script>
 </html>

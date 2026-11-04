@@ -93,10 +93,29 @@ func TestLANRoom(t *testing.T) {
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	r := testRoom{host: hostSession(l.Room, online.NewLink(l.Me), "Human"), approve: func() {}}
+	r := testRoom{host: hostSession(l.Room, online.NewLink(l.Me), "Human"), code: l.Code, approve: func() {}}
 	r.host.lan, r.host.addr = l, l.Addr
 	joined := make(chan lanResult, 1)
-	go joinLAN(ctx, []string{l.Addr}, "Human", "", proto.Token{}, joined)
+	watch := lan.Watch(l.Addr)
+	defer watch.Close()
+	var heard []lan.Room
+	for len(heard) == 0 {
+		if ctx.Err() != nil {
+			t.Fatal("the public room was not announced")
+		}
+		heard = watch.Rooms(heard[:0])
+		time.Sleep(10 * time.Millisecond)
+	}
+	j := &joinScene{lan: true, canJoin: true, code: codeField(), heard: heard, local: joined}
+	wrong := "A" + l.Code[1:]
+	if wrong == l.Code {
+		wrong = "B" + l.Code[1:]
+	}
+	j.start(ja, "", wrong, true)
+	if j.status == "" || j.joining != "" {
+		t.Fatal("an incorrect code must not join a public room")
+	}
+	j.start(ja, "", l.Code, true)
 	r.joined = func() *session {
 		select {
 		case jr := <-joined:
@@ -112,6 +131,43 @@ func TestLANRoom(t *testing.T) {
 	if ja.set.Rejoin != nil {
 		t.Fatal("a closed room must forget its rejoin")
 	}
+}
+
+func TestDirectRoom(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	ha, ja := testRoomApps()
+	ja.set.Rejoin = nil
+	d, err := online.OpenDirect(hubConfig(ha))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	r := testRoom{host: hostSession(d.Room, d.Me, "Host"), approve: func() {}}
+	r.host.direct = d
+	invite := ""
+	for invite == "" {
+		if ctx.Err() != nil {
+			t.Fatal("invite never prepared")
+		}
+		invite = d.Invite()
+		time.Sleep(10 * time.Millisecond)
+	}
+	p, reply, err := online.Reply(ctx, invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	d.Take(reply)
+	c, err := p.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := newSession(online.NewLink(c))
+	joined.invited = true
+	joined.link.Send(proto.Hello{Name: "Joiner"})
+	r.joined = func() *session { return joined }
+	playRoom(t, ctx, ha, ja, r, false)
 }
 
 func testRoomApps() (host, joiner *app) {
@@ -166,7 +222,11 @@ func playRoom(t *testing.T, ctx context.Context, ha, ja *app, r testRoom, drop b
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if ja.set.Rejoin == nil || ja.set.Rejoin.Code != r.code || ja.set.Rejoin.Addr != host.addr {
+	if joiner.invited {
+		if ja.set.Rejoin != nil || !joiner.wifi() {
+			t.Fatal("an invited joiner must return to Same Wi-Fi without saving a rejoin")
+		}
+	} else if ja.set.Rejoin == nil || ja.set.Rejoin.Code != r.code || ja.set.Rejoin.Addr != host.addr {
 		t.Fatalf("the joiner must remember its seat to rejoin: %+v", ja.set.Rejoin)
 	}
 
@@ -254,7 +314,7 @@ func playRoom(t *testing.T, ctx context.Context, ha, ja *app, r testRoom, drop b
 }
 
 // TestRoomSetup opens a LAN room from Setup and changes it while it waits, through clicks on Setup's own controls and
-// the Room dialog: the players' plus opens a seat in the hub, Private gives the room a code that joining then needs,
+// the Invite players dialog: the players' plus opens a seat in the hub, Private gives the room a code that joining then needs,
 // and handing a held seat to a bot from its menu lets its player go.
 func TestRoomSetup(t *testing.T) {
 	a := setupTestApp(1040, 640, 1, 2)
@@ -290,6 +350,11 @@ func TestRoomSetup(t *testing.T) {
 	if label := s.room.actionLabel(a); label != "Waiting for players" && label != "Start with bots" {
 		t.Fatalf("an open room's action reads %q", label)
 	}
+	if !s.room.open {
+		t.Fatal("the first Open room must show the invite")
+	}
+	s.room.layoutDialog(a)
+	click(s.room.confirmB) // Done
 
 	s.layout(a)
 	click(s.plusP)
@@ -298,7 +363,7 @@ func TestRoomSetup(t *testing.T) {
 	s.layout(a)
 	click(s.invite)
 	if !s.room.open {
-		t.Fatal("the invite button must open the Room dialog")
+		t.Fatal("the invite button must open the Invite players dialog")
 	}
 	s.room.layoutDialog(a)
 	click(s.room.opts[1]) // Private, a draft
@@ -315,8 +380,16 @@ func TestRoomSetup(t *testing.T) {
 	click(s.room.opts[1])
 	s.room.layoutDialog(a)
 	click(s.room.confirmB)
-	if s.room.open || s.room.code() == "" {
-		t.Fatal("Confirm makes the room private, with a code")
+	if !s.room.open || !s.room.private || s.room.code() == "" {
+		t.Fatal("Confirm must apply access and keep the invitation visible")
+	}
+	// Only builds that bundle the web game (a native Mage build; not plain go test in CI) have a browser link.
+	if link, code := s.room.invitation(); code == "" || (link == "") == n().lan.Web {
+		t.Fatalf("Confirm must publish a working invitation: link %q, code %q, web %v", link, code, n().lan.Web)
+	}
+	click(s.room.confirmB) // Done
+	if s.room.open {
+		t.Fatal("Done must close the consolidated dialog")
 	}
 	code := s.room.code()
 	s = newRoom(n()).(*setupScene) // returning from a game rebuilds the host's room scene
@@ -330,8 +403,11 @@ func TestRoomSetup(t *testing.T) {
 			t.Fatalf("choosing Private after a game displays %q, want the saved code %q", s.room.code(), code)
 		}
 		click(s.room.confirmB)
+		if s.room.open {
+			click(s.room.confirmB)
+		} // Confirm applies; Done closes.
 	}
-	if s.room.shareText() != code || n().code != code {
+	if s.room.code() != code || n().code != code {
 		t.Fatal("the displayed, shared and accepted LAN codes must agree after switching Public then Private")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

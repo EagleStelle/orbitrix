@@ -3,6 +3,7 @@ package lan
 import (
 	"cmp"
 	"context"
+	"encoding/base32"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -17,6 +18,12 @@ import (
 
 	"orbitrix/proto"
 )
+
+// PublicCode identifies a public room from its announcement. Private admission codes remain unrelated secrets.
+func PublicCode(id uint32) string {
+	return base32.NewEncoding(proto.CodeAlphabet).WithPadding(base32.NoPadding).
+		EncodeToString(binary.BigEndian.AppendUint32(nil, id))[:proto.CodeLen]
+}
 
 // A host announces its room every second to the broadcast address of each private IPv4 network it is on; joiners
 // listen on DiscoveryPort. Broadcast rather than multicast: it needs no group joins, which Android 11 and later make
@@ -138,9 +145,10 @@ func announce(ctx context.Context, info func() Info) {
 }
 
 // Finder hears the rooms hosts announce. Android passes broadcasts on only to apps holding a multicast lock, which
-// the client takes while it listens.
+// the client takes while it listens. One made by Watch asks a single host instead.
 type Finder struct {
-	c    *net.UDPConn
+	c    *net.UDPConn       // Find's; nil for Watch's
+	stop context.CancelFunc // Watch's; nil for Find's
 	mu   sync.Mutex
 	seen map[uint32]heard // by room ID
 }
@@ -172,11 +180,14 @@ func (f *Finder) read() {
 		if err != nil || !ok {
 			continue
 		}
-		addr := net.JoinHostPort(from.IP.String(), strconv.Itoa(int(info.Port)))
-		f.mu.Lock()
-		f.seen[info.ID] = heard{Room{addr, info}, time.Now()}
-		f.mu.Unlock()
+		f.hear(Room{net.JoinHostPort(from.IP.String(), strconv.Itoa(int(info.Port))), info})
 	}
+}
+
+func (f *Finder) hear(r Room) {
+	f.mu.Lock()
+	f.seen[r.ID] = heard{r, time.Now()}
+	f.mu.Unlock()
 }
 
 // Rooms appends the rooms heard in the last few seconds to dst, one per host, by name.
@@ -198,4 +209,11 @@ func (f *Finder) Rooms(dst []Room) []Room {
 }
 
 // Close stops listening.
-func (f *Finder) Close() { f.c.Close() }
+func (f *Finder) Close() {
+	if f.c != nil {
+		f.c.Close()
+	}
+	if f.stop != nil {
+		f.stop()
+	}
+}

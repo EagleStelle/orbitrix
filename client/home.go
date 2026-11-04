@@ -343,15 +343,12 @@ func (d *demo) tick() {
 }
 
 // playModes are the ways to play this build offers.
-func playModes() []string { return waysToPlay(runtime.GOOS == "js", origin) }
+func playModes() []string { return waysToPlay(origin) }
 
-// waysToPlay is This Device always (alone against bots, or passing it round), Same Wi-Fi in every app (a browser can
-// neither host nor reach a LAN host), and Online where the build has a server.
-func waysToPlay(browser bool, origin string) []string {
-	modes := []string{"This Device"}
-	if !browser {
-		modes = append(modes, "Same Wi-Fi")
-	}
+// waysToPlay is This Device and Same Wi-Fi always (a browser hosts server-free rooms, joined by invite links, and joins
+// the LAN host that served its page), and Online where the build has a server.
+func waysToPlay(origin string) []string {
+	modes := []string{"This Device", "Same Wi-Fi"}
 	if origin != "" {
 		modes = append(modes, "Online")
 	}

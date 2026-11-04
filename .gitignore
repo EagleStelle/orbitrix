@@ -9,6 +9,7 @@ CLAUDE.md
 
 # Build output
 /dist/
+/server/lan/web/*.gz
 *.exe
 *.wasm
 *.aar

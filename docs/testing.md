@@ -22,8 +22,9 @@ Client tests run Ebitengine scenes headless. They need no window, so they run in
 | `server/hub` | Lobby, ready, start, rematch, leave, rejoin tokens and the seat grace, kick, replace, skip, Swap and Remove, the turn timer, bot seats and the message limits |
 | `server/signal` | The message order, proof of work, password checks, approvals and the pending cap, TURN credential limits and revocation, socket caps and the origin check. `TestOnlineGame` plays a whole game between two pion peers through signaling |
 | `server` | Routes, precompressed files and cache headers; `TestFloodFromOneIP` floods `/signal` with wrong passwords from one IP and checks a correct host still gets through |
-| `server/transport/*`, `server/lan` | Each `Conn`, keepalive pings, LAN announcements and hosting |
-| `client` | Layout across window sizes, Setup and seat changes, text fields, count badges, wave replay ending equal to the game, and whole rooms: `TestOnlineRoom`, `TestLANRoom` (a dropped joiner winning its seat back) and `TestRoomSetup` driving the room page through clicks |
+| `server/transport/*`, `server/lan` | Each `Conn`, keepalive pings, LAN announcements, hosting, HTTP room announcements and bundled browser routes |
+| `client/online` | Signaling joins, manual WebRTC invite/reply joins, single-use invites and malformed or oversized link rejection |
+| `client` | Layout across window sizes, QR dialogs, abandoned reply cleanup, Setup and seat changes, text fields, count badges, wave replay ending equal to the game, and whole rooms: `TestOnlineRoom`, `TestLANRoom` (a dropped joiner winning its seat back), `TestDirectRoom` and `TestRoomSetup` driving the room page through clicks |
 | `cmd/webdist` | The drawn favicon and generated README/Android logo consistency |
 | `internal/appicon` | Logo pixels and symmetry, macOS ICNS sizes, Windows icon resources linked into a real executable |
 

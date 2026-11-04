@@ -1,7 +1,8 @@
 package com.orbitrix;
 
 import android.app.Activity;
-import android.content.Intent;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.pm.ActivityInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
@@ -151,11 +152,15 @@ public final class MainActivity extends Activity implements Host {
     }
 
     @Override
-    public void share(String text) {
-        runOnUiThread(() -> {
-            Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text);
-            startActivity(Intent.createChooser(send, null));
-        });
+    public boolean copy(String text) {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (clipboard == null) return false;
+        try {
+            clipboard.setPrimaryClip(ClipData.newPlainText("", text));
+            return true;
+        } catch (SecurityException e) {
+            return false;
+        }
     }
 
     // The game's fields type with the phone's keyboard, through the hidden edit text inside EbitenView. A room code

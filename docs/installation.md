@@ -46,6 +46,8 @@ Mage and `ebitenmobile` are pinned in `go.mod` as tools, so `go tool` runs them 
 | `push` | The same image, pushed to Docker Hub (needs `docker login`) |
 | `all` | Every target above except `push`, in that order |
 
+Native build targets first build the web game and copy its gzip files into `server/lan/web/` for embedding. Generated files there are ignored by git. A plain `go run` or `go build` from a fresh checkout still plays native LAN games but cannot serve browsers; use Mage to include that feature. The browser build excludes the embedded bundle.
+
 ### Environment variables
 
 | Variable | Read by | Meaning |

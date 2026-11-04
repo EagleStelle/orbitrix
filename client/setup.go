@@ -140,7 +140,7 @@ type setupScene struct {
 	back                  rect
 	titleX, titleY        float64
 	players, boardB       rect
-	invite                rect // the Room dialog's button beside the action, in a room
+	invite                rect // the single room settings and invitation button
 	lsnack                bool // the join request snackbar was showing
 	headY                 float64
 	minusP, plusP         rect
@@ -186,7 +186,8 @@ func (s *setupScene) layout(a *app) {
 	s.back = backButton(v.x+pad, v.y+pad, w, u)
 	s.titleX, s.titleY = s.back.right()+16*u, s.back.cy()
 	s.start = rect{v.x + pad, v.bottom() - pad - 52*u, w, 52 * u}
-	if s.room != nil { // the invite button stands beside the action
+	s.invite = rect{}
+	if s.room != nil {
 		s.start.w -= 52*u + gap
 		s.invite = rect{s.start.right() + gap, s.start.y, 52 * u, 52 * u}
 	}
