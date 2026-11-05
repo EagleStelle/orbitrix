@@ -188,6 +188,9 @@ func still(s scene) bool {
 	if runtime.GOOS == "android" {
 		return false
 	}
+	if bar := sceneSnackbar(s); bar != nil && bar.ticks < snackIn {
+		return false
+	}
 	switch s := s.(type) {
 	case *setupScene, *settingsMenu:
 		return true
@@ -313,6 +316,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	if g.ShowFPS {
 		g.drawFPS(screen)
 	}
+	drawSnackbarOverlay(screen, &g.a, g.scene)
 }
 
 // drawFPS shows the frame rate and the longest gap between frames over the last second.

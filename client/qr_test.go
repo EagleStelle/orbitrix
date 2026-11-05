@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +41,7 @@ func TestJoinGroupsVisible(t *testing.T) {
 						}
 					}
 					if canJoin && !containsRect(s.joinB, s.join) {
-						t.Fatal("error text pushed Join outside its group")
+						t.Fatal("Join must stay inside its group")
 					}
 					if blocked {
 						a.in = input{x: s.host.cx(), y: s.host.cy(), clicked: true}
@@ -50,6 +51,46 @@ func TestJoinGroupsVisible(t *testing.T) {
 					}
 				})
 			}
+		}
+	}
+}
+
+func TestJoinWaitingKeepsButtonInGroup(t *testing.T) {
+	for _, size := range append(layoutSizes, [2]float64{640, 320}) {
+		for _, waiting := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%gx%g/waiting%v", size[0], size[1], waiting), func(t *testing.T) {
+				a := withCutout(setupTestApp(size[0], size[1], 1, 2))
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				s := &joinScene{canJoin: true, code: codeField(), joining: "K7QX3M", cancel: cancel, rows: make([]joinRow, 20)}
+				s.waiting.Store(waiting)
+				s.snack.ticks = snackIn
+				s.layout(a)
+				bar, _, _ := s.snack.frame(a)
+				if overlaps(bar, s.join) || !containsRect(s.view.viewport, s.join) {
+					t.Fatal("starting a join must reveal Cancel above the snackbar")
+				}
+				for _, offset := range []float64{0, s.view.maxScroll() / 2, s.view.maxScroll()} {
+					s.view.offset = offset
+					s.layout(a)
+					got, _, _ := s.snack.frame(a)
+					if got != bar || !containsRect(a.safe(), got) {
+						t.Fatal("the snackbar must stay fixed regardless of content or scrolling")
+					}
+					if !containsRect(s.joinB, s.join) || s.join.h != 52*a.u ||
+						s.join.x != s.joinB.x+s.bp || s.join.w != s.joinB.w-2*s.bp ||
+						s.join.y != s.slotRow.bottom()+44*a.u || math.Abs(s.join.bottom()-(s.joinB.bottom()-s.bp)) > 0.001 {
+						t.Fatal("Join/Cancel must keep its original size, padding and position inside the group")
+					}
+				}
+				if !containsRect(s.view.viewport, s.join) {
+					t.Fatal("Cancel must be reachable at the end of the group's scroll")
+				}
+				a.in = input{x: s.join.cx(), y: s.join.cy(), clicked: true}
+				if err := s.update(a); err != nil || ctx.Err() != context.Canceled {
+					t.Fatalf("Cancel must stop the join while waiting: %v", err)
+				}
+			})
 		}
 	}
 }

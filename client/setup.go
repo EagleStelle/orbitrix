@@ -190,12 +190,12 @@ func (s *setupScene) layout(a *app) {
 	if s.room != nil {
 		s.start.w -= 52*u + gap
 		s.invite = rect{s.start.right() + gap, s.start.y, 52 * u, 52 * u}
+		s.room.snack.avoid = s.start
 	}
 	top := s.back.bottom() + gap
 	s.viewport = rect{v.x + pad, top, w, max(1, s.start.y-gap-top)}
 	snack := 0.0 // room under the join request snackbar, so it hides nothing for good
 	if s.room != nil {
-		s.room.layoutSnack(a, s.viewport, s.start, gap)
 		if len(s.room.reqs) > 0 {
 			snack = snackH*u + gap
 		}
@@ -457,12 +457,17 @@ func (s *setupScene) update(a *app) error {
 		if s.room.pre(a, s) {
 			return nil
 		}
+	}
+	s.layout(a)
+	if s.room != nil {
+		if !a.in.esc && s.room.answerSnack(a) {
+			return nil
+		}
 		if s.room.open {
 			s.room.updateDialog(a)
 			return nil
 		}
 	}
-	s.layout(a)
 	u, set := a.u, a.set
 	if s.maxScroll > 0 && (a.in.dragY != 0 || a.in.wheel != 0 && s.viewport.contains(a.in.x, a.in.y)) {
 		s.scroll -= a.in.wheel*(compactButtonTarget+8)*u + a.in.dragY
@@ -511,9 +516,6 @@ func (s *setupScene) update(a *app) error {
 		}
 	}
 
-	if s.room != nil && s.room.answerSnack(a) {
-		return nil
-	}
 	switch {
 	case a.clicked(compactHit(s.back, u)):
 		s.leave(a)
@@ -597,7 +599,6 @@ func (s *setupScene) draw(dst *ebiten.Image, a *app) {
 	s.drawStart(dst, a)
 	if s.room != nil {
 		drawRoomButton(dst, a, s.invite)
-		s.room.drawSnack(dst, a)
 	}
 	if s.menu >= 0 {
 		s.drawMenu(dst, a)
@@ -605,6 +606,13 @@ func (s *setupScene) draw(dst *ebiten.Image, a *app) {
 	if s.room != nil && s.room.open {
 		s.room.drawDialog(dst, a)
 	}
+}
+
+func (s *setupScene) snackbar() *snackbar {
+	if s.room == nil || len(s.room.reqs) == 0 {
+		return nil
+	}
+	return &s.room.snack
 }
 
 // stepper draws − value + with the buttons on the block's ground.

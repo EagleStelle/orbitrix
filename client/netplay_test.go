@@ -53,6 +53,7 @@ func TestOnlineRoom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer h.Close()
 	r := testRoom{host: hostSession(h.Room, h.Me, "Human"), code: h.Code()}
 	r.host.host = h
 	joined := make(chan joinResult, 1)
@@ -60,6 +61,17 @@ func TestOnlineRoom(t *testing.T) {
 		c, err := online.Join(ctx, url, h.Code(), "Human", proto.Token{}, false, func(bool) {})
 		joined <- joinResult{c: c, err: err}
 	}()
+	for len(h.Requests(nil)) == 0 {
+		if ctx.Err() != nil {
+			t.Fatal("the join request never arrived")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	room := newRoom(r.host).(*setupScene).room
+	room.requests()
+	if len(room.reqs) != 0 || len(h.Requests(nil)) != 1 {
+		t.Fatal("a request must wait for the first lobby before it is shown or denied")
+	}
 	r.joined = func() *session {
 		select {
 		case jr := <-joined:
@@ -75,8 +87,20 @@ func TestOnlineRoom(t *testing.T) {
 		}
 	}
 	r.approve = func() {
-		if q := h.Requests(nil); len(q) > 0 {
-			h.Approve(q[0].Peer)
+		if q := h.Requests(nil); r.host.got && len(q) > 0 {
+			s := newRoom(r.host).(*setupScene)
+			s.room.openDialog()
+			s.room.requests()
+			s.layout(ha)
+			s.room.snack.ticks = snackIn
+			_, buttons, _ := s.room.snack.frame(ha)
+			ha.in = input{x: buttons[1].cx(), y: buttons[1].cy(), clicked: true}
+			if err := s.update(ha); err != nil {
+				t.Fatal(err)
+			}
+			if !s.room.open {
+				t.Fatal("answering a request above the invite must leave the dialog open")
+			}
 		}
 	}
 	playRoom(t, ctx, ha, ja, r, false)

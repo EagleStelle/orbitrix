@@ -27,9 +27,6 @@ var accessNames = [2]string{"Public", "Private"}
 // maxRequests is how many joiners signaling lets wait for the host at once.
 const maxRequests = 3
 
-// The join request snackbar: its height, and the ticks it takes to rise into place.
-const snackH, snackIn = 56, 12
-
 // moreWaiting is the snackbar's count of the requests behind the one it shows.
 var moreWaiting = [maxRequests]string{"", "+1", "+2"}
 
@@ -46,8 +43,7 @@ type hostRoom struct {
 	noteT        int
 	reqs         []online.Request
 	snackPeer    string
-	snackMsg     string
-	snackT       int  // ticks since the request on the bar arrived
+	snack        snackbar
 	open         bool // the Invite players dialog is showing
 	draft        bool // the dialog's Private, until Confirm
 	inviteCode   string
@@ -55,9 +51,8 @@ type hostRoom struct {
 	replyT       int // ticks, for looking out for a server-free room's replies now and then
 
 	// Layout in device px.
-	snack, snackNo, snackYes rect
-	opts                     [2]rect // Public, Private
-	confirmB                 rect
+	opts     [2]rect // Public, Private
+	confirmB rect
 }
 
 type openResult struct {
@@ -145,19 +140,6 @@ func (h *hostRoom) hostNote() string {
 	return ""
 }
 
-// layoutSnack places the snackbar over the foot of the body, centred above the action: the body's width on a phone,
-// at most 560 px from 600 px wide.
-func (h *hostRoom) layoutSnack(a *app, viewport, action rect, gap float64) {
-	u := a.u
-	sw := viewport.w
-	if viewport.w >= 600*u {
-		sw = min(560*u, viewport.w)
-	}
-	h.snack = rect{viewport.cx() - sw/2, action.y - gap - snackH*u, sw, snackH * u}
-	h.snackYes = rect{h.snack.right() - 8*u - 96*u, h.snack.cy() - 20*u, 96 * u, 40 * u}
-	h.snackNo = rect{h.snackYes.x - 4*u - 64*u, h.snackYes.y, 64 * u, 40 * u}
-}
-
 // openDialog shows the Invite players dialog with the room's access as its draft.
 func (h *hostRoom) openDialog() {
 	h.open, h.draft = true, h.private
@@ -196,10 +178,10 @@ func (h *hostRoom) pre(a *app, s *setupScene) bool {
 	return false
 }
 
-// requests takes in the online host's waiting joiners, turning them away when no seat is open.
+// requests takes in the online host's waiting joiners once the lobby is known, turning them away when no seat is open.
 func (h *hostRoom) requests() {
 	o := h.net.host
-	if o == nil {
+	if o == nil || !h.net.got {
 		return
 	}
 	h.reqs = o.Requests(h.reqs[:0])
@@ -214,9 +196,13 @@ func (h *hostRoom) requests() {
 	case len(h.reqs) == 0:
 		h.snackPeer = ""
 	case h.reqs[0].Peer != h.snackPeer: // a new request takes the bar, and rises into place
-		h.snackPeer, h.snackMsg, h.snackT = h.reqs[0].Peer, h.reqs[0].Name+" wants to join", 0
+		h.snackPeer = h.reqs[0].Peer
+		h.snack.message = h.reqs[0].Name + " wants to join"
+		h.snack.actions, h.snack.ticks = [2]string{"No", "Let in"}, 0
 	}
-	h.snackT++
+	if len(h.reqs) > 0 {
+		h.snack.more = moreWaiting[len(h.reqs)-1]
+	}
 }
 
 // answerSnack takes a tap on the snackbar: Let in or No for the request on it. It reports whether the bar took the
@@ -226,13 +212,14 @@ func (h *hostRoom) answerSnack(a *app) bool {
 		return false
 	}
 	o, q := h.net.host, h.reqs[0]
-	switch {
-	case a.clicked(compactHit(h.snackYes, a.u)):
+	action, over := h.snack.update(a)
+	switch action {
+	case 1:
 		o.Approve(q.Peer)
-	case a.clicked(compactHit(h.snackNo, a.u)):
+	case 0:
 		o.Deny(q.Peer)
 	}
-	return a.over(h.snack)
+	return over
 }
 
 // Access remains a draft until Confirm; no unconfirmed QR or code is shared.
@@ -601,37 +588,6 @@ func drawCopyButton(dst *ebiten.Image, a *app, r rect, link, on, copied bool) {
 			strokeRound(dst, rect{cx + (float64(i)*9-13)*u, cy - 4*u, 8 * u, 8 * u}, 2*u, 2*u, ink)
 		}
 	}
-}
-
-// drawSnack shows the oldest join request as a snackbar over the foot of the page, in the inverse of the page (ink,
-// with the mat's colour for its words, as the primary action is): who wants in, how many more wait, and No and Let in.
-// Each request rises into place as it reaches the bar.
-func (h *hostRoom) drawSnack(dst *ebiten.Image, a *app) {
-	if len(h.reqs) == 0 {
-		return
-	}
-	sc, f, u := a.sc, &a.f, a.u
-	p := min(1, float64(h.snackT)/snackIn)
-	e := 1 - (1-p)*(1-p)*(1-p) // ease out
-	dy := (1 - e) * 16 * u
-	bar, no, yes := h.snack, h.snackNo, h.snackYes
-	bar.y, no.y, yes.y = bar.y+dy, no.y+dy, yes.y+dy
-	fillPill(dst, bar, withAlpha(sc.ink, e))
-	drawText(dst, h.snackMsg, f.labelBold, bar.x+24*u, bar.cy(), text.AlignStart, withAlpha(sc.ground, e))
-	if more := moreWaiting[len(h.reqs)-1]; more != "" {
-		x := bar.x + 24*u + textWidth(h.snackMsg, f.labelBold) + 10*u
-		drawText(dst, more, f.label, x, bar.cy(), text.AlignStart, withAlpha(sc.ground, 0.6*e))
-	}
-	if a.over(compactHit(no, u)) {
-		fillPill(dst, no, withAlpha(sc.ground, 0.16*e))
-	}
-	drawText(dst, "No", f.labelBold, no.cx(), no.cy(), text.AlignCenter, withAlpha(sc.ground, e))
-	fill := sc.ground
-	if a.over(compactHit(yes, u)) {
-		fill = sc.tileHi
-	}
-	fillPill(dst, yes, withAlpha(fill, e))
-	drawText(dst, "Let in", f.labelBold, yes.cx(), yes.cy(), text.AlignCenter, withAlpha(sc.ink, e))
 }
 
 // roomScene is a joiner's room: the seats, each with its player or bot and state, and Ready along the bottom. The board

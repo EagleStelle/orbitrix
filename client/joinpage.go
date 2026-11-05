@@ -55,6 +55,7 @@ type joinScene struct {
 
 	loff               float64
 	lrows              int
+	ljoining           bool
 	hostB, host, joinB rect
 	rowR               []rect
 	emptyY, codeY      float64
@@ -64,6 +65,7 @@ type joinScene struct {
 	slotFace           *text.GoTextFace
 	statusY            float64
 	join               rect
+	snack              snackbar
 }
 
 // joinRow is a public room's row: its name, its state, and where a tap goes.
@@ -194,11 +196,14 @@ func boardName(cols, rows int) string {
 }
 
 func (s *joinScene) layout(a *app) {
-	if !s.frame(a, false) && s.view.offset == s.loff && len(s.rows) == s.lrows && s.status == s.lstatus {
+	joining := s.joining != ""
+	if !s.frame(a, false) && s.view.offset == s.loff && len(s.rows) == s.lrows && s.status == s.lstatus && joining == s.ljoining {
 		return
 	}
 	s.lrows = len(s.rows)
 	s.lstatus = s.status
+	started := joining && !s.ljoining
+	s.ljoining = joining
 	u, bp := a.u, s.bp
 	v := s.view.viewport
 	w := min(v.w, 640*u)
@@ -223,7 +228,13 @@ func (s *joinScene) layout(a *app) {
 		joinH = bp + 32*u + bp
 	}
 	joinH += joinNoteH
-	y := s.centred(hostH + s.gap + joinH)
+	h := hostH + s.gap + joinH
+	centering := max(0, v.h-h) / 2
+	contentH := h
+	if joining {
+		contentH += centering + (snackH+snackGap)*u // let Cancel scroll clear of the fixed overlay
+	}
+	y := s.content(contentH) + centering
 	s.loff = s.view.offset
 	s.hostB = rect{x, y, w, hostH}
 	s.host = rect{x + bp, y + bp + 32*u, w - 2*bp, 52 * u}
@@ -250,13 +261,25 @@ func (s *joinScene) layout(a *app) {
 	s.slotFace = newFace(srcDisplay, slot*0.5, 700)
 	s.statusY = s.slotRow.bottom() + 22*u
 	s.join = rect{x + bp, s.slotRow.bottom() + statusH, w - 2*bp, 52 * u}
+	if started {
+		target, offset := s.join, s.view.offset
+		target.h += (snackH + snackGap) * u
+		s.view.reveal(target)
+		if s.view.offset != offset {
+			s.layout(a)
+		}
+	}
 }
 
 func (s *joinScene) update(a *app) error {
 	defer s.leaving(a)
 	s.refresh(a)
 	s.layout(a)
-	if s.scrolled(a) {
+	overSnack := false
+	if bar := s.snackbar(); bar != nil {
+		_, overSnack = bar.update(a)
+	}
+	if !overSnack && s.scrolled(a) {
 		s.layout(a)
 	}
 	in := s.inBody(a)
@@ -267,7 +290,7 @@ func (s *joinScene) update(a *app) error {
 		case r := <-s.local:
 			s.joinedLAN(a, r)
 		default:
-			if s.backed(a) || in && a.clicked(s.join) { // Join reads Cancel meanwhile
+			if s.backed(a) || !overSnack && in && a.clicked(s.join) { // Join reads Cancel meanwhile
 				s.cancel()
 			}
 		}
@@ -347,6 +370,7 @@ func (s *joinScene) start(a *app, addr, code string, typed bool) {
 	s.code.focus(a, false)
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel, s.joining, s.status = cancel, addr+code, ""
+	s.snack.ticks = 0
 	s.waiting.Store(false)
 	name := a.set.name()
 	if s.lan {
@@ -479,13 +503,7 @@ func (s *joinScene) draw(dst *ebiten.Image, a *app) {
 	drawText(b, "Join by code", f.labelBold, s.joinB.x+s.bp, s.codeY, text.AlignStart, sc.ink)
 	code := s.code.shown
 	drawCodeSlots(b, a, s.slots[:], s.slotFace, code, s.code.focused)
-	if s.joining != "" {
-		status := "Connecting to the host"
-		if s.waiting.Load() {
-			status = "Waiting for the host"
-		}
-		drawText(b, status, f.label, s.joinB.cx(), s.statusY, text.AlignCenter, sc.dim)
-	} else if s.status != "" {
+	if s.joining == "" && s.status != "" {
 		for i, line := range s.statusLines {
 			drawText(b, line, f.label, s.joinB.cx(), s.statusY+float64(i)*24*u, text.AlignCenter, sc.ink)
 		}
@@ -498,6 +516,17 @@ func (s *joinScene) draw(dst *ebiten.Image, a *app) {
 	default:
 		drawButton(b, a, s.join, "Join", "", btnTile, false) // the mat's disabled fill would vanish on the block
 	}
+}
+
+func (s *joinScene) snackbar() *snackbar {
+	if s.joining == "" {
+		return nil
+	}
+	s.snack.message = "Connecting to the host"
+	if s.waiting.Load() {
+		s.snack.message = "Waiting for the host"
+	}
+	return &s.snack
 }
 
 // drawCodeSlots draws a room code as the printed tiles it is typed into, one per character, like the board's; while

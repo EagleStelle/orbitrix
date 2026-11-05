@@ -105,6 +105,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 	out := ebiten.NewImage(int(c.w), int(c.h))
 	defer out.Deallocate()
 	out.Fill(a.sc.ground)
+	var overlay scene
 	switch c.screen {
 	case "home":
 		h := newHome()
@@ -133,16 +134,22 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 			o.rows = []joinRow{{"DESKTOP-7QF3K2L", roomWord(1, false), "192.168.1.20:7777", "", true},
 				{"Pixel 8", roomWord(0, false), "192.168.1.31:7777", "", false}}
 		}
-		if c.hover == "waiting" {
+		if c.hover == "waiting" || c.hover == "connecting" {
 			o.code.set("K7QX3M")
 			o.joining, o.code.focused = "K7QX3M", false
-			o.waiting.Store(true)
+			o.waiting.Store(c.hover == "waiting")
+			o.snack.ticks = snackIn
 		}
 		if c.hover == "empty" {
 			o.rows = nil
 		}
 		o.layout(a)
+		if c.progress > 0 {
+			o.view.offset = c.progress * o.view.maxScroll()
+			o.layout(a)
+		}
 		o.draw(out, a)
+		overlay = o
 	case "room-setup", "room-invite":
 		s := newRoomSetup(a, false)
 		if c.screen == "room-invite" {
@@ -150,11 +157,16 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		}
 		s.layout(a)
 		s.draw(out, a)
+		overlay = s
 	case "room-dialog", "room-dialog-long":
 		s = newRoomSetup(a, true)
 		s.room.net = &session{lan: &lan.Host{Web: true, Code: "K7QX3M"}, addr: "192.168.1.20:7777", code: "ABCDEF"}
 		s.room.private = c.hover == "private"
 		s.room.openDialog()
+		if c.hover == "snack" {
+			s.room.reqs = []online.Request{{Peer: "p1", Name: "Human"}}
+			s.room.snack = snackbar{message: "Human wants to join", actions: [2]string{"No", "Let in"}, ticks: snackIn}
+		}
 		s.layout(a)
 		if c.screen == "room-dialog-long" {
 			s.room.open = false
@@ -171,10 +183,14 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		} else {
 			s.draw(out, a)
 		}
+		overlay = s
 	case "room-host", "room-joiner", "room-seat", "room-invite-open":
 		n := captureSession(c.screen != "room-joiner")
 		n.lobby.Seats = []proto.Seat{{State: proto.SeatHere, Ready: true, Name: "Human"}, {State: proto.SeatHere, Name: "Human"},
 			{State: proto.SeatOpen}, {State: proto.SeatAI, AI: 6}}
+		if c.hover == "ready" {
+			n.lobby.Seats[1].Ready = true
+		}
 		a.set.seats = []int{seatHuman, seatHuman, seatHuman, 1 + 6}
 		if c.screen == "room-joiner" {
 			n.seat = 1
@@ -186,7 +202,9 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 				if c.hover == "two" {
 					s.room.reqs = append(s.room.reqs, online.Request{Peer: "p2", Name: "Human"})
 				}
-				s.room.snackPeer, s.room.snackMsg, s.room.snackT = "p1", "Human wants to join", snackIn
+				s.room.snackPeer = "p1"
+				s.room.snack = snackbar{message: "Human wants to join", more: moreWaiting[len(s.room.reqs)-1],
+					actions: [2]string{"No", "Let in"}, ticks: snackIn}
 			}
 			s.layout(a)
 			if c.screen == "room-invite-open" {
@@ -198,6 +216,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 			}
 		}
 		r.draw(out, a)
+		overlay = r
 	case "password":
 		p := newPassword(newRoomSetup(a, false), c.hover == "wrong")
 		p.pw.set("correct-horse")
@@ -280,6 +299,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 	} else if c.screen == "" {
 		s.draw(out, a)
 	}
+	drawSnackbarOverlay(out, a, overlay)
 	pixels := image.NewRGBA(image.Rect(0, 0, int(c.w), int(c.h)))
 	out.ReadPixels(pixels.Pix)
 	f, err := os.Create(filepath.Join(g.dir, c.name+".png"))
@@ -303,6 +323,17 @@ func TestCaptureSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := &setupCaptureGame{dir: dir, cases: []setupCaptureCase{
+		{name: "fix-snack-room-desktop", w: 1040, h: 640, players: 4, screen: "room-host", hover: "ready"},
+		{name: "fix-snack-room-mobile", w: 390, h: 844, players: 4, screen: "room-host", hover: "ready", dark: true},
+		{name: "fix-snack-room-landscape", w: 844, h: 390, players: 4, screen: "room-host", hover: "ready"},
+		{name: "fix-snack-dialog-desktop", w: 1040, h: 640, players: 3, screen: "room-dialog", hover: "snack"},
+		{name: "fix-snack-dialog-mobile", w: 390, h: 844, players: 3, screen: "room-dialog", hover: "snack", dark: true},
+		{name: "fix-snack-dialog-landscape", w: 844, h: 390, players: 3, screen: "room-dialog", hover: "snack"},
+		{name: "fix-snack-joining-desktop", w: 1040, h: 640, players: 2, screen: "online", hover: "connecting"},
+		{name: "fix-snack-waiting-desktop", w: 1040, h: 640, players: 2, screen: "online", hover: "waiting"},
+		{name: "fix-snack-waiting-mobile", w: 390, h: 844, players: 2, screen: "online", hover: "waiting", dark: true},
+		{name: "fix-snack-waiting-landscape", w: 844, h: 390, players: 2, screen: "online", hover: "waiting"},
+		{name: "fix-snack-waiting-landscape-scrolled", w: 844, h: 390, players: 2, screen: "online", hover: "waiting", progress: 1},
 		{name: "layout-room-desktop", w: 1040, h: 640, players: 3, screen: "room-dialog"},
 		{name: "layout-room-mobile", w: 390, h: 844, players: 3, screen: "room-dialog", hover: "private"},
 		{name: "layout-room-mobile-dark", w: 390, h: 844, players: 3, screen: "room-dialog", hover: "private", dark: true},
