@@ -674,6 +674,7 @@ func (e *mapEditor) update(a *app) error {
 }
 
 func (e *mapEditor) updateCanvas(a *app, pressed, down bool) {
+	revision := e.revision
 	if e.canvas.Contains(a.in.x, a.in.y) && a.in.wheel != 0 {
 		e.zoom = math.Max(.5, math.Min(16, e.zoom*math.Pow(1.15, a.in.wheel)))
 	}
@@ -715,6 +716,10 @@ func (e *mapEditor) updateCanvas(a *app, pressed, down bool) {
 			e.last = i
 		}
 		e.prevX, e.prevY = a.in.x, a.in.y
+	}
+	// Refresh once per changed input frame, before a held stroke can be drawn.
+	if e.revision != revision {
+		e.validate()
 	}
 	if !down {
 		e.finishStroke()

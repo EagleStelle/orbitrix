@@ -1,13 +1,210 @@
 package client
 
 import (
+	"reflect"
 	"slices"
+	"strconv"
 	"testing"
 
 	"orbitrix/client/internal/boardview"
 	"orbitrix/client/internal/ui"
 	"orbitrix/core"
 )
+
+// Compare a live stroke with validation rebuilt from the current draft.
+func checkEditorValidation(t *testing.T, a *app, e *mapEditor) {
+	t.Helper()
+	e.renderMap(a)
+	want := newMapEditor(nil, nil, e.m, nil)
+	if !reflect.DeepEqual(e.issues, want.issues) || e.bad != want.bad || !slices.Equal(e.badEdges, want.badEdges) || !slices.Equal(e.capacity, want.capacity) {
+		t.Fatal("rendered map has stale issues, highlights or capacities")
+	}
+}
+
+func TestEditorEraseStrokeKeepsValidationCurrent(t *testing.T) {
+	edges := []core.MapEdge{{A: 30, B: 31, Kind: core.Barrier}, {A: 40, B: 41, Kind: core.Gate, Group: 1}, {A: 50, B: 59, Kind: core.Gate, Group: 2}}
+	for _, mode := range []string{"mouse", "right mouse", "touch"} {
+		for _, tt := range []struct {
+			name  string
+			edges []core.MapEdge
+			erase int
+		}{
+			{"only invalid edge", edges[1:2], 0},
+			{"only valid edge", edges[:1], 0},
+			{"first edge", edges, 0},
+			{"middle edge", edges, 1},
+			{"last edge", edges, 2},
+		} {
+			t.Run(mode+"/"+tt.name, func(t *testing.T) {
+				a := setupTestApp(1040, 640, 1, 2)
+				m := core.NewMap(9, 9)
+				m.Edges = slices.Clone(tt.edges)
+				e := newMapEditor(a, newHome(), m, nil)
+				e.capacities, e.preview = true, true
+				e.layout(a)
+				t.Cleanup(func() { e.mapImage.Deallocate() })
+				checkEditorValidation(t, a, e)
+				e.selectTool(brushErase)
+				if mode == "right mouse" {
+					e.selectTool(brushWall)
+				}
+				pointAt := func(edge core.MapEdge) {
+					k, ox, oy := e.grid()
+					x0, y0, x1, y1, _ := boardview.MapArtEdge(&e.m, edge)
+					a.in.x, a.in.y = ox+(x0+x1)*k/2, oy+(y0+y1)*k/2
+				}
+				step := func() {
+					t.Helper()
+					if err := e.update(a); err != nil {
+						t.Fatal(err)
+					}
+					checkEditorValidation(t, a, e)
+				}
+				a.in = input{pressed: true, down: true, finger: mode == "touch", right: mode == "right mouse"}
+				pointAt(e.m.Edges[tt.erase])
+				step()
+				if !e.stroke || len(e.m.Edges) != len(m.Edges)-1 {
+					t.Fatal("edge must be erased and drawn before releasing the stroke")
+				}
+				a.in.pressed = false
+				for len(e.m.Edges) > 0 {
+					before := len(e.m.Edges)
+					pointAt(e.m.Edges[0])
+					step()
+					if len(e.m.Edges) >= before {
+						t.Fatal("drag did not erase the next edge")
+					}
+				}
+				a.in = input{x: offScreen, y: offScreen}
+				step()
+				if e.stroke || !e.dirty || len(e.undo) != 1 || !slices.Equal(m.Edges, tt.edges) {
+					t.Fatal("drag must remain one undoable edit and leave the source map untouched")
+				}
+				e.history(false)
+				checkEditorValidation(t, a, e)
+				if !slices.Equal(e.m.Edges, m.Edges) {
+					t.Fatal("undo did not restore all edges")
+				}
+				e.history(true)
+				checkEditorValidation(t, a, e)
+				if len(e.m.Edges) != 0 {
+					t.Fatal("redo did not remove all edges")
+				}
+			})
+		}
+	}
+}
+
+func TestEditorPaintStrokeKeepsValidationCurrent(t *testing.T) {
+	for tool, name := range editorTools {
+		if tool == brushPan {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			a := setupTestApp(1040, 640, 1, 2)
+			m := core.NewMap(9, 9)
+			if tool == brushFloor {
+				m.Cells[40].Terrain = core.Wall
+			} else if tool == brushErase {
+				m.Cells[40].Feature = core.Reservoir
+			}
+			if editorBrushes[tool].Feature.IsSwitch() {
+				m.Edges = []core.MapEdge{{A: 30, B: 31, Kind: core.Gate, Group: 1}}
+			}
+			e := newMapEditor(a, newHome(), m, nil)
+			e.capacities, e.preview = true, true
+			e.layout(a)
+			checkEditorValidation(t, a, e)
+			defer func() { e.mapImage.Deallocate() }()
+			e.selectTool(tool)
+			k, ox, oy := e.grid()
+			a.in = input{x: ox + 4.5*k, y: oy + 4.5*k, pressed: true, down: true}
+			if tool == brushBarrier || tool == brushGate {
+				a.in.y = oy + 5*k
+			}
+			step := func() {
+				t.Helper()
+				if err := e.update(a); err != nil {
+					t.Fatal(err)
+				}
+				checkEditorValidation(t, a, e)
+			}
+			step()
+			if !e.strokeChanged || !e.stroke {
+				t.Fatal("brush must change the map before mouse release")
+			}
+			revision := e.revision
+			e.notify("Keep this notification")
+			a.in.pressed = false
+			step()
+			if e.revision != revision || e.note != "Keep this notification" {
+				t.Fatal("unchanged held input must not invalidate the map or clear notifications")
+			}
+			if tool == brushBarrier || tool == brushGate {
+				if tool == brushBarrier {
+					e.selectTool(brushGate)
+				} else {
+					e.selectTool(brushBarrier)
+				}
+				a.in.x += .01 * k
+			} else {
+				a.in.x, a.in.y = ox+6.5*k, oy+6.5*k
+			}
+			step()
+			if tool == brushLink && (e.pair != -1 || len(e.issues) != 0) {
+				t.Fatal("completing a Link pair must clear its issue during the stroke")
+			}
+			if (tool == brushBarrier || tool == brushGate) && e.m.Edges[0].Kind == core.EdgeKind(editorBrushes[tool].Edge) {
+				t.Fatal("replacing an edge must update its validation even when the edge count is unchanged")
+			}
+			a.in = input{x: offScreen, y: offScreen}
+			step()
+			if e.stroke || !e.dirty || len(e.undo) != 1 {
+				t.Fatal("painting must preserve a single undo checkpoint per stroke")
+			}
+		})
+	}
+}
+
+func TestEditorResizeValidationAndHistoryAtSizeLimits(t *testing.T) {
+	for _, size := range []int{core.MinSize, 9, core.MaxSize} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			a := setupTestApp(1040, 640, 1, 2)
+			m := core.NewMap(size, size)
+			m.Edges = []core.MapEdge{{A: size*size - 2, B: size*size - 1, Kind: core.Gate, Group: 1}}
+			e := newMapEditor(a, newHome(), m, nil)
+			e.capacities, e.preview, e.more = true, true, true
+			e.layout(a)
+			checkEditorValidation(t, a, e)
+			defer func() { e.mapImage.Deallocate() }()
+			for _, action := range []int{1, 3, 0, 2, 0, 2, 1, 3} {
+				a.in = input{x: e.dims[action].Cx(), y: e.dims[action].Cy(), clicked: true}
+				if err := e.update(a); err != nil {
+					t.Fatal(err)
+				}
+				if err := e.m.ValidateStructure(); err != nil {
+					t.Fatal(err)
+				}
+				checkEditorValidation(t, a, e)
+			}
+			final := e.m.Clone()
+			for len(e.undo) > 0 {
+				e.history(false)
+				checkEditorValidation(t, a, e)
+			}
+			if !reflect.DeepEqual(e.m, m) {
+				t.Fatal("undo after resizing did not restore the original map")
+			}
+			for len(e.redo) > 0 {
+				e.history(true)
+				checkEditorValidation(t, a, e)
+			}
+			if !reflect.DeepEqual(e.m, final) {
+				t.Fatal("redo after resizing did not restore the final map")
+			}
+		})
+	}
+}
 
 func TestCustomMapViewReplaysTopology(t *testing.T) {
 	for _, m := range core.StarterMaps() {
