@@ -193,7 +193,6 @@ func (p *playScene) move(a *app, cell int) {
 		log.Printf("move: %v", err) // callers check Legal, so this is a bug
 		return
 	}
-	a.snd.Place(mover)
 	p.b.State.Events = p.game.TerrainEvents
 	p.b.Start(cell, int8(mover), waves, a.snd)
 	p.biggest = max(p.biggest, len(waves))

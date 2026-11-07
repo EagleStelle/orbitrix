@@ -26,7 +26,8 @@ Client tests run Ebitengine scenes headless. They need no window, so they run in
 | `client/online` | Signaling joins, manual WebRTC invite/reply joins, single-use invites and malformed or oversized link rejection |
 | `client/internal/mapstore` | Map library round trips, malformed storage rejection, starter-map seeding, failed-write isolation and mutable-draft isolation |
 | `client/internal/ui` | Drawing batches, text caching, button state colors, scroll input and reveal behavior |
-| `client/internal/boardview` | Wave replay determinism, animation pacing, orb bounds and allocation checks, terrain colors and topology |
+| `client/internal/boardview` | Wave replay determinism, animation pacing, orb bounds and allocation checks, terrain colors and topology, Link transfer cues and switch/wall sound timing |
+| `client/internal/sound` | Generated cue tuning, stereo PCM and fades, active RMS normalization and mix headroom, orb/effect balance, deferred final-wave cues, mute, volume, global rate limiting and the shared 15-voice cap |
 | `client` | Layout across window sizes, QR dialogs, abandoned reply cleanup, Setup and seat changes, text fields, count badges, wave replay ending equal to the game, and whole rooms: `TestOnlineRoom`, `TestLANRoom` (a dropped joiner winning its seat back), `TestDirectRoom` and `TestRoomSetup` driving the room page through clicks |
 | `cmd/webdist` | The drawn favicon and generated README/Android logo consistency |
 | `internal/appicon` | Logo pixels and symmetry, macOS ICNS sizes, Windows icon resources linked into a real executable |

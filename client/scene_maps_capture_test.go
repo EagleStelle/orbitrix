@@ -43,6 +43,8 @@ var mapCaptureCases = []mapCaptureCase{
 	{"editor-title-mobile", 320, 640, false, false, false, "title", brushFloor},
 	{"editor-issue-mobile", 390, 844, false, false, false, "issue", brushLink},
 	{"editor-issue-desktop", 1040, 640, true, false, false, "issue", brushLink},
+	{"editor-gate-issue-mobile", 390, 844, true, false, false, "gate-issue", brushGate},
+	{"editor-gate-issue-desktop", 1040, 640, false, false, true, "gate-issue", brushGate},
 	{"editor-desktop", 1040, 640, false, false, false, "", brushLatch},
 	{"editor-mobile", 390, 844, false, false, false, "", brushLatch},
 	{"editor-mobile-defenses", 390, 844, false, false, false, "", brushBreak},
@@ -260,6 +262,10 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 			e.m.Cells[3*m.Rows+3].Group = 12
 			e.changed()
 			e.snack = snackbar{message: e.note, ticks: snackIn}
+		}
+		if c.mode == "gate-issue" {
+			e.m.Cells[2*m.Rows+3], e.m.Cells[9*m.Rows+4] = core.MapCell{}, core.MapCell{}
+			e.changed()
 		}
 		if c.mode == "views" {
 			e.capacities = true

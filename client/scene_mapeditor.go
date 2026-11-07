@@ -3,6 +3,7 @@ package client
 import (
 	"image"
 	"math"
+	"slices"
 
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
@@ -34,7 +35,7 @@ var editorTools = [...]string{"Floor", "Wall", "Void", "Breakable wall", "Link",
 var editorHelp = [...]string{
 	"Playable surface. Open routes set its capacity.", "Blocks explosions permanently.", "Empty space outside the playable board.", "Two nearby blasts turn it into floor.",
 	"Pair two distant cells to route explosions.", "Stores one extra orb before exploding.", "Stays pressed after the first orb arrives.", "Blocks a route between two floor cells.",
-	"Opens while its circuit's switch is pressed.", "Remove an edge or restore a cell to floor.", "Drag the map to move around.", "Flips when orbs pop into or out of this cell.", "Stays pressed while this cell holds orbs.",
+	"Opens while its circuit's switch is pressed.", "Remove an edge or restore a cell to floor.", "Drag the map to move around.", "Flips on placement into an empty cell or when orbs pop in or out.", "Stays pressed while this cell holds orbs.",
 }
 var editorGroups = [...]struct {
 	name  string
@@ -71,6 +72,7 @@ type mapEditor struct {
 	ask                            *askDialog
 	issues                         []core.MapIssue
 	bad                            [core.MaxSize * core.MaxSize]bool
+	badEdges                       []bool
 	capacity                       []uint8
 	revision                       uint64
 	note                           string
@@ -121,6 +123,8 @@ func (e *mapEditor) validate() {
 	e.note = ""
 	e.snack = snackbar{}
 	clear(e.bad[:])
+	e.badEdges = slices.Grow(e.badEdges[:0], len(e.m.Edges))[:len(e.m.Edges)]
+	clear(e.badEdges)
 	if cap(e.capacity) < len(e.m.Cells) {
 		e.capacity = make([]uint8, len(e.m.Cells))
 	} else {
@@ -140,8 +144,7 @@ func (e *mapEditor) validate() {
 		}
 		for _, i := range v.Edges {
 			if i >= 0 && i < len(e.m.Edges) {
-				x := e.m.Edges[i]
-				e.bad[x.A], e.bad[x.B] = true, true
+				e.badEdges[i] = true
 			}
 		}
 	}

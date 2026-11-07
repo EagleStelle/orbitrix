@@ -53,7 +53,12 @@ An Ebitengine game with one scene at a time: Home, Setup (which is also the host
 - Map art: `client/internal/boardview/map.go` draws the same flat terrain, devices, relationship patterns and edges for palette icons, editor canvas, thumbnails and the match board. Callers cache their rendered layers; the shared renderer retains no map-sized image or buffer. Adjacent walls and edge posts join using local neighbor lookups. Editor map rendering is bounded to 48 px per cell and scaled for zoom, so zoom does not allocate an oversized target. Match animation replays placement terrain events before the first explosion and wave events after the corresponding transfers.
 - Map editing/storage: editor drafts are cloned, strokes share one undo checkpoint, and recovery is saved separately from the library. Test uses a private Setup/settings copy and returns to the same editor draft. Import validates structure before preview and saves only on an explicit action; gameplay-invalid drafts remain editable. The local library uses `client/platform` storage, while portable files/codes use format 2 with a bounded legacy format-1 import path.
 - Bots think on a goroutine against a copy of the game; the 300 to 600 ms delay before a bot's move is presentation only.
-- Audio: C major pentatonic notes, C4 to A6, generated at startup as PCM, with a 100 ms minimum gap and 15 voices.
+- Audio: C major pentatonic notes, C4 to A6, generated at startup as PCM. Links use glass chimes; Latch, Toggle and
+  Hold use distinct keyed/reed/mallet voices, with lower release notes for Toggle and Hold. Wall damage uses a woody
+  knock; destruction uses a falling three-note crumble. Startup synthesis matches each cue's loudest 50 ms RMS
+  window to 0.18 full scale, capped at a 0.65 peak. Orb chords and map cues share burst power equally, so large
+  chords cannot bury individual effects. Duplicate cues coalesce, with a global 100 ms minimum gap and at most
+  15 playing voices. Rate-limited map cues wait for the next burst; the game update drains final-wave cues too.
 - Settings: JSON written through a temporary file, through `client/platform`.
 - Client ownership: `scene_*.go` holds screens and orchestration; `client/internal/ui` owns shared presentation primitives and controls, and `client/internal/boardview` owns board drawing and wave replay. Shared UI takes presentation/input values instead of application state. `client/internal/sound` owns synthesis and playback; `client/internal/mapstore` owns map library validation and transactional writes through injected storage functions. See [the client guide](../client/README.md).
 - Screens that don't change redraw only on input (and every 30 ticks as a backstop), except on Android, where skipped frames flicker.
@@ -91,7 +96,9 @@ Native Mage builds embed the web game's gzip files. The LAN host serves that gam
 On one device:
 
 1. A tap on a legal cell calls `core.Game.Apply`, which returns the waves and records terrain events for custom maps.
-2. The board replays from the old position: placement effects first, then each wave's transfers and terrain effects, one sound per wave, while the turn display waits for the chain to finish.
+2. The board replays from the old position: placement effects first, then each wave's transfers and terrain effects,
+   while the turn display waits for the chain to finish. Link cues start with transfers across the pair; switch and
+   wall cues follow the recorded placement or landing events, including effects on the final wave.
 
 In a room:
 

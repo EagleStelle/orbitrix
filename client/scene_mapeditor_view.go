@@ -3,6 +3,7 @@ package client
 import (
 	"fmt"
 	"image"
+	"image/color"
 	"math"
 
 	"orbitrix/client/internal/boardview"
@@ -333,7 +334,8 @@ func (e *mapEditor) renderMap(a *app) {
 		}
 		state.Pressed = e.previewState
 	}
-	boardview.DrawMapArt(e.mapImage, a.sc, state, boardview.MapTransform{Cell: cell}, true, a.set.Marks)
+	tr := boardview.MapTransform{Cell: cell}
+	boardview.DrawMapArt(e.mapImage, a.sc, state, tr, true, a.set.Marks)
 	face := ui.NewFace(ui.SrcUI, cell*.24, 700)
 	var opened [core.MaxSize * core.MaxSize]uint8
 	if e.capacities && e.preview {
@@ -360,6 +362,11 @@ func (e *mapEditor) renderMap(a *app) {
 		}
 		if e.bad[i] {
 			ui.StrokeRound(e.mapImage, r, cell*.12, max(1, cell*.04), a.sc.Danger)
+		}
+	}
+	for i, bad := range e.badEdges {
+		if bad {
+			e.drawEdgeHighlight(e.mapImage, e.m.Edges[i], tr, max(.5, cell*.02), a.sc.Danger)
 		}
 	}
 	e.mapCell, e.mapRevision, e.mapTheme = cell, e.revision, a.sc
@@ -488,8 +495,8 @@ func (e *mapEditor) draw(dst *ebiten.Image, a *app) {
 		i := e.hover
 		x, y := ox+float64(i/e.m.Rows)*k, oy+float64(i%e.m.Rows)*k
 		r := ui.Rect{X: x, Y: y, W: k, H: k}
-		if highlight, ok := e.edgeHighlight(a, i, a.in.x, a.in.y); ok {
-			ui.StrokeRound(clip, highlight, max(3*u, k*.1), 2*u, sc.Ink)
+		if edge, ok := e.hoverEdge(i, a.in.x, a.in.y); ok {
+			e.drawEdgeHighlight(clip, edge, boardview.MapTransform{X: ox, Y: oy, Cell: k}, u, sc.Ink)
 		} else if e.tool != brushPan && e.tool != brushBarrier && e.tool != brushGate &&
 			(e.tool != brushErase || e.m.Cells[i].Terrain != core.Floor || e.m.Cells[i].Feature != core.NoFeature) {
 			if !e.stroke && e.tool != brushErase {
@@ -636,31 +643,34 @@ func editorActionSave(dst *ebiten.Image, a *app, r ui.Rect) {
 	ui.StrokeRound(dst, ui.Rect{X: x - 6*u, Y: y + 2*u, W: 12 * u, H: 8 * u}, u, 2*u, c)
 }
 
-// Placement and erase share the same boundary geometry and outline.
-func (e *mapEditor) edgeHighlight(a *app, i int, x, y float64) (ui.Rect, bool) {
-	var edge core.MapEdge
+func (e *mapEditor) hoverEdge(i int, x, y float64) (core.MapEdge, bool) {
 	switch e.tool {
 	case brushErase:
 		index := e.eraseEdgeAt(i, x, y)
 		if index < 0 {
-			return ui.Rect{}, false
+			return core.MapEdge{}, false
 		}
-		edge = e.m.Edges[index]
+		return e.m.Edges[index], true
 	case brushBarrier, brushGate:
 		aa, bb := e.edgeAt(i, x, y)
 		if aa < 0 {
-			return ui.Rect{}, false
+			return core.MapEdge{}, false
 		}
-		edge = core.MapEdge{A: aa, B: bb}
+		return core.MapEdge{A: aa, B: bb}, true
 	default:
-		return ui.Rect{}, false
+		return core.MapEdge{}, false
 	}
+}
+
+// Issues, placement and erase share the same boundary geometry and outline.
+func (e *mapEditor) drawEdgeHighlight(dst *ebiten.Image, edge core.MapEdge, tr boardview.MapTransform, u float64, c color.RGBA) {
 	x0, y0, x1, y1, ok := boardview.MapArtEdge(&e.m, edge)
 	if !ok {
-		return ui.Rect{}, false
+		return
 	}
-	k, ox, oy := e.grid()
-	x0, y0, x1, y1 = ox+x0*k, oy+y0*k, ox+x1*k, oy+y1*k
-	pad := max(3*a.u, k*.1)
-	return ui.Rect{X: min(x0, x1) - pad, Y: min(y0, y1) - pad, W: math.Abs(x1-x0) + 2*pad, H: math.Abs(y1-y0) + 2*pad}, true
+	x0, y0 = tr.Point(e.m.Rows, x0, y0)
+	x1, y1 = tr.Point(e.m.Rows, x1, y1)
+	pad := max(3*u, tr.Cell*.1)
+	r := ui.Rect{X: min(x0, x1) - pad, Y: min(y0, y1) - pad, W: math.Abs(x1-x0) + 2*pad, H: math.Abs(y1-y0) + 2*pad}
+	ui.StrokeRound(dst, r, pad, 2*u, c)
 }

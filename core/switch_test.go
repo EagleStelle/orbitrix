@@ -20,6 +20,7 @@ func TestSwitchManualPlacementIsImmediate(t *testing.T) {
 		feature Feature
 	}{
 		{"latch", Switch},
+		{"toggle", ToggleSwitch},
 		{"pressure", HoldSwitch},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -173,20 +174,49 @@ func TestSwitchConservationSimulationAndSnapshot(t *testing.T) {
 	}
 }
 
-func TestTogglePlacementDoesNotFlip(t *testing.T) {
+func TestTogglePlacementOnlyFlipsWhenEmptyOrPopping(t *testing.T) {
 	for _, pressed := range []uint8{0, 1} {
-		g := newSwitchGame(t, ToggleSwitch)
-		g.Pressed[24], g.OpenGates[1] = pressed, pressed != 0
-		g.Geo = g.mapGeometry()
-		for placement := 0; placement < 2; placement++ {
-			g.Turn = 0
-			waves, err := g.Apply(24)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(waves) != 0 || g.Pressed[24] != pressed || g.OpenGates[1] != (pressed != 0) || len(g.TerrainEvents) != 0 {
-				t.Fatalf("placement=%d pressed=%d gate=%v events=%+v", placement, g.Pressed[24], g.OpenGates[1], g.TerrainEvents)
-			}
+		for _, tc := range []struct {
+			name  string
+			count uint8
+			flip  bool
+			waves int
+		}{
+			{"empty", 0, true, 0},
+			{"one orb", 1, false, 0},
+			{"two orbs", 2, false, 0},
+			{"popping", 3, true, 1},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				g := newSwitchGame(t, ToggleSwitch)
+				g.Pressed[24], g.OpenGates[1] = pressed, pressed != 0
+				g.Geo = g.mapGeometry()
+				if tc.count > 0 {
+					seedMapCell(g, 24, 0, tc.count)
+				}
+				simulated := g.Clone()
+				waves, err := g.Apply(24)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want, wantEvents := pressed, 0
+				if tc.flip {
+					want ^= 1
+					wantEvents = 2
+				}
+				if len(waves) != tc.waves || g.Pressed[24] != want || g.OpenGates[1] != (want != 0) || len(g.TerrainEvents) != wantEvents {
+					t.Fatalf("initial pressed=%d waves=%v pressed=%d gate=%v events=%+v", pressed, waves, g.Pressed[24], g.OpenGates[1], g.TerrainEvents)
+				}
+				if tc.flip && (g.TerrainEvents[0] != (TerrainEvent{Wave: tc.waves - 1, Cell: 24, Group: 1, Switch: true, Pressed: want != 0}) || g.TerrainEvents[1] != (TerrainEvent{Wave: tc.waves - 1, Cell: -1, Group: 1, Open: want != 0})) {
+					t.Fatalf("transition events=%+v", g.TerrainEvents)
+				}
+				if err := simulated.Simulate(24); err != nil {
+					t.Fatal(err)
+				}
+				if g.Hash() != simulated.Hash() {
+					t.Fatal("simulation differs from applied move")
+				}
+			})
 		}
 	}
 }

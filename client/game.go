@@ -203,6 +203,7 @@ func (g *Game) Update() error {
 	if err := g.scene.update(a); err != nil {
 		return err
 	}
+	a.snd.Update()
 	g.idle++
 	if changed || a.next != nil || g.ShowFPS || animated || !still(g.scene) || g.idle >= stillRedraw {
 		g.fresh, g.idle = true, 0

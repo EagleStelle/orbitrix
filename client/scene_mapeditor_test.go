@@ -208,6 +208,62 @@ func TestEditorValidationSnackbar(t *testing.T) {
 	}
 }
 
+func TestEditorIssueHighlightsTargetElements(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		edit  func(*core.MapDefinition)
+		cells []int
+		edges []int
+	}{
+		{"orphan gate", func(m *core.MapDefinition) { m.Cells[40] = core.MapCell{} }, nil, []int{0}},
+		{"gate without floor", func(m *core.MapDefinition) { m.Cells[30].Terrain = core.Wall }, nil, []int{0}},
+		{"duplicate gates", func(m *core.MapDefinition) {
+			m.Edges = append(m.Edges, core.MapEdge{A: 31, B: 30, Kind: core.Gate, Group: 1})
+		}, nil, []int{0, 1}},
+		{"invalid circuit color", func(m *core.MapDefinition) {
+			m.Cells[40].Group, m.Edges[0].Group = 13, 13
+		}, []int{40}, []int{0}},
+		{"duplicate switches", func(m *core.MapDefinition) {
+			m.Cells[50] = core.MapCell{Feature: core.ToggleSwitch, Group: 1}
+		}, []int{40, 50}, []int{0}},
+		{"barrier with group", func(m *core.MapDefinition) {
+			m.Cells[40], m.Edges[0].Kind = core.MapCell{}, core.Barrier
+		}, nil, []int{0}},
+		{"floor issue beside valid gate", func(m *core.MapDefinition) {
+			m.Edges[0].A, m.Edges[0].B = 0, 1
+		}, []int{0}, nil},
+		{"valid gate", func(*core.MapDefinition) {}, nil, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := core.NewMap(9, 9)
+			m.Cells[40] = core.MapCell{Feature: core.Switch, Group: 1}
+			m.Edges = []core.MapEdge{{A: 30, B: 31, Kind: core.Gate, Group: 1}}
+			valid := m.Clone()
+			tt.edit(&m)
+			e := newMapEditor(nil, nil, m, nil)
+			var wantCells [core.MaxSize * core.MaxSize]bool
+			for _, i := range tt.cells {
+				wantCells[i] = true
+			}
+			if e.bad != wantCells {
+				t.Fatalf("highlighted cells must be %v; edge issues must not mark adjacent floors", tt.cells)
+			}
+			wantEdges := make([]bool, len(m.Edges))
+			for _, i := range tt.edges {
+				wantEdges[i] = true
+			}
+			if !slices.Equal(e.badEdges, wantEdges) {
+				t.Fatalf("highlighted edges = %v, want %v", e.badEdges, wantEdges)
+			}
+			e.m = valid
+			e.changed()
+			if e.bad != [core.MaxSize * core.MaxSize]bool{} || !slices.Equal(e.badEdges, []bool{false}) {
+				t.Fatal("fixing issues must clear cell and edge highlights")
+			}
+		})
+	}
+}
+
 func TestEditorToolbarAcrossPlatforms(t *testing.T) {
 	for _, size := range [][2]float64{{320, 640}, {390, 844}, {568, 320}, {640, 360}, {760, 640}, {1040, 640}} {
 		for _, scale := range []float64{1, 2.625} {
@@ -494,19 +550,19 @@ func TestEditorPlacementAndEraseShareEdgeHighlight(t *testing.T) {
 		x, y := ox+(x0+x1)*k/2, oy+(y0+y1)*k/2
 		i := e.cellAt(x, y)
 		e.tool = brushErase
-		want, ok := e.edgeHighlight(a, i, x, y)
+		want, ok := e.hoverEdge(i, x, y)
 		if !ok {
 			t.Fatal("erase highlight is missing")
 		}
 		for _, tool := range []int{brushBarrier, brushGate} {
 			e.tool = tool
-			got, ok := e.edgeHighlight(a, i, x, y)
+			got, ok := e.hoverEdge(i, x, y)
 			if !ok || got != want {
 				t.Fatal("edge placement must match erase outline exactly")
 			}
 		}
 		e.tool = brushErase
-		if _, ok := e.edgeHighlight(a, 30, ox+3.5*k, oy+3.5*k); ok {
+		if _, ok := e.hoverEdge(30, ox+3.5*k, oy+3.5*k); ok {
 			t.Fatal("plain cell must not receive an edge outline")
 		}
 	}

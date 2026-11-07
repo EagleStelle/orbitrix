@@ -17,7 +17,7 @@ A **map** is the saved design. A **board** is that design in a match. A **cell**
 | Link | A pair of distant Floor cells are extra neighbors. Each endpoint sends one orb to the other when exploding. Arrivals land normally. |
 | Reservoir | Capacity is one above the number of connections. Explosions send one orb per connection, retaining the reserve. |
 | Latch | Presses on the first accepted placement or orb arrival and stays pressed for the rest of the match. |
-| Toggle | Flips once per wave when orbs pop into or out of it. Manual placement does not activate it. |
+| Toggle | Flips when an orb is placed into its empty cell, or once per wave when orbs pop into or out of it. Adding orbs without a pop does not flip it. |
 | Hold | Pressed while its cell holds at least one orb; releases when empty. |
 | Barrier | Permanently blocks the connection across an edge between Floor cells. |
 | Gate | Starts closed. Opens while its circuit's switch is pressed, and closes when that switch releases. |
@@ -66,9 +66,15 @@ In a room the host sends the selected map automatically. Joining does not add it
 
 Explosions preserve every orb: each accepted placement adds exactly one, and terrain neither creates nor consumes them. A direct accepted placement updates its switch and circuit immediately, before choosing the first exploding cells. This is recorded as terrain events at wave −1.
 
-Each explosion wave uses the connections open at its start. All transfers finish before wall damage and switch effects apply together. Receiving one or more orbs activates Latch once in that wave; exploding by itself never activates Latch. Toggle flips once when receiving or exploding in a wave, including when both happen together; manual placement never activates Toggle. Hold is pressed exactly when its post-transfer count is above zero. Gates follow the resulting controller state, including closure. Connections and capacities are rebuilt before selecting the next wave, so a closing Gate can leave a neighboring cell ready to explode. Victory is checked after the current wave's effects.
+Each explosion wave uses the connections open at its start. All transfers finish before wall damage and switch effects apply together. Receiving one or more orbs activates Latch once in that wave; exploding by itself never activates Latch. Toggle flips on direct placement into an empty cell, and once when receiving or exploding in a wave, including when both happen together; adding to an occupied Toggle without a pop does not flip it. Hold is pressed exactly when its post-transfer count is above zero. Gates follow the resulting controller state, including closure. Connections and capacities are rebuilt before selecting the next wave, so a closing Gate can leave a neighboring cell ready to explode. Victory is checked after the current wave's effects.
 
 Map definitions contain no match state. Snapshots and resync carry wall durability, per-cell `Pressed` state, and `OpenGates`; the state hash includes the design and these values. Runtime topology is isolated between AI search copies. Animation replays placement events before the first explosion and wave events after the corresponding transfers.
+
+Map sounds follow the same displayed steps: a glass chime when an exploding Link sends an orb across its pair,
+distinct clicks when Latch, Toggle or Hold changes state, a lower note when Toggle or Hold releases, and separate
+woody damage and destruction cues for breakable walls. Repeated arrivals on an unchanged switch stay silent.
+All cues use the orb sounds' C major pentatonic scale, saved mute and volume, shared rate limit and voice cap.
+Rate-limited map cues coalesce for the next burst instead of disappearing, including after a chain's final wave.
 
 The game protocol is version 3. Update clients and the server together. The portable map format has its own version and legacy import path; it is separate from protocol compatibility. Classic rectangular gameplay remains available.
 
@@ -78,7 +84,7 @@ Physical-phone touch painting and camera-to-import behavior still need device ve
 
 In the editor, click the map title to rename it and press Enter to finish. On a keyboard, Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z or Ctrl+Y redoes, and E selects Erase. Editor shortcuts are inactive while renaming or using a dialog. Validation messages appear automatically in the bottom snackbar.
 
-The editor toolbar groups capacity and pressed-switch preview toggles separately from Test and Save. Map size stays in the options menu. Erase highlights the cell or edge that will be removed.
+The editor toolbar groups capacity and pressed-switch preview toggles separately from Test and Save. Map size stays in the options menu. Erase highlights the cell or edge that will be removed. Validation outlines faulty Barriers and Gates themselves, using the same edge outline as Erase; floor issues outline their cells.
 
 Hold the middle mouse button on the editor canvas to pan, or hold the right mouse button to erase. Releasing restores the previously selected tool; each right-button erase stroke is undoable. Touch controls continue to use the visible Pan and Erase tools.
 

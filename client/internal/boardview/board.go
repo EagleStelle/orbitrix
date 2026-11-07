@@ -239,10 +239,11 @@ func (b *Board) Bounds() ui.Rect {
 
 // start shows a move: mover's orb lands in cell, then waves (from core.Game.Apply) play out. snd may be nil.
 func (b *Board) Start(cell int, mover int8, waves []core.Wave, snd *sound.Sound) {
-	b.State.Place(cell, mover)
+	effects := b.State.terrainSounds(b.State.Place(cell, mover))
 	b.Waves, b.Wave, b.t, b.Playing = waves, -1, 0, true
 	b.tailCap, b.skipCap = tailCap(len(waves)), 0
-	b.next(snd)
+	b.next()
+	snd.Place(int(mover), effects|b.linkSound())
 }
 
 // sync makes the view match g without animating.
@@ -251,7 +252,7 @@ func (b *Board) Sync(g *core.Game) {
 }
 
 // next launches the following wave, or ends playback.
-func (b *Board) next(snd *sound.Sound) {
+func (b *Board) next() {
 	b.Wave++
 	if b.Wave >= len(b.Waves) {
 		b.Playing, b.t = false, 0
@@ -264,7 +265,6 @@ func (b *Board) next(snd *sound.Sound) {
 	for k, e := range w {
 		b.burstStart[e], b.burstLen[e], b.burstOwner[e] = b.Clock, l, b.State.from[k]
 	}
-	snd.Wave(b.Wave, len(w))
 }
 
 // fastForward plays the rest of the chain quickly.
@@ -282,10 +282,21 @@ func (b *Board) Tick(snd *sound.Sound) {
 		return
 	}
 	b.t++
+	advanced := false
+	var effects sound.Effects
 	for b.Playing && b.t >= b.dur {
 		b.t -= b.dur
-		b.State.Land(b.Waves[b.Wave])
-		b.next(snd)
+		effects |= b.State.terrainSounds(b.State.Land(b.Waves[b.Wave]))
+		b.next()
+		effects |= b.linkSound()
+		advanced = true
+	}
+	if advanced {
+		if b.Playing {
+			snd.Wave(b.Wave, len(b.Waves[b.Wave]), effects)
+		} else {
+			snd.Effect(effects)
+		}
 	}
 }
 

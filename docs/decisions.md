@@ -16,7 +16,8 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - Map capacity is an explosion threshold; outgoing degree counts transfers. Reservoirs add one to the threshold
   without adding a transfer, so blasts preserve the reserve and total orbs.
 - Latch responds to direct accepted placements and orb arrivals, never to exploding by itself. Latch stays
-  pressed after its first input; Toggle flips once per receiving or exploding wave, regardless of arrival count, and ignores direct placement;
+  pressed after its first input; Toggle flips on direct placement into an empty cell and once per receiving or
+  exploding wave, regardless of arrival count. Direct placement into an occupied Toggle does not flip it by itself;
   Hold is pressed exactly while its count is nonzero. Each circuit has exactly one controller and at least one Gate,
   so Gate state is unambiguous. Gates start closed and follow their controller, including closure.
 - Map topology is immutable per wave. A direct placement applies switch/Gate effects before selecting the first

@@ -139,7 +139,11 @@ func (g *Game) switchInputs(wave int, record bool) bool {
 				pressed = 1
 			}
 		case ToggleSwitch:
-			if wave >= 0 && (g.arrived[i] != 0 || slices.Contains(g.cur, int16(i))) {
+			if wave < 0 {
+				if g.arrived[i] != 0 && g.Count[i] == 1 {
+					pressed ^= 1
+				}
+			} else if g.arrived[i] != 0 || slices.Contains(g.cur, int16(i)) {
 				pressed ^= 1
 			}
 		case HoldSwitch:

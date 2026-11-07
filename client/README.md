@@ -21,7 +21,7 @@ and Android entry points all use `client.New()` and `client.Game`.
 | `internal/ui/` | Independent geometry, palettes, fonts, drawing, text caches, controls, scrolling and QR rendering |
 | `internal/boardview/` | Board batches, shared terrain art, wave replay, orb motion and count geometry |
 | `session.go`, `session_play.go` | Room state, routing, move synchronization and resync |
-| `internal/sound/` | Generated notes, playback, volume and voice limits |
+| `internal/sound/` | Generated pentatonic notes and map instruments, combined playback, volume and shared voice limits |
 | `internal/mapstore/` | Map library format, validation and transactional persistence |
 | `online/` | WebRTC hosting, joining and direct invite/reply connections |
 | `platform/` | Storage, clipboard, device services and browser/native implementations |

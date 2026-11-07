@@ -232,7 +232,7 @@ func (s *settingsMenu) update(a *app) error {
 				if !a.in.down {
 					s.drag = false
 					a.set.save()
-					a.snd.Place(0) // a sample note at the new volume
+					a.snd.Place(0, 0) // a sample note at the new volume
 				}
 			}
 		}

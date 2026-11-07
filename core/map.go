@@ -235,11 +235,11 @@ func (m MapDefinition) Validate() []MapIssue {
 	seenEdges := make(map[[2]int]int, len(m.Edges))
 	for i, e := range m.Edges {
 		if !m.floor(e.A) || !m.floor(e.B) {
-			issues = append(issues, MapIssue{Message: "Barriers and Gates need Floor on both sides", Cells: []int{e.A, e.B}, Edges: []int{i}})
+			issues = append(issues, MapIssue{Message: "Barriers and Gates need Floor on both sides", Edges: []int{i}})
 		}
 		key := [2]int{min(e.A, e.B), max(e.A, e.B)}
 		if prev, found := seenEdges[key]; found {
-			issues = append(issues, MapIssue{Message: "Only one Barrier or Gate can occupy an edge", Cells: []int{e.A, e.B}, Edges: []int{prev, i}})
+			issues = append(issues, MapIssue{Message: "Only one Barrier or Gate can occupy an edge", Edges: []int{prev, i}})
 		}
 		seenEdges[key] = i
 		if e.Kind == Gate {
