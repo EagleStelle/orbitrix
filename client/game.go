@@ -11,6 +11,8 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
+	"orbitrix/client/internal/sound"
+	"orbitrix/client/internal/ui"
 	"orbitrix/client/platform"
 	"orbitrix/core"
 )
@@ -26,9 +28,9 @@ type app struct {
 	w, h  float64    // screen size in device pixels
 	ins   [4]float64 // safe-area insets (left, top, right, bottom) in device pixels
 	u     float64    // UI scale: device pixels per logical pixel
-	f     fonts
-	sc    *scheme // current mode's palette
-	snd   *sound
+	f     ui.Fonts
+	sc    *ui.Palette // current mode's palette
+	snd   *sound.Sound
 	set   *settings
 	rng   core.RNG // presentation randomness: seat shuffles, game seeds, AI delays
 	in    input
@@ -43,122 +45,26 @@ type app struct {
 
 // safe is the part of the screen clear of the display's cutout. Every layout goes in it; only fills that cover the
 // whole screen (the mat, the pause veil, the winner's flood) reach past it.
-func (a *app) safe() rect {
-	return rect{a.ins[0], a.ins[1], a.w - a.ins[0] - a.ins[2], a.h - a.ins[1] - a.ins[3]}
+func (a *app) safe() ui.Rect {
+	return ui.Rect{X: a.ins[0], Y: a.ins[1], W: a.w - a.ins[0] - a.ins[2], H: a.h - a.ins[1] - a.ins[3]}
 }
 
 // portrait reports whether the safe area is taller than wide, where the game puts its bars above and below the
 // board and Home stacks its column around the mat.
-func (a *app) portrait() bool { v := a.safe(); return v.h > v.w }
-
-// touchSlop is how far (logical px) a finger may move and still tap; further, it drags.
-const touchSlop = 10
-
-// offScreen is the pointer position of a lifted finger: it hovers nothing.
-const offScreen = -1e9
-
-// input is the pointer for one update: the mouse, or the first finger on a touch screen. A finger clicks when it
-// lifts without dragging, so a drag can scroll without pressing what it started on, and it leaves no hover behind.
-type input struct {
-	x, y    float64 // device px
-	pressed bool    // the mouse button or a finger went down this update
-	clicked bool    // the mouse button went down, or a finger lifted without dragging
-
-	middle, right bool // held mouse buttons; editor-only temporary tools
-	down          bool
-	wheelX        float64
-	wheel         float64 // wheel notches this update
-	dragX         float64
-	dragY         float64 // device px a dragging finger moved down this update
-	esc           bool    // Esc, or Android's back button
-
-	finger         bool // the pointer is a finger, not the mouse
-	touch          ebiten.TouchID
-	touching, drag bool
-	x0, y0         float64 // where the finger went down
-	mx, my         int     // the mouse cursor last update, to notice it move
-	ids            []ebiten.TouchID
-}
-
-// read takes this update's input. Ebitengine reports positions on the screen Layout returned, which is already in
-// device px.
-func (in *input) read(u float64) {
-	in.pressed, in.clicked, in.wheel, in.dragY = false, false, 0, 0
-	in.wheelX, in.dragX = 0, 0
-	in.middle, in.right = false, false
-	in.esc = inpututil.IsKeyJustPressed(ebiten.KeyEscape) || platform.TakeBack()
-	if in.touching {
-		in.readFinger(u)
-		return
-	}
-	if in.ids = inpututil.AppendJustPressedTouchIDs(in.ids[:0]); len(in.ids) > 0 {
-		x, y := ebiten.TouchPosition(in.ids[0])
-		in.touch, in.finger, in.touching, in.drag = in.ids[0], true, true, false
-		in.x, in.y = float64(x), float64(y)
-		in.x0, in.y0 = in.x, in.y
-		in.pressed, in.down = true, true
-		return
-	}
-	in.middle = ebiten.IsMouseButtonPressed(ebiten.MouseButtonMiddle)
-	in.right = ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight)
-	mx, my := ebiten.CursorPosition()
-	if mx != in.mx || my != in.my || ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) || in.middle || in.right {
-		in.finger = false
-	}
-	in.mx, in.my = mx, my
-	if in.finger {
-		in.x, in.y, in.down = offScreen, offScreen, false
-		return
-	}
-	in.x, in.y = float64(mx), float64(my)
-	in.pressed = inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft)
-	in.clicked = in.pressed
-	in.down = ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft)
-	in.wheelX, in.wheel = ebiten.Wheel()
-}
-
-// readFinger follows the finger that is down; when it lifts, the click lands where it last was.
-func (in *input) readFinger(u float64) {
-	if inpututil.IsTouchJustReleased(in.touch) {
-		in.touching, in.down, in.clicked = false, false, !in.drag
-		return
-	}
-	x, y := ebiten.TouchPosition(in.touch)
-	fx, fy := float64(x), float64(y)
-	in.drag = in.drag || math.Hypot(fx-in.x0, fy-in.y0) > touchSlop*u
-	if in.drag {
-		in.dragX, in.dragY = fx-in.x, fy-in.y
-	}
-	in.x, in.y = fx, fy
-}
-
-// hover reports whether the pointer is over r, and marks the pointer as over something clickable.
-func (a *app) hover(r rect) bool {
-	if r.contains(a.in.x, a.in.y) {
-		a.pointer = true
-		return true
-	}
-	return false
-}
-
-// clicked reports a click on r.
-func (a *app) clicked(r rect) bool { return a.hover(r) && a.in.clicked }
-
-// over reports whether the pointer is over r, for drawing hover states.
-func (a *app) over(r rect) bool { return r.contains(a.in.x, a.in.y) }
+func (a *app) portrait() bool { v := a.safe(); return v.H > v.W }
 
 // tms is the animation clock in milliseconds.
 func (a *app) tms() float64 { return float64(time.Since(a.epoch).Microseconds()) / 1000 }
 
 func (a *app) setTheme(t int) {
 	a.set.Theme = themeNames[t]
-	a.sc = &schemes[t]
+	a.sc = &ui.Palettes[t]
 }
 
 func (a *app) toggleTheme() {
-	t := themeLight
-	if a.sc == &schemes[themeLight] {
-		t = themeDark
+	t := ui.Light
+	if a.sc == &ui.Palettes[ui.Light] {
+		t = ui.Dark
 	}
 	a.setTheme(t)
 	a.set.save()
@@ -166,7 +72,7 @@ func (a *app) toggleTheme() {
 
 func (a *app) toggleMute() {
 	a.set.Muted = !a.set.Muted
-	a.snd.muted = a.set.Muted
+	a.snd.Muted = a.set.Muted
 	a.set.save()
 }
 
@@ -204,7 +110,7 @@ func still(s scene) bool {
 	case *setupScene, *settingsMenu:
 		return true
 	case *playScene:
-		return s.paused && s.net == nil || s.over && !s.b.playing && s.overT >= wipeTicks
+		return s.paused && s.net == nil || s.over && !s.b.Playing && s.overT >= wipeTicks
 	}
 	return false
 }
@@ -233,9 +139,9 @@ func New() *Game {
 	a.rng = core.NewRNG(uint64(a.epoch.UnixNano()))
 	a.set = loadSettings(&a.rng)
 	a.setTheme(themeIndex(a.set.Theme))
-	a.snd = newSound()
-	a.snd.muted = a.set.Muted
-	a.snd.volume = float64(a.set.Volume) / 100
+	a.snd = sound.New()
+	a.snd.Muted = a.set.Muted
+	a.snd.Volume = float64(a.set.Volume) / 100
 	// A browser only grants fullscreen in answer to a click, so the web build starts windowed.
 	if a.set.Fullscreen && platform.CanFullscreen && runtime.GOOS != "js" {
 		ebiten.SetFullscreen(true)
@@ -244,7 +150,7 @@ func New() *Game {
 	// touches), and the screen keeps the last one.
 	ebiten.SetScreenClearedEveryFrame(false)
 	a.u = 1
-	a.f = newFonts(1)
+	a.f = ui.NewFonts(1)
 	a.in.finger = true // no pointer until the mouse moves or a finger lands
 	switch code := platform.JoinCode(); {
 	case platform.MapImport() != "":
@@ -331,7 +237,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		return
 	}
 	g.fresh = false
-	screen.Fill(&g.a.sc.ground) // a pointer, so the colour isn't boxed into a new interface value every frame
+	screen.Fill(&g.a.sc.Ground) // a pointer, so the colour isn't boxed into a new interface value every frame
 	g.scene.draw(screen, &g.a)
 	if g.ShowFPS {
 		g.drawFPS(screen)
@@ -352,9 +258,9 @@ func (g *Game) drawFPS(dst *ebiten.Image) {
 		g.frameStart, g.worst = now, 0
 	}
 	u, sc, v := g.a.u, g.a.sc, g.a.safe()
-	r := rect{v.x + 8*u, v.y + 8*u, textWidth(g.fpsText, g.a.f.small) + 20*u, 24 * u}
-	fillPill(dst, r, sc.ink)
-	drawText(dst, g.fpsText, g.a.f.small, r.x+10*u, r.cy(), text.AlignStart, sc.ground)
+	r := ui.Rect{X: v.X + 8*u, Y: v.Y + 8*u, W: ui.TextWidth(g.fpsText, g.a.f.Small) + 20*u, H: 24 * u}
+	ui.FillPill(dst, r, sc.Ink)
+	ui.DrawText(dst, g.fpsText, g.a.f.Small, r.X+10*u, r.Cy(), text.AlignStart, sc.Ground)
 }
 
 // Layout draws at the display's resolution up to maxScale, or as near as the GPU allows (screenFit); the UI scales by
@@ -364,10 +270,10 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	if m := ebiten.Monitor(); m != nil {
 		u = m.DeviceScaleFactor()
 	}
-	k := min(maxScale/u, screenFit(float64(outsideWidth)*u, float64(outsideHeight)*u, ebiten.MaxImageSize()))
+	k := min(maxScale/u, ui.ScreenFit(float64(outsideWidth)*u, float64(outsideHeight)*u, ebiten.MaxImageSize()))
 	u *= k
 	if u != g.a.u {
-		g.a.u, g.a.f = u, newFonts(u)
+		g.a.u, g.a.f = u, ui.NewFonts(u)
 	}
 	w, h := int(math.Ceil(float64(outsideWidth)*u)), int(math.Ceil(float64(outsideHeight)*u))
 	if float64(w) != g.a.w || float64(h) != g.a.h {
@@ -377,14 +283,4 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	l, t, r, b := platform.SafeArea()
 	g.a.ins = [4]float64{l * k, t * k, r * k, b * k}
 	return w, h
-}
-
-// screenFit is the scale, at most 1, that keeps a w × h px screen within a GPU whose largest image is m px. A smaller
-// screen keeps every logical size; the browser or OS scales it up.
-func screenFit(w, h float64, m int) float64 {
-	if m == 0 {
-		m = 4096 // before the graphics driver reports its limit; the common floor on phones
-	}
-	lim := float64(m - 2) // Ebitengine pads every image by a pixel, and Layout rounds the size up
-	return min(1, lim/w, lim/h)
 }

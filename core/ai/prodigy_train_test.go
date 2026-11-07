@@ -418,7 +418,7 @@ func match(seats []Strategy, size int, seed uint64, web bool, w []float32, sw ..
 			}
 			budget := seats[g.Turn].Budget()
 			if web {
-				budget = min(DefaultBudget, DefaultBudget*234/g.Geo.Cells()) // client/play.go aiBudget
+				budget = min(DefaultBudget, DefaultBudget*234/g.Geo.Cells()) // client/scene_play.go aiBudget
 			}
 			cell = bot.Choose(g, seats[g.Turn], rng.Uint64(), budget)
 		}

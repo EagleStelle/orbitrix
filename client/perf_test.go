@@ -163,7 +163,7 @@ func denseGame(a *app) *playScene {
 			break
 		}
 	}
-	p.b.sync(p.game)
+	p.b.Sync(p.game)
 	p.settle()
 	return p
 }

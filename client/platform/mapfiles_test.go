@@ -3,11 +3,12 @@
 package platform
 
 import (
-	"orbitrix/core"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"orbitrix/core"
 )
 
 func TestMapFileExportImport(t *testing.T) {

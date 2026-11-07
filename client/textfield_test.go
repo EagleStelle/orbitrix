@@ -18,6 +18,7 @@ func TestFieldFilters(t *testing.T) {
 		{"password drops controls", passwordField(), "a\tb\nc", "d", "abc", "abcd"},
 		{"name stops at its bytes", nameField(), "Ana✨✨✨✨✨", "", "Ana✨✨✨✨", "Ana✨✨✨✨"},
 		{"name composition", nameField(), "Bartholomew", "Smithe", "Bartholomew", "BartholomewSmith"},
+		{"composition shares filtering and byte limit", newField(7, false, printable), "界", "\t界ab", "界", "界界a"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			c.f.set(c.set)

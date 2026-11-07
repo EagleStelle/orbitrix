@@ -1,6 +1,8 @@
 package client
 
 import (
+	"orbitrix/client/internal/ui"
+
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 )
@@ -13,30 +15,30 @@ type snackbar struct {
 	message, more string
 	actions       [2]string
 	ticks         int
-	timeout, age  int  // timeout 0 keeps the snackbar visible until its owner dismisses it
-	avoid         rect // a fixed action row to keep clear, or zero
+	timeout, age  int     // timeout 0 keeps the snackbar visible until its owner dismisses it
+	avoid         ui.Rect // a fixed action row to keep clear, or zero
 }
 
-func (s *snackbar) frame(a *app) (bar rect, buttons [2]rect, opacity float64) {
+func (s *snackbar) frame(a *app) (bar ui.Rect, buttons [2]ui.Rect, opacity float64) {
 	v, u := a.safe(), a.u
-	w := min(v.w-32*u, 560*u)
-	limit := v.bottom()
-	if s.avoid.h > 0 {
-		limit = min(limit, s.avoid.y)
+	w := min(v.W-32*u, 560*u)
+	limit := v.Bottom()
+	if s.avoid.H > 0 {
+		limit = min(limit, s.avoid.Y)
 	}
 	height := snackH * u
 	if s.actions == [2]string{} && s.more == "" {
-		height = max(height, float64(len(wrap(s.message, a.f.small, max(1, w-48*u))))*18*u+24*u)
+		height = max(height, float64(len(wrap(s.message, a.f.Small, max(1, w-48*u))))*18*u+24*u)
 	}
-	bar = rect{v.cx() - w/2, limit - height - snackGap*u, w, height}
-	buttons[1] = rect{bar.right() - 104*u, bar.cy() - 20*u, 96 * u, 40 * u}
-	buttons[0] = rect{buttons[1].x - 68*u, buttons[1].y, 64 * u, 40 * u}
+	bar = ui.Rect{X: v.Cx() - w/2, Y: limit - height - snackGap*u, W: w, H: height}
+	buttons[1] = ui.Rect{X: bar.Right() - 104*u, Y: bar.Cy() - 20*u, W: 96 * u, H: 40 * u}
+	buttons[0] = ui.Rect{X: buttons[1].X - 68*u, Y: buttons[1].Y, W: 64 * u, H: 40 * u}
 	p := min(1, float64(s.ticks)/snackIn)
 	opacity = 1 - (1-p)*(1-p)*(1-p)
-	dy := min((1-opacity)*16*u, limit-bar.bottom())
-	bar.y += dy
+	dy := min((1-opacity)*16*u, limit-bar.Bottom())
+	bar.Y += dy
 	for i := range buttons {
-		buttons[i].y += dy
+		buttons[i].Y += dy
 	}
 	return
 }
@@ -53,7 +55,7 @@ func (s *snackbar) update(a *app) (action int, over bool) {
 	bar, buttons, _ := s.frame(a)
 	action = -1
 	for i, label := range s.actions {
-		if label != "" && a.clicked(compactHit(buttons[i], a.u)) {
+		if label != "" && a.clicked(ui.CompactHit(buttons[i], a.u)) {
 			action = i
 		}
 	}
@@ -68,35 +70,35 @@ func (s *snackbar) draw(dst *ebiten.Image, a *app) {
 	}
 	bar, buttons, opacity := s.frame(a)
 	sc, f, u := a.sc, &a.f, a.u
-	fillPill(dst, bar, withAlpha(sc.ink, opacity))
+	ui.FillPill(dst, bar, ui.WithAlpha(sc.Ink, opacity))
 	if s.actions == [2]string{} && s.more == "" {
-		lines := wrap(s.message, f.small, max(1, bar.w-48*u))
+		lines := wrap(s.message, f.Small, max(1, bar.W-48*u))
 		for i, l := range lines {
-			drawText(dst, l, f.small, bar.x+24*u, bar.cy()+(float64(i)-float64(len(lines)-1)/2)*18*u, text.AlignStart, withAlpha(sc.ground, opacity))
+			ui.DrawText(dst, l, f.Small, bar.X+24*u, bar.Cy()+(float64(i)-float64(len(lines)-1)/2)*18*u, text.AlignStart, ui.WithAlpha(sc.Ground, opacity))
 		}
 	} else {
-		drawText(dst, s.message, f.small, bar.x+24*u, bar.cy(), text.AlignStart, withAlpha(sc.ground, opacity))
+		ui.DrawText(dst, s.message, f.Small, bar.X+24*u, bar.Cy(), text.AlignStart, ui.WithAlpha(sc.Ground, opacity))
 	}
 	if s.more != "" {
-		x := bar.x + 24*u + textWidth(s.message, f.small) + 10*u
-		drawText(dst, s.more, f.small, x, bar.cy(), text.AlignStart, withAlpha(sc.ground, 0.6*opacity))
+		x := bar.X + 24*u + ui.TextWidth(s.message, f.Small) + 10*u
+		ui.DrawText(dst, s.more, f.Small, x, bar.Cy(), text.AlignStart, ui.WithAlpha(sc.Ground, 0.6*opacity))
 	}
 	for i, label := range s.actions {
 		if label == "" {
 			continue
 		}
-		b, ink := buttons[i], sc.ground
+		b, ink := buttons[i], sc.Ground
 		if i == 1 {
-			fill := sc.ground
-			if a.over(compactHit(b, u)) {
-				fill = sc.tileHi
+			fill := sc.Ground
+			if a.over(ui.CompactHit(b, u)) {
+				fill = sc.TileHi
 			}
-			fillPill(dst, b, withAlpha(fill, opacity))
-			ink = sc.ink
-		} else if a.over(compactHit(b, u)) {
-			fillPill(dst, b, withAlpha(sc.ground, 0.16*opacity))
+			ui.FillPill(dst, b, ui.WithAlpha(fill, opacity))
+			ink = sc.Ink
+		} else if a.over(ui.CompactHit(b, u)) {
+			ui.FillPill(dst, b, ui.WithAlpha(sc.Ground, 0.16*opacity))
 		}
-		drawText(dst, label, f.labelBold, b.cx(), b.cy(), text.AlignCenter, withAlpha(ink, opacity))
+		ui.DrawText(dst, label, f.LabelBold, b.Cx(), b.Cy(), text.AlignCenter, ui.WithAlpha(ink, opacity))
 	}
 }
 

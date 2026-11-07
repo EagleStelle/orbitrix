@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 
+	"orbitrix/client/internal/ui"
 	"orbitrix/client/platform"
 	"orbitrix/core"
 	"orbitrix/core/ai"
@@ -70,23 +71,27 @@ func (s *settings) label(seats []int, i int) string {
 	return seatLabels[seats[i]]
 }
 
-var themeNames = [2]string{themeLight: "light", themeDark: "dark"}
+var themeNames = [2]string{ui.Light: "light", ui.Dark: "dark"}
 
 // themeIndex returns the theme saved as name; light unless it says dark.
 func themeIndex(name string) int {
-	if name == themeNames[themeDark] {
-		return themeDark
+	if name == themeNames[ui.Dark] {
+		return ui.Dark
 	}
-	return themeLight
+	return ui.Light
 }
 
-func aiNames() []string {
-	n := make([]string, ai.NumStrategies)
-	for s := range ai.NumStrategies {
-		n[s] = s.String()
+// Seat types: index 0 is Human, 1+s is AI strategy s.
+const seatHuman = 0
+
+var seatLabels = func() []string {
+	labels := []string{"Human"}
+	for strategy := range ai.NumStrategies {
+		name := strategy.String()
+		labels = append(labels, string(name[0]-'a'+'A')+name[1:])
 	}
-	return n
-}
+	return labels
+}()
 
 func seatName(opt int) string {
 	if opt == seatHuman {

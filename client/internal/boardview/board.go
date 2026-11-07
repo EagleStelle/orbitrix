@@ -1,0 +1,456 @@
+// Package boardview draws game boards and replays resolved moves wave by wave.
+// It depends on game state and UI primitives, never on application scenes.
+package boardview
+
+import (
+	"image/color"
+	"math"
+
+	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/text/v2"
+
+	"orbitrix/client/internal/sound"
+	"orbitrix/client/internal/ui"
+	"orbitrix/client/platform"
+	"orbitrix/core"
+)
+
+// Board geometry and animation lengths, in base units and 60 Hz ticks. Base units are the prototype's unscaled
+// cell size, which the orb motion is defined in.
+const (
+	boardMargin   = 6  // around the board in the prototype's cell-size formula, in base units
+	burstTicks    = 18 // explosion: an expanding, fading ring
+	transferTicks = 14 // an orb flying to a neighbour; also the length of a wave
+	minBurstTicks = 6  // bursts stay visible however fast a long chain plays
+	chainBudget   = 480.0
+	skipBudget    = 24.0
+	TileGutter    = 0.07 // gap on each side of a tile, as a fraction of the cell
+	TileRadius    = 0.2  // tile corner radius, as a fraction of the cell
+	tileTint      = 0.3  // how much of the player's ink their tiles take on their turn
+	burstSrcR     = 64   // radius of the burst ring source image
+)
+
+// waveTicks paces chain playback; the rules have already resolved the move, this only sets how fast it is shown.
+// The first five waves play at full length so a move stays readable. Later ones speed up by 10% each down to 2.5
+// ticks, and a long chain speeds up faster (30% per wave) to tailCap, which keeps the whole chain within about
+// chainBudget ticks (8 s). Once the player skips, no wave is longer than skipCap.
+func waveTicks(k int, tailCap, skipCap float64) float64 {
+	d := max(2.5, transferTicks*math.Pow(0.9, float64(max(0, k-4))))
+	if k > 4 {
+		d = min(d, max(tailCap, transferTicks*math.Pow(0.7, float64(k-4))))
+	}
+	if skipCap > 0 {
+		d = min(d, skipCap)
+	}
+	return d
+}
+
+// tailCap is the wave length that fits waves after the first five into the rest of chainBudget.
+func tailCap(waves int) float64 {
+	return (chainBudget - 5*transferTicks) / float64(max(1, waves-5))
+}
+
+// cellSize is the base cell for a cols×rows board in a w×h (logical px) area, between 24 and 80 (from the
+// prototype's calculate_cell_size, which the orb motion's proportions depend on). The board is then scaled to fill
+// the area.
+func cellSize(cols, rows int, w, h float64) float64 {
+	c := min(math.Floor((w-2*boardMargin-100)/float64(cols)), math.Floor((h-2*boardMargin-150)/float64(rows)))
+	return max(24, min(c, 80))
+}
+
+// board shows a game: tiles, orbs, explosions and flying orbs, and the wave-by-wave playback of the last move.
+type Board struct {
+	State *view
+	Orbs  *orbField
+
+	// Playback of the move in progress.
+	Waves   []core.Wave
+	Wave    int     // wave in flight
+	t, dur  float64 // ticks into it, and its length
+	Playing bool
+	tailCap float64 // see waveTicks
+	skipCap float64 // 0 until the player skips
+	Clock   float64 // ticks since the board was created
+
+	burstStart, burstLen []float64
+	burstOwner           []int8
+
+	// Layout in device pixels.
+	area   ui.Rect
+	Turned bool    // drawn a quarter turn clockwise: a wide board in a tall area
+	base   float64 // base cell size
+	k      float64 // device px per base unit
+	ox, oy float64 // board origin
+
+	TileImg     *ebiten.Image
+	OrbImg      *ebiten.Image // atlas of square cells: rim disc, fill disc, then the twelve marks
+	OrbSize     float64       // side of each atlas cell
+	OrbDrawSize float64       // side on screen; large atlases may render at a smaller resolution
+	Palette     *ui.Palette   // the mode being drawn
+	marks       bool          // draw shape marks on orbs
+	markInk     [core.MaxPlayers]color.RGBA
+	burstImg    *ebiten.Image
+	Verts       []ebiten.Vertex
+	idx         []uint32
+	tri         ebiten.DrawTrianglesOptions
+	badge       *text.GoTextFace
+
+	mapImg      *ebiten.Image // physical map pieces, rebuilt only when their appearance changes
+	mapTheme    *ui.Palette
+	mapRevision uint64
+	mapMarks    bool
+}
+
+// New creates the board renderer and its wave playback state.
+func New(g *core.Game) *Board {
+	n := g.Geo.Cells()
+	b := &Board{
+		State: NewView(g), Orbs: newOrbField(g.Geo),
+		burstStart: make([]float64, n), burstLen: make([]float64, n), burstOwner: make([]int8, n),
+	}
+	b.tri.Filter = ebiten.FilterLinear
+	s := 2*burstSrcR + 4
+	b.burstImg = ebiten.NewImage(s, s)
+	ui.Ring(b.burstImg, float64(s)/2, float64(s)/2, burstSrcR, burstSrcR*0.16, ui.PureWhite)
+	return b
+}
+
+// layout fits the board into area (device px) at UI scale u, centred along the slack axis.
+func (b *Board) Layout(area ui.Rect, u float64) {
+	if area == b.area && b.TileImg != nil {
+		return
+	}
+	b.area = area
+	b.Turned = b.turns(area)
+	cols, rows := b.ScreenSize()
+	previousBase, previousScale := b.base, b.k
+	b.base = cellSize(cols, rows, area.W/u, area.H/u)
+	// The outer tiles' edges, not the cells around them, meet the area's edges, so the board shares the screen margin.
+	bw, bh := (float64(cols)-2*TileGutter)*b.base, (float64(rows)-2*TileGutter)*b.base
+	b.k = min(area.W/bw, area.H/bh)
+	g := TileGutter * b.base * b.k
+	b.ox, b.oy = math.Round(area.X+(area.W-bw*b.k)/2-g), math.Round(area.Y+(area.H-bh*b.k)/2-g)
+	if b.TileImg != nil && b.base == previousBase && b.k == previousScale {
+		return // scrolling moves the board without rebuilding its tile and orb images
+	}
+
+	if b.TileImg != nil {
+		b.TileImg.Deallocate()
+		b.OrbImg.Deallocate()
+	}
+	if b.mapImg != nil {
+		b.mapImg.Deallocate()
+		b.mapImg = nil
+	}
+	cell := b.base * b.k
+	ts := int(math.Ceil(cell*(1-2*TileGutter))) + 2
+	b.TileImg = ebiten.NewImage(ts, ts)
+	ui.FillRound(b.TileImg, ui.Rect{X: 1, Y: 1, W: float64(ts - 2), H: float64(ts - 2)}, cell*TileRadius, ui.PureWhite)
+
+	// Orbs are flat discs with a rim in the mat's colour, so overlapping orbs read as separate pieces, and
+	// optionally the owner's shape mark. Rim, fill and the twelve marks come from one atlas, so every orb batches
+	// together and keeps its painter's order.
+	r := orbRadius(b.base) * b.k
+	drawSize := math.Ceil(2*r) + 4
+	s := OrbAtlasSide(drawSize, ebiten.MaxImageSize())
+	fr := (r - max(1.5, r*0.16)) * s / drawSize
+	r *= s / drawSize
+	b.OrbSize, b.OrbDrawSize = s, drawSize
+	b.OrbImg = ebiten.NewImage(int((2+core.MaxPlayers)*s), int(s))
+	ui.FillCircle(b.OrbImg, s/2, s/2, r, ui.PureWhite)
+	ui.FillCircle(b.OrbImg, s+s/2, s/2, fr, ui.PureWhite)
+	for p := range core.MaxPlayers {
+		ui.MarkShape(b.OrbImg, p, float64(2+p)*s+s/2, s/2, fr, ui.PureWhite)
+	}
+	b.badge = ui.NewFace(ui.SrcUI, max(9, 0.17*cell), 700)
+}
+
+// orbAtlasSide bounds the source texture while keeping large full-width boards at their intended scale.
+func OrbAtlasSide(drawSize float64, limit int) float64 {
+	return math.Floor(drawSize * ui.ScreenFit(drawSize*(2+core.MaxPlayers), drawSize, limit))
+}
+
+// turns reports whether the board turns a quarter in area: a wide board in a tall area (an upright phone browser)
+// turns so its long side runs down the screen and its tiles stay big enough to tap. Only the drawing turns; the game
+// is the same. Where the app can rotate the screen itself (Android), the game goes landscape instead
+// (wantsLandscape).
+func (b *Board) turns(area ui.Rect) bool {
+	return area.H > area.W && b.State.Geo.Cols > b.State.Geo.Rows && platform.Rotate == nil
+}
+
+// size is the board's width and height, outer tile edge to outer tile edge, as layout would fit it into area.
+func (b *Board) Size(area ui.Rect) (w, h float64) {
+	cols, rows := float64(b.State.Geo.Cols), float64(b.State.Geo.Rows)
+	if b.turns(area) {
+		cols, rows = rows, cols
+	}
+	cols, rows = cols-2*TileGutter, rows-2*TileGutter
+	k := min(area.W/cols, area.H/rows)
+	return cols * k, rows * k
+}
+
+// screenSize is the board's columns and rows as drawn.
+func (b *Board) ScreenSize() (cols, rows int) {
+	if b.Turned {
+		return b.State.Geo.Rows, b.State.Geo.Cols
+	}
+	return b.State.Geo.Cols, b.State.Geo.Rows
+}
+
+// cellAt returns the cell under device point (x, y), or -1.
+func (b *Board) CellAt(x, y float64) int {
+	if b.k == 0 {
+		return -1
+	}
+	sc := int(math.Floor((x - b.ox) / b.k / b.base))
+	sr := int(math.Floor((y - b.oy) / b.k / b.base))
+	cols, rows := b.ScreenSize()
+	if sc < 0 || sr < 0 || sc >= cols || sr >= rows {
+		return -1
+	}
+	if b.Turned {
+		return b.State.Geo.Index(sr, b.State.Geo.Rows-1-sc)
+	}
+	return b.State.Geo.Index(sc, sr)
+}
+
+// centre of cell i in device px.
+func (b *Board) Centre(i int) (float64, float64) {
+	c, r := b.State.Geo.Coords(i)
+	if b.Turned { // a quarter turn clockwise: the first row becomes the last column
+		c, r = b.State.Geo.Rows-1-r, c
+	}
+	return b.ox + (float64(c)+0.5)*b.base*b.k, b.oy + (float64(r)+0.5)*b.base*b.k
+}
+
+// tileRect is cell i's tile in device px.
+func (b *Board) tileRect(i int) ui.Rect {
+	x, y := b.Centre(i)
+	h := b.base * b.k * (0.5 - TileGutter)
+	return ui.Rect{X: x - h, Y: y - h, W: 2 * h, H: 2 * h}
+}
+
+// bounds is the whole board, outer tile edge to outer tile edge, in device px.
+func (b *Board) Bounds() ui.Rect {
+	cell, g := b.base*b.k, TileGutter*b.base*b.k
+	cols, rows := b.ScreenSize()
+	return ui.Rect{X: b.ox + g, Y: b.oy + g, W: float64(cols)*cell - 2*g, H: float64(rows)*cell - 2*g}
+}
+
+// start shows a move: mover's orb lands in cell, then waves (from core.Game.Apply) play out. snd may be nil.
+func (b *Board) Start(cell int, mover int8, waves []core.Wave, snd *sound.Sound) {
+	b.State.Place(cell, mover)
+	b.Waves, b.Wave, b.t, b.Playing = waves, -1, 0, true
+	b.tailCap, b.skipCap = tailCap(len(waves)), 0
+	b.next(snd)
+}
+
+// sync makes the view match g without animating.
+func (b *Board) Sync(g *core.Game) {
+	b.State.sync(g)
+}
+
+// next launches the following wave, or ends playback.
+func (b *Board) next(snd *sound.Sound) {
+	b.Wave++
+	if b.Wave >= len(b.Waves) {
+		b.Playing, b.t = false, 0
+		return
+	}
+	w := b.Waves[b.Wave]
+	b.State.Launch(w)
+	b.dur = waveTicks(b.Wave, b.tailCap, b.skipCap)
+	l := max(minBurstTicks, b.dur*burstTicks/transferTicks)
+	for k, e := range w {
+		b.burstStart[e], b.burstLen[e], b.burstOwner[e] = b.Clock, l, b.State.from[k]
+	}
+	snd.Wave(b.Wave, len(w))
+}
+
+// fastForward plays the rest of the chain quickly.
+func (b *Board) FastForward() {
+	if b.Playing && b.skipCap == 0 {
+		b.skipCap = skipBudget / float64(len(b.Waves)-b.Wave)
+		b.dur = min(b.dur, b.skipCap)
+	}
+}
+
+// tick advances the animations by one 60 Hz tick. Short waves can finish several per tick.
+func (b *Board) Tick(snd *sound.Sound) {
+	b.Clock++
+	if !b.Playing {
+		return
+	}
+	b.t++
+	for b.Playing && b.t >= b.dur {
+		b.t -= b.dur
+		b.State.Land(b.Waves[b.Wave])
+		b.next(snd)
+	}
+}
+
+// draw renders the board on the mat at animation time tms (ms). The tiles of player turn light up in their ink;
+// every other tile stays printed blank (turn -1 lights none).
+func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, marks bool) {
+	b.Palette, b.marks = sc, marks
+	if marks {
+		for p := range b.markInk {
+			b.markInk[p] = ui.InkOn(sc.Players[p])
+		}
+	}
+	ts := float64(b.TileImg.Bounds().Dx())
+	lit := sc.Tile
+	if turn >= 0 {
+		lit = ui.Mix(sc.Tile, sc.Players[turn], tileTint)
+	}
+	for i, o := range b.State.Owner {
+		c := sc.Tile
+		if b.State.Replay != nil {
+			switch b.State.Replay.TerrainAt(i) {
+			case core.Void:
+				continue
+			case core.Wall, core.BreakableWall:
+				c = sc.TileHi
+			}
+		}
+		if int(o) == turn {
+			c = lit
+		}
+		x, y := b.Centre(i)
+		b.quad(x, y, ts/2, 0, ts, c, 1)
+	}
+	b.flush(dst, b.TileImg)
+	if b.State.Replay != nil {
+		b.drawMapLayer(dst, sc)
+	}
+
+	// Orbs, rim then fill (then mark) for each, in one batch.
+	for i, n := range b.State.Count {
+		if n == 0 {
+			continue
+		}
+		cx, cy := b.Centre(i)
+		for _, p := range b.Orbs.update(i, int(n), int(b.State.Geo.Cap[i]), tms, b.base) {
+			b.Orb(cx+p[0]*b.k, cy+p[1]*b.k, int(b.State.Owner[i]))
+		}
+	}
+	b.flush(dst, b.OrbImg)
+	b.drawBadges(dst, sc)
+
+	// Explosions: flat rings in the exploding cell's ink.
+	for i, start := range b.burstStart {
+		if b.burstLen[i] == 0 {
+			continue
+		}
+		f := (b.Clock - start) / b.burstLen[i]
+		if f >= 1 {
+			b.burstLen[i] = 0
+			continue
+		}
+		cx, cy := b.Centre(i)
+		e := 1 - (1-f)*(1-f) // ease out
+		r := max(1, (0.25+0.7*e)*b.base*b.k)
+		b.quad(cx, cy, r*float64(burstSrcR+2)/burstSrcR, 0, 2*burstSrcR+4, sc.Players[b.burstOwner[i]], 0.9*(1-f))
+	}
+	b.flush(dst, b.burstImg)
+
+	// Orbs in flight to the neighbours of the wave being shown.
+	if b.Playing {
+		f := min(1, b.t/b.dur)
+		for k, e := range b.Waves[b.Wave] {
+			sx, sy := b.Centre(int(e))
+			for _, n := range b.State.Geo.Neighbours(int(e)) {
+				ex, ey := b.Centre(int(n))
+				b.Orb(sx+(ex-sx)*f, sy+(ey-sy)*f, int(b.State.from[k]))
+			}
+		}
+		b.flush(dst, b.OrbImg)
+	}
+}
+
+// drawMapLayer keeps the map's physical pieces in one cached image. Orb
+// ownership and motion stay in their existing batches above this layer.
+func (b *Board) drawMapLayer(dst *ebiten.Image, sc *ui.Palette) {
+	if b.mapImg == nil || b.mapTheme != sc || b.mapRevision != b.State.revision || b.mapMarks != b.marks {
+		cols, rows := b.ScreenSize()
+		cell := b.base * b.k
+		w, h := int(math.Ceil(float64(cols)*cell)), int(math.Ceil(float64(rows)*cell))
+		if b.mapImg == nil || b.mapImg.Bounds().Dx() != w || b.mapImg.Bounds().Dy() != h {
+			if b.mapImg != nil {
+				b.mapImg.Deallocate()
+			}
+			b.mapImg = ebiten.NewImage(max(1, w), max(1, h))
+		} else {
+			b.mapImg.Clear()
+		}
+		b.renderMapLayer(b.mapImg, sc)
+		b.mapTheme, b.mapRevision = sc, b.State.revision
+		b.mapMarks = b.marks
+	}
+	var op ebiten.DrawImageOptions
+	op.GeoM.Translate(b.ox, b.oy)
+	dst.DrawImage(b.mapImg, &op)
+}
+
+func (b *Board) renderMapLayer(dst *ebiten.Image, sc *ui.Palette) {
+	g := b.State.Replay
+	DrawMapArt(dst, sc, MapState{Map: g.Map, Durability: g.Durability, Pressed: g.Pressed, OpenGates: g.OpenGates, Owner: b.State.Owner, Count: b.State.Count},
+		MapTransform{Cell: b.base * b.k, Turned: b.Turned}, false, b.marks)
+}
+
+// orb queues one of player p's orbs at (x, y): its rim in the mat's colour, its fill, and its mark if marks are on.
+func (b *Board) Orb(x, y float64, p int) {
+	s := b.OrbSize
+	h := b.OrbDrawSize / 2
+	b.quad(x, y, h, 0, s, b.Palette.Ground, 1)
+	b.quad(x, y, h, s, s, b.Palette.Players[p], 1)
+	if b.marks {
+		b.quad(x, y, h, float64(2+p)*s, s, b.markInk[p], 1)
+	}
+}
+
+// quad queues a square of the source image starting at x-offset sx with side src, centred at (x, y) with
+// half-size h, tinted c at alpha a.
+func (b *Board) quad(x, y, h, sx, src float64, c color.RGBA, a float64) {
+	n := uint32(len(b.Verts))
+	r, g, bl := float32(c.R)/255, float32(c.G)/255, float32(c.B)/255
+	x0, y0, x1, y1 := float32(x-h), float32(y-h), float32(x+h), float32(y+h)
+	s0, s1, t := float32(sx), float32(sx+src), float32(src)
+	b.Verts = append(b.Verts,
+		ebiten.Vertex{DstX: x0, DstY: y0, SrcX: s0, SrcY: 0, ColorR: r, ColorG: g, ColorB: bl, ColorA: float32(a)},
+		ebiten.Vertex{DstX: x1, DstY: y0, SrcX: s1, SrcY: 0, ColorR: r, ColorG: g, ColorB: bl, ColorA: float32(a)},
+		ebiten.Vertex{DstX: x0, DstY: y1, SrcX: s0, SrcY: t, ColorR: r, ColorG: g, ColorB: bl, ColorA: float32(a)},
+		ebiten.Vertex{DstX: x1, DstY: y1, SrcX: s1, SrcY: t, ColorR: r, ColorG: g, ColorB: bl, ColorA: float32(a)},
+	)
+	b.idx = append(b.idx, n, n+1, n+2, n+1, n+3, n+2)
+}
+
+// flush draws the queued quads from src. Tiles draw at their cached size and large orbs may upscale; only burst
+// rings shrink, so only they pay for mipmaps.
+func (b *Board) flush(dst, src *ebiten.Image) {
+	if len(b.idx) > 0 {
+		b.tri.DisableMipmaps = src != b.burstImg
+		dst.DrawTriangles32(b.Verts, b.idx, src, &b.tri)
+	}
+	b.Verts, b.idx = b.Verts[:0], b.idx[:0]
+}
+
+// drawBadges labels crowded cells, including custom-map cells after a long chain.
+func (b *Board) drawBadges(dst *ebiten.Image, sc *ui.Palette) {
+	for i, n := range b.State.Count {
+		if n <= 4 {
+			continue
+		}
+		t := b.tileRect(i)
+		h := max(14, t.H*0.3)
+		r := ui.Rect{X: t.Right() - h*1.3 - 2, Y: t.Bottom() - h - 2, W: h * 1.3, H: h}
+		ui.FillPill(dst, r, sc.Ink)
+		ui.DrawText(dst, ui.Numbers[n], b.badge, r.Cx(), r.Cy(), text.AlignCenter, sc.Ground)
+	}
+}
+
+// drawHover outlines cell i's tile in c: where the player to move would place.
+func (b *Board) DrawHover(dst *ebiten.Image, i int, c color.RGBA, u float64) {
+	t := b.tileRect(i)
+	ui.StrokeRound(dst, t, t.W*TileRadius/(1-2*TileGutter), max(2, 3*u), c)
+}

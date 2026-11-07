@@ -10,6 +10,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/exp/textinput"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
+	"orbitrix/client/internal/ui"
 	"orbitrix/client/platform"
 	"orbitrix/proto"
 )
@@ -72,42 +73,26 @@ func printable(r rune) rune {
 	return 0
 }
 
-func (f *field) add(s string) {
+func (f *field) appendFiltered(dst []rune, s string) []rune {
 	n := 0
-	for _, r := range f.text {
+	for _, r := range dst {
 		n += utf8.RuneLen(r)
 	}
 	for _, r := range s {
 		if r = f.keep(r); r != 0 && n+utf8.RuneLen(r) <= f.max {
-			f.text = append(f.text, r)
+			dst = append(dst, r)
 			n += utf8.RuneLen(r)
 		}
 	}
+	return dst
 }
+
+func (f *field) add(s string) { f.text = f.appendFiltered(f.text, s) }
 
 // show sets what the page draws: the text, then what the keyboard is composing.
 func (f *field) show(composing string) {
 	f.edits++
-	f.shown = append(f.shown[:0], f.text...)
-	n := 0
-	for _, r := range f.shown {
-		n += utf8.RuneLen(r)
-	}
-	for _, r := range composing {
-		if r = f.keep(r); r != 0 && n+utf8.RuneLen(r) <= f.max {
-			f.shown = append(f.shown, r)
-			n += utf8.RuneLen(r)
-		}
-	}
-}
-
-// fits reports whether text with r after it stays within max bytes.
-func fits(text []rune, r rune, max int) bool {
-	n := utf8.RuneLen(r)
-	for _, c := range text {
-		n += utf8.RuneLen(c)
-	}
-	return n <= max
+	f.shown = f.appendFiltered(append(f.shown[:0], f.text...), composing)
 }
 
 // set replaces the text, between the keyboard's sessions.
@@ -126,7 +111,7 @@ func (f *field) value() string {
 
 // tap focuses the field when the pointer goes down on r (a browser opens its on-screen keyboard only for a touch
 // still under way), and on a touch screen gives the keyboard back when a tap lands elsewhere.
-func (f *field) tap(a *app, r rect) {
+func (f *field) tap(a *app, r ui.Rect) {
 	switch {
 	case a.in.pressed && a.over(r):
 		f.focused = true

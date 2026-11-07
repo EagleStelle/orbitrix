@@ -21,16 +21,19 @@ orbitrix/
 │       └── *_train_test.go     Training and match harness (build tag train)
 ├── proto/                      Binary wire protocol, version, room codes
 ├── client/                     The Ebitengine game
-│   ├── game.go                 The app: scene switching, input, the frame loop
-│   ├── ui.go, page.go, theme.go   Buttons and drawing helpers, the shared page frame, the two themes
-│   ├── home.go, setup.go, room.go, joinpage.go, password.go, gone.go   Home, Setup and the room, join pages, host password, room ended
-│   ├── play.go, view.go, board.go, orbs.go, count.go   The game screen, wave replay, board batches, orb motion, orb counts
-│   ├── net.go, netplay.go      Online and LAN sessions, and a networked game: hash checks, resync, pacing
-│   ├── audio.go                Generated pentatonic notes and voice limits
-│   ├── settings.go, settingsmenu.go, textfield.go, ask.go   Saved settings, the Settings screen, text entry, dialogs
+│   ├── game.go, input.go        Shared app, frame loop and input
+│   ├── settings.go             Saved preferences, seats and rejoin details
+│   ├── scene_*.go              Screens: Home, Setup, match, rooms, maps, editor and settings
+│   ├── page.go, dialog.go, snackbar.go, textfield.go   Page, dialog, notification and keyboard orchestration
+│   ├── session.go, session_play.go   Room state, hash checks, resync and pacing
+│   ├── internal/
+│   │   ├── ui/                 Independent presentation primitives, controls and scrolling
+│   │   ├── boardview/          Board rendering, terrain art, wave replay, orb motion and count geometry
+│   │   ├── sound/              Generated pentatonic notes and voice limits
+│   │   └── mapstore/           Map library format, validation and persistence
 │   ├── online/                 Hosting and joining online rooms
 │   ├── platform/               Per-platform storage, clipboard, keyboard type, device name, server address
-│   └── fonts/                  Unbounded and Archivo, with their OFL licences
+│   └── fonts/                  Font embedding, Unbounded and Archivo, with their OFL licences
 ├── server/                     Website: landing page, /play, /join, downloads, static files, /signal
 │   ├── hub/                    The room engine every host runs
 │   ├── transport/
@@ -63,6 +66,10 @@ orbitrix/
 ```
 
 `dist/` holds build output and is not tracked.
+
+See [client/README.md](../client/README.md) for the client file map and placement
+rules. Its screens share private app state in one Go package; independent UI and
+board rendering live in `client/internal/`. Tests stay beside their code.
 
 ## Layers
 

@@ -35,20 +35,20 @@ func TestGameIdleAndAnimationTransitions(t *testing.T) {
 		}
 		g.Draw(dst)
 	}
-	if redraws != 60/stillRedraw || p.b.clock != 0 {
-		t.Fatalf("paused game: %d redraws, board clock %g", redraws, p.b.clock)
+	if redraws != 60/stillRedraw || p.b.Clock != 0 {
+		t.Fatalf("paused game: %d redraws, board clock %g", redraws, p.b.Clock)
 	}
 	platform.PressBack()
 	if err := g.Update(); err != nil {
 		t.Fatal(err)
 	}
-	if p.paused || !g.fresh || p.b.clock != 0 {
+	if p.paused || !g.fresh || p.b.Clock != 0 {
 		t.Fatal("resuming must redraw immediately without advancing the paused clock")
 	}
 	if err := g.Update(); err != nil {
 		t.Fatal(err)
 	}
-	if p.b.clock != 1 {
+	if p.b.Clock != 1 {
 		t.Fatal("resumed board must advance by one tick")
 	}
 	g.Draw(dst)
@@ -75,17 +75,17 @@ func TestPausedBoardMotionFreezes(t *testing.T) {
 		t.Fatal(err)
 	}
 	cell := p.game.Geo.Index(1, 1)
-	p.b.v.owner[cell], p.b.v.count[cell], p.b.clock = 0, 3, 30
+	p.b.State.Owner[cell], p.b.State.Count[cell], p.b.Clock = 0, 3, 30
 	dst := ebiten.NewImage(1, 1)
 	defer dst.Deallocate()
 	p.draw(dst, a)
-	positions := slices.Clone(p.b.orbs.pos)
+	positions := slices.Clone(p.b.Orbs.Pos)
 	p.paused = true
 	a.epoch = a.epoch.Add(-time.Hour)
 	for range 3 {
 		p.draw(dst, a)
 	}
-	if !slices.Equal(positions, p.b.orbs.pos) {
+	if !slices.Equal(positions, p.b.Orbs.Pos) {
 		t.Fatal("periodic redraws and elapsed wall time must not move paused orbs")
 	}
 }
@@ -96,17 +96,17 @@ func TestOpaqueResultsSkipBoard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.b.v.owner[0], p.b.v.count[0], p.b.clock = 0, 1, 1
+	p.b.State.Owner[0], p.b.State.Count[0], p.b.Clock = 0, 1, 1
 	p.over, p.overT = true, wipeTicks
 	dst := ebiten.NewImage(1, 1)
 	defer dst.Deallocate()
 	p.draw(dst, a)
-	if p.b.orbs.n[0] != 0 {
+	if p.b.Orbs.N[0] != 0 {
 		t.Fatal("the hidden board must not animate behind opaque results")
 	}
 	p.overT--
 	p.draw(dst, a)
-	if p.b.orbs.n[0] != 1 {
+	if p.b.Orbs.N[0] != 1 {
 		t.Fatal("the board must remain visible until the results wipe finishes")
 	}
 }
@@ -122,7 +122,7 @@ func TestPauseConfirm(t *testing.T) {
 	p.layout(a)
 	tap := func(i int) {
 		r := p.pauseBtn[i]
-		a.in = input{x: r.cx(), y: r.cy(), clicked: true}
+		a.in = input{x: r.Cx(), y: r.Cy(), clicked: true}
 		if err := p.updatePause(a); err != nil {
 			t.Fatal(err)
 		}

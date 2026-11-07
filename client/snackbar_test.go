@@ -12,7 +12,7 @@ func TestSnackbarBottomAnchor(t *testing.T) {
 			a.ins[3] = 24 * u
 			bar := snackbar{message: "Waiting for the host", ticks: snackIn}
 			bounds, _, _ := bar.frame(a)
-			if math.Abs(bounds.bottom()-(a.safe().bottom()-12*u)) > 0.001 {
+			if math.Abs(bounds.Bottom()-(a.safe().Bottom()-12*u)) > 0.001 {
 				t.Fatal("a snackbar without a fixed action row must leave a 12 px gap above the safe-area bottom")
 			}
 			s := newRoomSetup(a, false)
@@ -24,7 +24,7 @@ func TestSnackbarBottomAnchor(t *testing.T) {
 					t.Fatal("the room snackbar must keep Open room/Start and Invite clear throughout its entrance")
 				}
 			}
-			if math.Abs(bounds.bottom()-(s.start.y-12*u)) > 0.001 {
+			if math.Abs(bounds.Bottom()-(s.start.Y-12*u)) > 0.001 {
 				t.Fatal("the room snackbar must sit just above the fixed action row")
 			}
 			s.scroll = s.maxScroll
@@ -50,7 +50,7 @@ func TestSnackbarActions(t *testing.T) {
 				}
 				for i := range bar.actions {
 					_, buttons, _ := bar.frame(a)
-					a.in = input{x: buttons[i].cx(), y: buttons[i].cy(), clicked: true}
+					a.in = input{x: buttons[i].Cx(), y: buttons[i].Cy(), clicked: true}
 					if action, over := bar.update(a); action != i || !over {
 						t.Fatalf("snackbar action %d must consume its click; got %d, %v", i, action, over)
 					}
@@ -58,7 +58,7 @@ func TestSnackbarActions(t *testing.T) {
 			}
 			bar.actions = [2]string{}
 			bounds, _, _ := bar.frame(a)
-			a.in = input{x: bounds.cx(), y: bounds.cy(), clicked: true}
+			a.in = input{x: bounds.Cx(), y: bounds.Cy(), clicked: true}
 			if action, over := bar.update(a); action != -1 || !over {
 				t.Fatal("a status-only snackbar must consume the pointer without choosing an action")
 			}
@@ -81,7 +81,7 @@ func TestSnackbarOptionalTimeout(t *testing.T) {
 		t.Fatal("timed snackbar must expire")
 	}
 	bar, _, _ := timed.frame(a)
-	a.in.x, a.in.y, a.in.clicked = bar.cx(), bar.cy(), true
+	a.in.x, a.in.y, a.in.clicked = bar.Cx(), bar.Cy(), true
 	if action, over := timed.update(a); action != -1 || over {
 		t.Fatal("expired snackbar must not intercept input")
 	}

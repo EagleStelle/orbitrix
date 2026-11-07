@@ -97,6 +97,7 @@ orbitrix/
 │   └── ai/          The twelve bots, shared search helpers and network weights
 ├── proto/           Binary wire protocol and room codes
 ├── client/          Ebitengine game: scenes, board rendering, input, audio, settings
+│   ├── internal/    Independent sound and map-library packages
 │   ├── online/      Hosting and joining online rooms
 │   ├── platform/    Storage, clipboard, keyboard and other per-platform code
 │   └── fonts/       Unbounded and Archivo with their OFL licences
@@ -113,7 +114,7 @@ orbitrix/
 └── magefile.go      Build targets
 ```
 
-See [docs/structure.md](docs/structure.md) for every package and what belongs in it.
+See [docs/structure.md](docs/structure.md) for every package and what belongs in it, and [client/README.md](client/README.md) for the client file map.
 
 ## Documentation
 
