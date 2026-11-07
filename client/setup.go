@@ -129,6 +129,7 @@ func previewFrame(a *app) (cols, rows int) {
 type setupScene struct {
 	menu int       // seat whose type menu is open, or -1
 	room *hostRoom // a room this player hosts, or nil for a game on this device
+	test bool      // private editor test preferences are never persisted
 
 	// Layout in device px, recomputed when the screen size or the room's lobby changes.
 	lv                    rect
@@ -313,7 +314,7 @@ func (s *setupScene) canStart(a *app) bool {
 	if s.room != nil {
 		return s.room.canAct(a)
 	}
-	return a.set.Players <= a.set.Cols*a.set.Rows
+	return mapCanStart(a.set)
 }
 
 func hasHuman(seats []int) bool { return slices.Contains(seats, seatHuman) }
@@ -328,6 +329,9 @@ func (s *setupScene) minPlayers() int {
 
 // changed saves a change to the seats or the board, and hands it to the room this player hosts.
 func (s *setupScene) changed(a *app) {
+	if s.test {
+		return
+	}
 	a.set.save()
 	if s.room != nil {
 		s.room.apply(a)
@@ -342,6 +346,10 @@ func (s *setupScene) setPlayers(a *app, n int) {
 }
 
 func (s *setupScene) resize(a *app, dc, dr int) {
+	if s.test {
+		return
+	}
+	a.set.Map = nil
 	a.set.Cols = max(core.MinSize, min(core.MaxSize, a.set.Cols+dc))
 	a.set.Rows = max(core.MinSize, min(core.MaxSize, a.set.Rows+dr))
 	s.changed(a)
@@ -517,6 +525,15 @@ func (s *setupScene) update(a *app) error {
 	}
 
 	switch {
+	case !s.test && a.clicked(s.mapButton(a)):
+		a.next = newMaps(a, s, func(m *core.MapDefinition) {
+			a.set.Map = m
+			if m != nil {
+				a.set.Cols, a.set.Rows = m.Cols, m.Rows
+			}
+			s.changed(a)
+		})
+		return nil
 	case a.clicked(compactHit(s.back, u)):
 		s.leave(a)
 		return nil
@@ -558,7 +575,8 @@ func (s *setupScene) update(a *app) error {
 	}
 	for g, group := range s.presetPills {
 		for t, r := range group {
-			if a.clicked(compactHit(r, u)) {
+			if !s.test && a.clicked(compactHit(r, u)) {
+				set.Map = nil
 				set.Cols, set.Rows = presetSize(g, t)
 				s.changed(a)
 			}
@@ -704,7 +722,13 @@ func (s *setupScene) drawBoard(dst *ebiten.Image, a *app) {
 		fillRound(dst, s.previewPanel, 16*u, sc.ground)
 	}
 	if s.showPreview {
-		drawPreview(dst, a, s.preview)
+		pv := s.preview
+		pv.h = max(1, pv.h-48*u)
+		if set.Map != nil {
+			drawMapThumb(dst, a, *set.Map, pv)
+		} else {
+			drawPreview(dst, a, pv)
+		}
 	}
 
 	for shape, group := range s.presetPills {
@@ -722,6 +746,7 @@ func (s *setupScene) drawBoard(dst *ebiten.Image, a *app) {
 	stepper(dst, a, set.Cols, core.MinSize, core.MaxSize, s.minusCol, s.plusCol)
 	drawText(dst, "Rows", a.f.labelBold, s.rowsCtl.x, s.rowsCtl.cy(), text.AlignStart, sc.ink)
 	stepper(dst, a, set.Rows, core.MinSize, core.MaxSize, s.minusRow, s.plusRow)
+	drawButton(dst, a, s.mapButton(a), "Maps", "", btnGround, !s.test)
 }
 
 // drawPreview draws the chosen board as a mini mat centred in pv, with its shape's presets as dashed outlines from the

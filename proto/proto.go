@@ -1,6 +1,7 @@
 package proto
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -12,7 +13,7 @@ import (
 
 // Version is the first byte of every message. Peers on different versions can't talk; a host answers a Hello from
 // another version with Bye{ReasonVersion}, which every version decodes alike (version, type, reason).
-const Version = 1
+const Version = 3
 
 // Limits checked when decoding.
 const (
@@ -120,6 +121,7 @@ type Lobby struct {
 	TurnTimer  uint16 // seconds a human has to move; 0 means no limit
 	Playing    bool
 	Seats      []Seat
+	Map        *core.MapDefinition // nil selects the ordinary rectangular board
 }
 
 // MoveApplied reports a move the host accepted, numbered by Seq from 1 each game, with the state hash after it.
@@ -186,6 +188,7 @@ func Append(dst []byte, m Msg) []byte {
 		for _, s := range m.Seats {
 			dst = appendStr(appendBool(append(dst, byte(s.State), s.AI), s.Ready), s.Name)
 		}
+		dst = appendMap(dst, m.Map)
 	case MoveApplied:
 		dst = binary.BigEndian.AppendUint32(dst, m.Seq)
 		dst = binary.BigEndian.AppendUint64(append(dst, m.Player, m.C, m.R), m.Hash)
@@ -199,6 +202,10 @@ func Append(dst []byte, m Msg) []byte {
 		for _, o := range g.Owner {
 			dst = append(dst, byte(o))
 		}
+		dst = appendMap(dst, g.Map)
+		dst = appendBytes(dst, g.Durability)
+		dst = appendBytes(dst, g.OpenGates)
+		dst = appendBytes(dst, g.Pressed)
 	case Bye:
 		dst = append(dst, byte(m.Reason))
 	}
@@ -255,6 +262,23 @@ func Decode(b []byte) (Msg, error) {
 
 func appendStr(dst []byte, s string) []byte { return append(append(dst, byte(len(s))), s...) }
 
+func appendBytes(dst, b []byte) []byte {
+	return append(binary.BigEndian.AppendUint16(dst, uint16(len(b))), b...)
+}
+
+func appendMap(dst []byte, m *core.MapDefinition) []byte {
+	if m == nil {
+		return binary.BigEndian.AppendUint32(dst, 0)
+	}
+	b, err := core.EncodeMap(*m)
+	if err != nil {
+		// Append's callers send validated game state. If that contract is broken, send an invalid frame rather than
+		// silently changing a custom map to a rectangle.
+		return binary.BigEndian.AppendUint32(dst, ^uint32(0))
+	}
+	return append(binary.BigEndian.AppendUint32(dst, uint32(len(b))), b...)
+}
+
 func appendBool(dst []byte, v bool) []byte {
 	if v {
 		return append(dst, 1)
@@ -309,6 +333,42 @@ func (r *reader) str(max int) string {
 
 func (r *reader) token(t *Token) { copy(t[:], r.next(len(t))) }
 
+func (r *reader) bytes(max int) []byte {
+	n := int(r.u16())
+	if n > max {
+		r.fail()
+		return nil
+	}
+	return append([]byte(nil), r.next(n)...)
+}
+
+func (r *reader) mapDefinition() *core.MapDefinition {
+	n := r.u32()
+	if n == 0 {
+		return nil
+	}
+	if n > core.MaxMapBytes {
+		r.fail()
+		return nil
+	}
+	b := r.next(int(n))
+	if r.bad {
+		return nil
+	}
+	m, err := core.DecodeMap(b)
+	if err != nil {
+		r.fail()
+		return nil
+	}
+	// Map imports may accept equivalent representations; the game protocol remains canonical.
+	canonical, err := core.EncodeMap(m)
+	if err != nil || !bytes.Equal(b, canonical) {
+		r.fail()
+		return nil
+	}
+	return &m
+}
+
 func (r *reader) lobby() Lobby {
 	l := Lobby{Cols: r.u8(), Rows: r.u8(), TurnTimer: r.u16(), Playing: r.bool()}
 	n := int(r.u8())
@@ -323,6 +383,10 @@ func (r *reader) lobby() Lobby {
 		}
 		l.Seats = append(l.Seats, s)
 	}
+	l.Map = r.mapDefinition()
+	if l.Map != nil && (l.Map.Cols != int(l.Cols) || l.Map.Rows != int(l.Rows)) {
+		r.fail()
+	}
 	return l
 }
 
@@ -336,5 +400,9 @@ func (r *reader) snapshot() Snapshot {
 	for _, o := range r.next(n) {
 		g.Owner = append(g.Owner, int8(o))
 	}
+	g.Map = r.mapDefinition()
+	g.Durability = r.bytes(core.MaxSize * core.MaxSize)
+	g.OpenGates = r.bytes(255)
+	g.Pressed = r.bytes(core.MaxSize * core.MaxSize)
 	return s
 }

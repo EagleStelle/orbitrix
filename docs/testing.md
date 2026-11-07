@@ -16,7 +16,7 @@ Client tests run Ebitengine scenes headless. They need no window, so they run in
 
 | Package | Tests |
 |---|---|
-| `core` | Table-driven rules cases (capacity, explosions, leftovers, ownership, immediate wins, turn order, passes), property tests over random games (orbs grow by exactly one per move, determinism, a win always ends the game, `Apply` allocates nothing), `FuzzGame`, snapshot validation, RNG output, and a pinned state hash for the empty 9×9 board |
+| `core` | Table-driven rules cases (capacity, explosions, leftovers, ownership, immediate wins, turn order, passes), property tests over random games (orbs grow by exactly one per move, determinism, a win always ends the game, classic `Apply` allocates nothing), `FuzzGame`, snapshot validation, RNG output, and a pinned state hash for the empty 9×9 board |
 | `core/ai` | Every strategy plays legal moves and is deterministic over full games, behaviour cases per bot, the integer network's forward pass, and benchmarks |
 | `proto` | Encode and decode of every message, rejection of malformed input, and `FuzzDecode`, which checks that whatever decodes re-encodes to the same bytes (100% coverage) |
 | `server/hub` | Lobby, ready, start, rematch, leave, rejoin tokens and the seat grace, kick, replace, skip, Swap and Remove, the turn timer, bot seats and the message limits |

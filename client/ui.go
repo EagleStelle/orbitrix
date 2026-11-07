@@ -33,6 +33,7 @@ func compactHit(r rect, u float64) rect {
 
 // scrollView clips overflowing content and owns a touch drag from its starting viewport.
 type scrollView struct {
+	horizontal     bool
 	viewport       rect
 	height, offset float64
 	dragging       bool
@@ -40,7 +41,13 @@ type scrollView struct {
 	clipped        rect
 }
 
-func (s *scrollView) maxScroll() float64 { return max(0, s.height-s.viewport.h) }
+func (s *scrollView) maxScroll() float64 {
+	extent := s.viewport.h
+	if s.horizontal {
+		extent = s.viewport.w
+	}
+	return max(0, s.height-extent)
+}
 
 func (s *scrollView) set(v rect, height float64) {
 	s.viewport, s.height = v, height
@@ -57,16 +64,33 @@ func (s *scrollView) update(a *app) bool {
 	}
 	before := s.offset
 	if s.viewport.contains(in.x, in.y) {
-		s.offset -= in.wheel * (compactButtonTarget + 8) * a.u
+		wheel := in.wheel
+		if s.horizontal && in.wheelX != 0 {
+			wheel = in.wheelX
+		}
+		s.offset -= wheel * (compactButtonTarget + 8) * a.u
 	}
 	if s.dragging {
-		s.offset -= in.dragY
+		if s.horizontal {
+			s.offset -= in.dragX
+		} else {
+			s.offset -= in.dragY
+		}
 	}
 	s.offset = max(0, min(s.maxScroll(), s.offset))
 	return s.offset != before
 }
 
 func (s *scrollView) reveal(r rect) {
+	if s.horizontal {
+		if r.x < s.viewport.x {
+			s.offset -= s.viewport.x - r.x
+		} else if r.right() > s.viewport.right() {
+			s.offset += r.right() - s.viewport.right()
+		}
+		s.offset = max(0, min(s.maxScroll(), s.offset))
+		return
+	}
 	if r.y < s.viewport.y {
 		s.offset -= s.viewport.y - r.y
 	} else if r.bottom() > s.viewport.bottom() {
@@ -89,6 +113,11 @@ func (s *scrollView) drawScrollbar(dst *ebiten.Image, a *app) {
 		return
 	}
 	v, u := s.viewport, a.u
+	if s.horizontal {
+		w := min(v.w, max(24*u, v.w*v.w/s.height))
+		fillRound(dst, rect{v.x + (v.w-w)*s.offset/s.maxScroll(), v.bottom() - 2*u, w, 2 * u}, u, a.sc.dim)
+		return
+	}
 	h := min(v.h, max(24*u, v.h*v.h/s.height))
 	fillRound(dst, rect{v.right() + 5*u, v.y + (v.h-h)*s.offset/s.maxScroll(), 3 * u, h}, 1.5*u, a.sc.dim)
 }

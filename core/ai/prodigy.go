@@ -196,7 +196,7 @@ func (b *Bot) expandNet(tree []puctNode, node int32, g *core.Game, w []float32, 
 	p := int8(g.Turn)
 	list := b.list[:0]
 	for i, o := range g.Owner {
-		if o == core.NoOwner || o == p {
+		if g.Geo.Playable(i) && (o == core.NoOwner || o == p) {
 			list = insertTop(list, scored{float64(logit[i]), i}, k)
 		}
 	}
@@ -250,7 +250,7 @@ func shares(g *core.Game, win float64) (values [core.MaxPlayers]float64) {
 func (net *prodigyNet) evaluate(g *core.Game, w []float32) (float64, []float32, int) {
 	n, base, next := g.Geo.Cells(), &net.bases[g.Turn], nextMover(g)
 	scan := 1 + n/netScanPerUnit
-	if !base.ok || base.next != next {
+	if g.Map != nil || !base.ok || base.next != next {
 		win := forward(g, w, &base.netEval)
 		base.count, base.owner = append(base.count[:0], g.Count...), append(base.owner[:0], g.Owner...)
 		base.next, base.ok = next, true
@@ -444,7 +444,7 @@ func encode(g *core.Game, i int, p, next int8, f []float32) {
 	f = f[:netPlanes]
 	clear(f)
 	cp := g.Geo.Cap[i]
-	f[7] = float32(4-cp) / 2
+	f[7] = float32(4-int(cp)) / 2
 	o := g.Owner[i]
 	if o == core.NoOwner {
 		return

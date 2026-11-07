@@ -53,6 +53,14 @@ fill empty seats with AI, and enjoy following a chain reaction as it plays out.
 
 ## Capabilities and Constraints
 
+- Custom maps and Map Editor: Floor, Void, Wall, Breakable wall, Barriers, Gates, Links, Reservoirs, and three
+  switch types: Latch (permanent), Toggle (flips per placement or receiving wave), and Hold (pressed while occupied).
+  Preserve the established map design and change it only as explicitly requested; the authoritative map-device rules are in `DESIGN.md`, shared across palette, editor, thumbnails and match. Links retain the separated lower/upper U paths with rounded internal bends derived from the outer frame, unchanged tips, width and pair ink, and no right-angle bends. Latch and Hold buttons are outlined OFF/released and solid circuit-color fill ON/pressed. The Reservoir reserve pocket stays square.
+  Device outer frames share the exact Floor tile bounds and corner radius, with no surrounding Floor gap. All three switches share inner gaps and corner-radius geometry: Latch and Hold have identical inner rectangles; Toggle uses the full shared inner rectangle and gaps, split into two equal adjacent halves by a center seam: left solid circuit-color fill means OFF, right solid fill means ON, with the opposite half outlined. Hold brackets are clipped from the same rounded frame. Empty Reservoirs are neutral; occupied Reservoir outlines use the occupying player's exact ink and follow the displayed animation wave. Four symmetrical cardinal channel strokes connect the central pocket toward the basin, stopping two stroke widths before its unchanged frame; they share its stroke and neutral/owner ink. Links and switches retain pair/circuit inks.
+  Breakable walls show a connected, tapered negative-space fracture rooted at the center: three main splits and two forks, visibly identifying breakability at initial durability 2. At durability 1 the same whole connected network grows 1.24x, longer and wider toward the edges. Use branching fractures rather than repetitive zigzags; no random texture, detached flecks or circles. Fracture cuts are structural damage, not additional device-icon stroke weights. Wall fill and joins stay unchanged; destruction creates empty Floor.
+  Each circuit has one switch controlling one or more Gates. Maps are stored locally, with file/code/QR portability,
+  editable draft recovery, test play, and automatic host-to-player distribution. See `docs/maps.md`.
+
 - Rules, screens, AI behaviour and multiplayer design are specified in `CLAUDE.md`, the source of truth.
 - Every graphic is drawn and every sound synthesised in code. No image or audio files in the game; the only
   embedded assets are the OFL fonts Unbounded and Archivo in `client/fonts/` with their licences. The README's logos
@@ -66,11 +74,12 @@ fill empty seats with AI, and enjoy following a chain reaction as it plays out.
 ## Brand Commitments
 
 - Name: Orbitrix.
-- Visual world: Party Mat, a printed party floor mat. Colour belongs to the players and nothing else; every control
-  is ink on vinyl. Flat only: no 3D, no shadow depth, no gradients, no neon. Nothing from the prototype's UI. The
-  design system is in `DESIGN.md`.
+- Visual world: Party Mat, a printed party floor mat. The same twelve orb inks identify players, Link pairs and
+  switch circuits. Map art stays identical with Colorblind enabled or disabled; no group numbers are printed. General
+  controls stay ink on vinyl. Flat only: no 3D, no shadow depth, no gradients, no neon. Nothing from the prototype's
+  UI. The design system is in `DESIGN.md`.
 - Light mode (bright vinyl, the default) and dark mode (warm charcoal), switchable and saved. No blue tint in either
-  mode's neutrals; blue appears only as the Blue and Sky inks.
+  mode's neutrals; blue is confined to the twelve orb inks.
 - The 12 player inks (colour-blind tuned, first eight from Okabe–Ito) and their order are fixed, each with a shape
   mark: Vermilion (dot), Blue (bar), Green (plus), Orange (cross), Mauve (triangle), Sky (square), Yellow (diamond),
   Charcoal/Chalk (stem), Violet (pair), Brown (ring), Plum/Mint (chevron), Maroon (frame).
@@ -102,5 +111,7 @@ fill empty seats with AI, and enjoy following a chain reaction as it plays out.
 
 - Players are told apart by colour. The first eight inks follow Okabe–Ito; Colorblind mode (Settings > Video) adds
   each player's shape mark to their orbs, seat dots and spinner wedge, which seats 9–12 rely on more.
+- Map relationships use twelve groups with the exact orb colors. Devices, terrain, Gates and relationship swatches keep identical normal art and colors with Colorblind enabled or disabled. Player and orb marks elsewhere stay unchanged. Neither state adds map identity stamps. Device silhouettes and
+  pressed/released forms also communicate function and state without relying on hue.
 - Input works with touch on Android and mouse and keyboard on desktop and web.
 - No accessibility standard has been set.

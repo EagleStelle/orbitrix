@@ -100,13 +100,18 @@ func (s *homeScene) layout(a *app) {
 	s.w = track(s.logo)
 	s.x = v.x + max(pad, (col-s.w)/2) // centre the column in the area left of the mat
 
-	labels := []string{"Settings"}
+	labels := []string{"Maps", "Settings"}
 	if platform.CanExit {
 		labels = append(labels, "Exit")
 	}
 	s.dotR = max(8*u, min(16*u, s.w/12*0.36))
 	bh, gap := quietButtonHeight*u, 12*u
-	stack := float64(len(labels))*(bh+gap) - gap
+	compactActions := !portrait && v.h < 480*u && len(labels) >= 2
+	rowsOfActions := len(labels)
+	if compactActions {
+		rowsOfActions--
+	}
+	stack := float64(rowsOfActions)*(bh+gap) - gap
 	s.playX = s.x + s.w/2
 	var y float64 // top of the button stack
 	if portrait {
@@ -117,8 +122,19 @@ func (s *homeScene) layout(a *app) {
 	s.playFace = newFace(srcDisplay, s.playR*0.34, 800) // the label grows with the dot
 	s.items = s.items[:0]
 	buttonW := min(2*s.playR, quietButtonMaxWidth*u)
+	if compactActions {
+		buttonW = max(buttonW, 220*u)
+	}
 	s.plaqueMin = buttonW
-	for _, l := range labels {
+	for i, l := range labels {
+		if compactActions && i < 2 {
+			half := (buttonW - gap) / 2
+			s.items = append(s.items, homeItem{l, rect{s.playX - buttonW/2 + float64(i)*(half+gap), y, half, bh}})
+			if i == 1 {
+				y += bh + gap
+			}
+			continue
+		}
 		s.items = append(s.items, homeItem{l, rect{s.playX - buttonW/2, y, buttonW, bh}})
 		y += bh + gap
 	}
@@ -219,6 +235,8 @@ func (s *homeScene) update(a *app) error {
 			continue
 		}
 		switch it.label {
+		case "Maps":
+			a.next = newMaps(a, s, nil)
 		case "Settings":
 			a.next = newSettingsMenu(s)
 		case "Exit":

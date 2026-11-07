@@ -65,3 +65,24 @@ func TestSnackbarActions(t *testing.T) {
 		}
 	}
 }
+
+func TestSnackbarOptionalTimeout(t *testing.T) {
+	a := setupTestApp(390, 844, 1, 2)
+	sticky := snackbar{message: "Waiting for the host"}
+	timed := snackbar{message: "Map saved", timeout: snackDuration}
+	for range snackDuration {
+		sticky.update(a)
+		timed.update(a)
+	}
+	if sticky.expired() {
+		t.Fatal("default snackbar must remain persistent")
+	}
+	if !timed.expired() {
+		t.Fatal("timed snackbar must expire")
+	}
+	bar, _, _ := timed.frame(a)
+	a.in.x, a.in.y, a.in.clicked = bar.cx(), bar.cy(), true
+	if action, over := timed.update(a); action != -1 || over {
+		t.Fatal("expired snackbar must not intercept input")
+	}
+}

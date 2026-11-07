@@ -10,24 +10,87 @@ type Snapshot struct {
 	Winner              int8
 	Count               []uint8
 	Owner               []int8
+	Map                 *MapDefinition
+	Durability          []uint8
+	OpenGates           []uint8
+	Pressed             []uint8
 }
 
 // Snapshot returns a copy of g's state that shares no memory with g.
 func (g *Game) Snapshot() Snapshot {
-	return Snapshot{
+	s := Snapshot{
 		Cols: g.Geo.Cols, Rows: g.Geo.Rows, Players: g.Players,
 		Turn: g.Turn, Moves: g.Moves, Played: g.Played, Winner: g.Winner,
 		Count: append([]uint8(nil), g.Count...), Owner: append([]int8(nil), g.Owner...),
 	}
+	if g.Map != nil {
+		m := g.Map.Clone()
+		s.Map = &m
+		s.Durability = append([]uint8(nil), g.Durability...)
+		s.Pressed = append([]uint8(nil), g.Pressed...)
+		for i, on := range g.OpenGates {
+			if on {
+				s.OpenGates = append(s.OpenGates, uint8(i))
+			}
+		}
+	}
+	return s
 }
 
 // Restore rebuilds a game from s. s may come from the network, so every field is checked.
 func Restore(s Snapshot) (*Game, error) {
 	g, err := NewGame(s.Cols, s.Rows, s.Players)
+	if s.Map != nil {
+		if s.Map.Cols != s.Cols || s.Map.Rows != s.Rows {
+			return nil, fmt.Errorf("restore: map dimensions differ")
+		}
+		g, err = NewGameWithMap(*s.Map, s.Players)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("restore: %w", err)
 	}
 	n := g.Geo.Cells()
+	if len(s.Count) != n || len(s.Owner) != n {
+		return nil, fmt.Errorf("restore: invalid orb state lengths")
+	}
+	if g.Map != nil {
+		if len(s.Durability) != n || len(s.Pressed) != n {
+			return nil, fmt.Errorf("restore: invalid terrain state lengths")
+		}
+		var gateGroups, pressedGroups [256]bool
+		for _, e := range g.Map.Edges {
+			if e.Kind == Gate {
+				gateGroups[e.Group] = true
+			}
+		}
+		for i, c := range g.Map.Cells {
+			if s.Durability[i] > 2 || c.Terrain != BreakableWall && s.Durability[i] != 0 || s.Pressed[i] > 1 || !c.Feature.IsSwitch() && s.Pressed[i] != 0 {
+				return nil, fmt.Errorf("restore: invalid terrain state at cell %d", i)
+			}
+			if c.Feature == HoldSwitch && (s.Pressed[i] != 0) != (s.Count[i] > 0) {
+				return nil, fmt.Errorf("restore: Hold switch state differs from occupancy")
+			}
+			if s.Pressed[i] != 0 {
+				pressedGroups[c.Group] = true
+			}
+		}
+		for _, group := range s.OpenGates {
+			if group == 0 || !gateGroups[group] || !pressedGroups[group] || g.OpenGates[group] {
+				return nil, fmt.Errorf("restore: invalid open Gate group")
+			}
+			g.OpenGates[group] = true
+		}
+		for group, pressed := range pressedGroups {
+			if pressed && !g.OpenGates[group] {
+				return nil, fmt.Errorf("restore: pressed switch has closed gates")
+			}
+		}
+		copy(g.Durability, s.Durability)
+		copy(g.Pressed, s.Pressed)
+		g.Geo = g.mapGeometry()
+	} else if len(s.Durability)+len(s.Pressed)+len(s.OpenGates) != 0 {
+		return nil, fmt.Errorf("restore: terrain state without map")
+	}
 	switch {
 	case len(s.Count) != n || len(s.Owner) != n:
 		return nil, fmt.Errorf("restore: %d counts and %d owners for %d cells", len(s.Count), len(s.Owner), n)
@@ -47,13 +110,15 @@ func Restore(s Snapshot) (*Game, error) {
 			return nil, fmt.Errorf("restore: cell %d owner %d out of range", i, o)
 		case (c == 0) != (o == NoOwner):
 			return nil, fmt.Errorf("restore: cell %d has %d orbs and owner %d", i, c, o)
-		case c >= 2*g.Geo.Cap[i]: // explosions never push a cell past 2×capacity−1
+		case !g.Geo.Playable(i) && c != 0:
+			return nil, fmt.Errorf("restore: orbs on blocked cell %d", i)
+		case g.Map == nil && g.Geo.Playable(i) && c >= 2*g.Geo.Cap[i]:
 			return nil, fmt.Errorf("restore: cell %d has %d orbs, capacity %d", i, c, g.Geo.Cap[i])
 		}
 		if o != NoOwner {
 			g.Orbs[o] += int32(c)
 		}
-		if c >= g.Geo.Cap[i] {
+		if g.Geo.Playable(i) && c >= g.Geo.Cap[i] {
 			g.unstable = true
 		}
 	}
@@ -78,6 +143,26 @@ func (g *Game) Hash() uint64 {
 	for i, c := range g.Count {
 		h = (h ^ uint64(c)) * prime
 		h = (h ^ uint64(uint8(g.Owner[i]))) * prime
+	}
+	if g.Map != nil {
+		for i, c := range g.Map.Cells {
+			for _, v := range []uint8{uint8(c.Terrain), uint8(c.Feature), c.Group, g.Durability[i], g.Pressed[i]} {
+				h = (h ^ uint64(v)) * prime
+			}
+		}
+		// Edge order and endpoint direction do not change a map's gameplay.
+		var edges uint64
+		for _, e := range g.Map.Edges {
+			a, b := min(e.A, e.B), max(e.A, e.B)
+			v := uint64(a) | uint64(b)<<16 | uint64(e.Kind)<<32 | uint64(e.Group)<<40
+			edges ^= (v ^ 0x9e3779b97f4a7c15) * prime
+		}
+		h = (h ^ edges) * prime
+		for group, on := range g.OpenGates {
+			if on {
+				h = (h ^ uint64(group)) * prime
+			}
+		}
 	}
 	return h
 }

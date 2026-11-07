@@ -73,9 +73,14 @@ func printable(r rune) rune {
 }
 
 func (f *field) add(s string) {
+	n := 0
+	for _, r := range f.text {
+		n += utf8.RuneLen(r)
+	}
 	for _, r := range s {
-		if r = f.keep(r); r != 0 && fits(f.text, r, f.max) {
+		if r = f.keep(r); r != 0 && n+utf8.RuneLen(r) <= f.max {
 			f.text = append(f.text, r)
+			n += utf8.RuneLen(r)
 		}
 	}
 }
@@ -84,9 +89,14 @@ func (f *field) add(s string) {
 func (f *field) show(composing string) {
 	f.edits++
 	f.shown = append(f.shown[:0], f.text...)
+	n := 0
+	for _, r := range f.shown {
+		n += utf8.RuneLen(r)
+	}
 	for _, r := range composing {
-		if r = f.keep(r); r != 0 && fits(f.shown, r, f.max) {
+		if r = f.keep(r); r != 0 && n+utf8.RuneLen(r) <= f.max {
 			f.shown = append(f.shown, r)
+			n += utf8.RuneLen(r)
 		}
 	}
 }

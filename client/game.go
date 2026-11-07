@@ -34,10 +34,11 @@ type app struct {
 	in    input
 	epoch time.Time
 
-	next    scene    // scene to switch to after this update
-	pointer bool     // a clickable thing is under the pointer this update
-	net     *session // the online room this player is in, so closing the app can leave it
-	typing  *field   // the text field that has the device's keyboard, if any
+	next       scene    // scene to switch to after this update
+	pointer    bool     // a clickable thing is under the pointer this update
+	moveCursor bool     // the editor canvas can be panned this update
+	net        *session // the online room this player is in, so closing the app can leave it
+	typing     *field   // the text field that has the device's keyboard, if any
 }
 
 // safe is the part of the screen clear of the display's cutout. Every layout goes in it; only fills that cover the
@@ -62,10 +63,14 @@ type input struct {
 	x, y    float64 // device px
 	pressed bool    // the mouse button or a finger went down this update
 	clicked bool    // the mouse button went down, or a finger lifted without dragging
-	down    bool
-	wheel   float64 // wheel notches this update
-	dragY   float64 // device px a dragging finger moved down this update
-	esc     bool    // Esc, or Android's back button
+
+	middle, right bool // held mouse buttons; editor-only temporary tools
+	down          bool
+	wheelX        float64
+	wheel         float64 // wheel notches this update
+	dragX         float64
+	dragY         float64 // device px a dragging finger moved down this update
+	esc           bool    // Esc, or Android's back button
 
 	finger         bool // the pointer is a finger, not the mouse
 	touch          ebiten.TouchID
@@ -79,6 +84,8 @@ type input struct {
 // device px.
 func (in *input) read(u float64) {
 	in.pressed, in.clicked, in.wheel, in.dragY = false, false, 0, 0
+	in.wheelX, in.dragX = 0, 0
+	in.middle, in.right = false, false
 	in.esc = inpututil.IsKeyJustPressed(ebiten.KeyEscape) || platform.TakeBack()
 	if in.touching {
 		in.readFinger(u)
@@ -92,8 +99,10 @@ func (in *input) read(u float64) {
 		in.pressed, in.down = true, true
 		return
 	}
+	in.middle = ebiten.IsMouseButtonPressed(ebiten.MouseButtonMiddle)
+	in.right = ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight)
 	mx, my := ebiten.CursorPosition()
-	if mx != in.mx || my != in.my || ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
+	if mx != in.mx || my != in.my || ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) || in.middle || in.right {
 		in.finger = false
 	}
 	in.mx, in.my = mx, my
@@ -105,7 +114,7 @@ func (in *input) read(u float64) {
 	in.pressed = inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft)
 	in.clicked = in.pressed
 	in.down = ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft)
-	_, in.wheel = ebiten.Wheel()
+	in.wheelX, in.wheel = ebiten.Wheel()
 }
 
 // readFinger follows the finger that is down; when it lifts, the click lands where it last was.
@@ -118,7 +127,7 @@ func (in *input) readFinger(u float64) {
 	fx, fy := float64(x), float64(y)
 	in.drag = in.drag || math.Hypot(fx-in.x0, fy-in.y0) > touchSlop*u
 	if in.drag {
-		in.dragY = fy - in.y
+		in.dragX, in.dragY = fx-in.x, fy-in.y
 	}
 	in.x, in.y = fx, fy
 }
@@ -188,7 +197,7 @@ func still(s scene) bool {
 	if runtime.GOOS == "android" {
 		return false
 	}
-	if bar := sceneSnackbar(s); bar != nil && bar.ticks < snackIn {
+	if bar := sceneSnackbar(s); bar != nil && (bar.ticks < snackIn || bar.timeout > 0 && !bar.expired()) {
 		return false
 	}
 	switch s := s.(type) {
@@ -238,6 +247,10 @@ func New() *Game {
 	a.f = newFonts(1)
 	a.in.finger = true // no pointer until the mouse moves or a finger lands
 	switch code := platform.JoinCode(); {
+	case platform.MapImport() != "":
+		s := newMaps(a, newHome(), nil)
+		s.importText = platform.MapImport()
+		g.scene = s
 	case platform.Invite() != "": // opened from a server-free room's invite link
 		g.scene = newReply(platform.Invite())
 	case platform.LANHost() != "": // opened from a LAN host's page: its room, and a private one's code
@@ -256,6 +269,9 @@ func New() *Game {
 func (g *Game) Update() error {
 	a := &g.a
 	if ebiten.IsWindowBeingClosed() {
+		if e, ok := g.scene.(*mapEditor); ok && e.dirty {
+			e.recoverSave()
+		}
 		if a.net != nil {
 			a.net.leave(a)
 			// shortcut: the players' Bye messages go out on their own goroutines; the app waits a moment for them
@@ -266,13 +282,14 @@ func (g *Game) Update() error {
 	}
 	x, y, down := a.in.x, a.in.y, a.in.down
 	a.in.read(a.u)
-	changed := a.in.x != x || a.in.y != y || a.in.down != down || a.in.clicked || a.in.wheel != 0 || a.in.esc
-	a.pointer = false
+	changed := a.in.x != x || a.in.y != y || a.in.down != down || a.in.clicked || a.in.wheel != 0 || a.in.wheelX != 0 || a.in.esc
+	a.pointer, a.moveCursor = false, false
+	_, editingMap := g.scene.(*mapEditor)
 	switch {
 	case inpututil.IsKeyJustPressed(ebiten.KeyF3):
 		g.ShowFPS = !g.ShowFPS
 		changed = true
-	case a.typing == nil && inpututil.IsKeyJustPressed(ebiten.KeyM): // M types into a field instead
+	case a.typing == nil && !editingMap && inpututil.IsKeyJustPressed(ebiten.KeyM): // M types into a field instead
 		a.toggleMute()
 		changed = true // Settings shows the Sound switch
 	}
@@ -297,6 +314,9 @@ func (g *Game) Update() error {
 	shape := ebiten.CursorShapeDefault
 	if a.pointer {
 		shape = ebiten.CursorShapePointer
+	}
+	if a.moveCursor {
+		shape = ebiten.CursorShapeMove
 	}
 	if shape != g.cursor {
 		g.cursor = shape

@@ -315,8 +315,12 @@ func (h *hostRoom) apply(a *app) {
 		return
 	}
 	n.private = h.private
-	if a.set.Players <= a.set.Cols*a.set.Rows {
+	if mapCanStart(a.set) {
 		cfg := hubConfig(a)
+		if err := n.room.SetMap(cfg.Map); err != nil {
+			log.Printf("room map: %v", err)
+			return
+		}
 		if err := n.room.Configure(cfg.Cols, cfg.Rows, cfg.Seats); err != nil {
 			log.Printf("room: %v", err)
 		}
@@ -339,7 +343,7 @@ func (h *hostRoom) apply(a *app) {
 func (h *hostRoom) canAct(a *app) bool {
 	n := h.net
 	switch {
-	case a.set.Players > a.set.Cols*a.set.Rows:
+	case !mapCanStart(a.set):
 		return false
 	case n == nil:
 		return hasHuman(a.set.seats) && !h.opening && h.noteT == 0
@@ -382,7 +386,7 @@ func (h *hostRoom) actionLabel(a *app) string {
 		return h.note
 	case n == nil && h.opening:
 		return "Opening"
-	case a.set.Players > a.set.Cols*a.set.Rows:
+	case !mapCanStart(a.set):
 		return "Board too small"
 	case n == nil && !hasHuman(a.set.seats):
 		return "Needs a human seat"

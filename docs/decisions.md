@@ -13,6 +13,27 @@ Decisions that future changes have to respect, and why. How things work is in [a
 
 ## Rules engine
 
+- Map capacity is an explosion threshold; outgoing degree counts transfers. Reservoirs add one to the threshold
+  without adding a transfer, so blasts preserve the reserve and total orbs.
+- Latch responds to direct accepted placements and orb arrivals, never to exploding by itself. Latch stays
+  pressed after its first input; Toggle flips once per receiving or exploding wave, regardless of arrival count, and ignores direct placement;
+  Hold is pressed exactly while its count is nonzero. Each circuit has exactly one controller and at least one Gate,
+  so Gate state is unambiguous. Gates start closed and follow their controller, including closure.
+- Map topology is immutable per wave. A direct placement applies switch/Gate effects before selecting the first
+  exploding cells (terrain event wave −1). Each wave uses its starting connections, then applies aggregate wall
+  damage and switch effects after transfers and updates capacity before the next wave is selected. Search copies
+  install their own replacement topology, and presentation replays explicit pressed/released and open/closed events
+  at the same boundary. This prevents iteration order or animation timing from changing the rules.
+- Closed-Gate topology must connect every initial Floor with minimum degree two. Breakable Walls require two
+  initial Floor neighbors. This keeps first placements non-explosive and prevents unreachable opponents.
+- Map files carry a bounded, versioned binary payload and checksum. QR links embed it in a URL fragment; there is
+  no map lookup service. Invalid gameplay drafts remain portable, but malformed data is rejected.
+- Portable exports use format 2 and `orbitrix-map2.` codes; format-1 files/codes remain importable. Legacy designs
+  with multiple switch controllers stay invalid editable drafts, without silent repair or overwriting stored maps.
+  The old `Switch` enum remains the Latch, and `HoldSwitch` retains its enum ordinal when its UI label is Hold.
+  Match snapshots carry durability, `Pressed`, and `OpenGates`, all covered by the hash. Replacing `Spent` with
+  explicit switch state requires binary game protocol 3; portable map import compatibility is a separate concern.
+
 - Players may not outnumber cells. Nothing explodes in the first round, so an extra player could have no legal first move. `NewGame` rejects it and Setup shows "Board too small".
 - The win check waits until every player has had a turn, not just two. In normal play that is the same thing, since nothing can explode in the first round, but it keeps a passed turn from ending a game before anyone has moved.
 - A win stops the chain on the spot, so a finished board can hold cells over capacity. The 10,000-wave cap likewise leaves over-capacity cells to the next move's first wave.
@@ -27,6 +48,9 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - Shared survival protection covers only a first placement or a position of at most one cell and two orbs, so each bot otherwise keeps its own risk appetite.
 - Spy stays a heuristic. Reply search would turn it into another search bot.
 - Network weights are generated Go source, rewritten by training only when the new weights win, so the repo holds no data files.
+- Sovereign uses Tactician search on custom maps until its network can represent map topology; its existing
+  rectangular pattern table cannot represent every map neighborhood or a fifth Link connection. Prodigy fully
+  refreshes its network evaluation on custom maps so topology changes cannot leave cached features stale.
 
 ## Client
 
@@ -38,6 +62,14 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - Floor (13×18) is the largest preset because it is the largest board that keeps 24 px cells (WCAG 2.5.8's minimum target) on a 360-px phone held upright.
 - The Android activity holds back a touch lift under 50 ms after the press, because Ebitengine polls touches once a frame and quick taps were lost.
 - A browser opens its keyboard only during a touch, so a text field takes the focus on pointer down, not on release.
+- Palette, editor canvas, thumbnails and match boards share one map-art renderer. Relationship colors are eight
+  muted inks per theme, repeated with unique anchored eight-bit notch patterns for identities 1–255. Patterns stay
+  visible without Colorblind mode and gain weight with it. This limited exception to player-only hue identifies
+  Link pairs and switch/Gate circuits without group numbers; it is not a general chrome accent palette. Shape also
+  distinguishes portals, the divided Reservoir tank, Latch, Toggle, Hold, and Gate state.
+- The editor keeps a compact desktop list, category-based short-landscape list, and portrait icon-and-label shelf.
+  The inspector shows functional help and the pair/circuit swatch without duplicating the selected name or icon.
+  Physical-phone touch painting and camera-to-import behavior remain unverified on hardware.
 
 ## Platforms
 

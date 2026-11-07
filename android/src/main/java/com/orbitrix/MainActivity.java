@@ -3,6 +3,7 @@ package com.orbitrix;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
@@ -24,14 +25,28 @@ import com.orbitrix.mobile.EbitenView;
 import com.orbitrix.mobile.Host;
 import com.orbitrix.mobile.Mobile;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.Locale;
+
 // MainActivity shows the game full screen. The game itself is Go (package mobile); this class starts it, hides the
 // system bars, reports the camera cutout so the layout stays clear of it, and passes the back button on as Esc.
 public final class MainActivity extends Activity implements Host {
     private EbitenView view;
+    private static final int IMPORT_MAP = 4101;
+    private static final int EXPORT_MAP = 4102;
+    private static final int MAX_MAP_BYTES = 64 * 1024;
+    private static final String PENDING_MAP = "orbitrix.pendingMap";
+    private byte[] pendingMap;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (savedInstanceState != null) {
+            pendingMap = savedInstanceState.getByteArray(PENDING_MAP);
+        }
         Mobile.start(getFilesDir().getAbsolutePath(), this);
         view = new EbitenView(this);
         setContentView(view);
@@ -57,6 +72,104 @@ public final class MainActivity extends Activity implements Host {
                     Mobile::back);
         }
         hideSystemBars();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle state) {
+        if (pendingMap != null) {
+            state.putByteArray(PENDING_MAP, pendingMap);
+        }
+        super.onSaveInstanceState(state);
+    }
+
+    // Storage Access Framework grants access only to the document the user selects, without storage permissions.
+    @Override
+    @SuppressWarnings("deprecation")
+    public void pickMapFile() {
+        runOnUiThread(() -> {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("application/octet-stream");
+            try {
+                startActivityForResult(intent, IMPORT_MAP);
+            } catch (RuntimeException e) {
+                Mobile.mapImported(null, "Could not open the file picker");
+            }
+        });
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void exportMapFile(String name, byte[] data) {
+        byte[] copy = data.clone();
+        runOnUiThread(() -> {
+            if (copy.length > MAX_MAP_BYTES) {
+                Mobile.mapExported("Map file is too large");
+                return;
+            }
+            pendingMap = copy;
+            String title = name.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
+            if (title.isEmpty()) title = "Map";
+            if (!title.toLowerCase(Locale.ROOT).endsWith(".orbitrixmap")) title += ".orbitrixmap";
+            Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("application/octet-stream");
+            intent.putExtra(Intent.EXTRA_TITLE, title);
+            try {
+                startActivityForResult(intent, EXPORT_MAP);
+            } catch (RuntimeException e) {
+                pendingMap = null;
+                Mobile.mapExported("Could not open the save picker");
+            }
+        });
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    protected void onActivityResult(int request, int result, Intent intent) {
+        super.onActivityResult(request, result, intent);
+        if (request != IMPORT_MAP && request != EXPORT_MAP) return;
+        byte[] exported = pendingMap;
+        if (request == EXPORT_MAP) pendingMap = null;
+        if (result != RESULT_OK || intent == null || intent.getData() == null) {
+            if (request == IMPORT_MAP) Mobile.mapImported(null, "Import cancelled");
+            else Mobile.mapExported("Export cancelled");
+            return;
+        }
+        // Document providers may be remote. Keep all reads and writes off the activity's UI thread.
+        new Thread(() -> {
+            if (request == IMPORT_MAP) {
+                try {
+                    byte[] bytes;
+                    try (InputStream input = getContentResolver().openInputStream(intent.getData());
+                            ByteArrayOutputStream data = new ByteArrayOutputStream()) {
+                        if (input == null) throw new IOException("Document could not be opened");
+                        byte[] buffer = new byte[8192];
+                        int count;
+                        while ((count = input.read(buffer)) != -1) {
+                            if (data.size() + count > MAX_MAP_BYTES) throw new IOException("Map file is too large");
+                            data.write(buffer, 0, count);
+                        }
+                        bytes = data.toByteArray();
+                    }
+                    Mobile.mapImported(bytes, "");
+                } catch (IOException | SecurityException e) {
+                    Mobile.mapImported(null, "Could not read the map: " + e.getMessage());
+                }
+            } else {
+                try {
+                    if (exported == null) throw new IOException("Select Export again");
+                    try (OutputStream output = getContentResolver().openOutputStream(intent.getData(), "wt")) {
+                        if (output == null) throw new IOException("Document could not be opened");
+                        output.write(exported);
+                        output.flush();
+                    }
+                    Mobile.mapExported("");
+                } catch (IOException | SecurityException e) {
+                    Mobile.mapExported("Could not save the map: " + e.getMessage());
+                }
+            }
+        }, "orbitrix-map-document").start();
     }
 
     // Before Android 13 back arrives as a key, which the game's view would swallow, so it is caught here first.

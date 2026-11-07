@@ -3,10 +3,11 @@ package core
 import "fmt"
 
 const (
-	MinSize    = 3
-	MaxSize    = 40
-	MinPlayers = 2
-	MaxPlayers = 12
+	MinSize        = 3
+	MaxSize        = 40
+	MinPlayers     = 2
+	MaxPlayers     = 12
+	MaxConnections = 5 // four cardinal routes and one Link
 
 	// NoOwner is the owner of an empty cell, and Game.Winner until someone wins.
 	NoOwner int8 = -1
@@ -16,13 +17,14 @@ const (
 	MaxWaves = 10000
 )
 
-// Geometry holds the immutable per-size tables shared by every Game of that size. Cell i is column i/Rows,
+// Geometry holds immutable connection tables, shared safely by game copies. Cell i is column i/Rows,
 // row i%Rows.
 type Geometry struct {
 	Cols, Rows int
-	// Cap is each cell's capacity, which is also its number of orthogonal neighbours: corner 2, edge 3, interior 4.
-	Cap []uint8
-	// Nbr holds four slots per cell; cell i's neighbours are Nbr[4*i : 4*i+Cap[i]].
+	// Cap is the explosion threshold; blocked terrain has zero capacity.
+	Cap    []uint8
+	Degree []uint8 // outgoing connections, independent of Reservoir capacity
+	// Nbr holds MaxConnections slots per cell, of which Degree are active.
 	Nbr []int16
 }
 
@@ -32,16 +34,17 @@ func NewGeometry(cols, rows int) (*Geometry, error) {
 		return nil, fmt.Errorf("board %dx%d: each side must be %d..%d", cols, rows, MinSize, MaxSize)
 	}
 	n := cols * rows
-	g := &Geometry{Cols: cols, Rows: rows, Cap: make([]uint8, n), Nbr: make([]int16, 4*n)}
+	g := &Geometry{Cols: cols, Rows: rows, Cap: make([]uint8, n), Degree: make([]uint8, n), Nbr: make([]int16, MaxConnections*n)}
 	for i := 0; i < n; i++ {
 		c, r := g.Coords(i)
 		for _, d := range [4][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
 			nc, nr := c+d[0], r+d[1]
 			if nc >= 0 && nc < cols && nr >= 0 && nr < rows {
-				g.Nbr[4*i+int(g.Cap[i])] = int16(g.Index(nc, nr))
+				g.Nbr[MaxConnections*i+int(g.Cap[i])] = int16(g.Index(nc, nr))
 				g.Cap[i]++
 			}
 		}
+		g.Degree[i] = g.Cap[i]
 	}
 	return g, nil
 }
@@ -56,4 +59,9 @@ func (g *Geometry) Index(c, r int) int { return c*g.Rows + r }
 func (g *Geometry) Coords(i int) (c, r int) { return i / g.Rows, i % g.Rows }
 
 // Neighbours returns cell i's orthogonal neighbours. The slice aliases the table: don't modify it.
-func (g *Geometry) Neighbours(i int) []int16 { return g.Nbr[4*i : 4*i+int(g.Cap[i])] }
+func (g *Geometry) Neighbours(i int) []int16 {
+	return g.Nbr[MaxConnections*i : MaxConnections*i+int(g.Degree[i])]
+}
+
+// Playable distinguishes Floor from blocked terrain, including an empty destroyed wall.
+func (g *Geometry) Playable(i int) bool { return i >= 0 && i < g.Cells() && g.Cap[i] != 0 }

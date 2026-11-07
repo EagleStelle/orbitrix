@@ -120,6 +120,7 @@ See [docs/structure.md](docs/structure.md) for every package and what belongs in
 | Page | Contents |
 |---|---|
 | [Usage guide](docs/usage.md) | Playing locally, on Same Wi-Fi and online, the bots, settings and keys |
+| [Maps and Map Editor](docs/maps.md) | Custom terrain, Links, Reservoirs, Switches, Gates, local maps and sharing |
 | [Installation](docs/installation.md) | Toolchain, build targets and checking that a build works |
 | [Deployment](docs/deployment.md) | Running the server, putting Cloudflare in front, and publishing releases |
 | [Architecture](docs/architecture.md) | How a move travels from a tap to every screen, and how each layer is built |

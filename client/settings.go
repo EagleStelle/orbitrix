@@ -17,13 +17,14 @@ const settingsFile = "settings.json"
 // settings is what the game remembers between runs. Seats hold one option per player: seatHuman or 1+strategy,
 // stored by name so reordering strategies never changes a saved choice.
 type settings struct {
-	Cols    int      `json:"cols"`
-	Rows    int      `json:"rows"`
-	Players int      `json:"players"`
-	Seats   []string `json:"seats"`
-	Theme   string   `json:"theme"` // "light" or "dark"
-	Muted   bool     `json:"muted"`
-	Volume  int      `json:"volume"` // master volume, 0..100
+	Cols    int                 `json:"cols"`
+	Rows    int                 `json:"rows"`
+	Players int                 `json:"players"`
+	Map     *core.MapDefinition `json:"map,omitempty"`
+	Seats   []string            `json:"seats"`
+	Theme   string              `json:"theme"` // "light" or "dark"
+	Muted   bool                `json:"muted"`
+	Volume  int                 `json:"volume"` // master volume, 0..100
 	// Fullscreen is the desktop/browser window mode; Marks draws each player's shape mark on their orbs and dots.
 	Fullscreen bool `json:"fullscreen"`
 	Marks      bool `json:"marks"`
@@ -41,7 +42,9 @@ type settings struct {
 	// Firewall: this Windows device was warned that Windows would ask to let Orbitrix on the network.
 	Firewall bool `json:"firewall,omitempty"`
 
-	seats []int // parsed Seats
+	seats      []int // parsed Seats
+	mapChecked *core.MapDefinition
+	mapOK      bool
 }
 
 // rejoin is a joiner's seat in a room: its code, the host's address on the LAN ("" online) and the hub's rejoin
@@ -113,6 +116,13 @@ func loadSettings(rng *core.RNG) *settings {
 	s.Cols = clampInt(s.Cols, core.MinSize, core.MaxSize, 9)
 	s.Rows = clampInt(s.Rows, core.MinSize, core.MaxSize, 9)
 	s.Players = clampInt(s.Players, core.MinPlayers, core.MaxPlayers, 2)
+	if s.Map != nil {
+		if s.Map.ValidateStructure() != nil || len(s.Map.Validate()) != 0 {
+			s.Map = nil
+		} else {
+			s.Cols, s.Rows = s.Map.Cols, s.Map.Rows
+		}
+	}
 	if len(s.Name) > maxName {
 		s.Name = ""
 	}

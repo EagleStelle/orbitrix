@@ -115,7 +115,7 @@ func (t *tactic) candidates(n *core.Game, player int8, level, limit int) []score
 	geo := n.Geo
 	dst := t.b.levels[level][:0]
 	for i, o := range n.Owner {
-		if o != core.NoOwner && o != player {
+		if !geo.Playable(i) || o != core.NoOwner && o != player {
 			continue
 		}
 		threat, enemies, owned := 0, 0, 0

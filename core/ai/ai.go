@@ -119,6 +119,11 @@ func (b *Bot) Choose(g *core.Game, s Strategy, seed uint64, budget int) int {
 	b.g, b.geo, b.me, b.rng, b.left, b.boom = g, g.Geo, int8(g.Turn), core.NewRNG(seed), budget, 0
 	switch s {
 	case Sovereign:
+		if g.Map != nil {
+			// shortcut: the learned pattern table covers rectangular capacity-2..4
+			// boards only; use the existing exact search until map-trained weights exist.
+			return b.tactician()
+		}
 		return b.sovereign()
 	case Prodigy:
 		return b.prodigy()
@@ -210,8 +215,8 @@ func (b *Bot) others(t [core.MaxPlayers]int32) int32 {
 func (b *Bot) wins(t [core.MaxPlayers]int32) bool { return b.others(t) == 0 }
 
 func (b *Bot) mine(i int) bool                { return b.g.Owner[i] == b.me }
-func (b *Bot) empty(i int) bool               { return b.g.Owner[i] == core.NoOwner }
-func (b *Bot) enemy(i int) bool               { return !b.empty(i) && !b.mine(i) }
+func (b *Bot) empty(i int) bool               { return b.geo.Playable(i) && b.g.Owner[i] == core.NoOwner }
+func (b *Bot) enemy(i int) bool               { return b.g.Owner[i] != core.NoOwner && !b.mine(i) }
 func (b *Bot) count(i int) int                { return int(b.g.Count[i]) }
 func (b *Bot) capacity(i int) int             { return int(b.geo.Cap[i]) }
 func (b *Bot) corner(i int) bool              { return b.geo.Cap[i] == 2 }
@@ -284,17 +289,19 @@ func (b *Bot) marks() []bool {
 	return b.mark
 }
 
-// distances fills dst with each cell's Manhattan distance to the nearest cell that from selects, or cols+rows when
-// none does. On an open grid a breadth-first search from all of them at once gives exactly that, in O(cells),
-// where the prototype measured every pair.
+// distances fills dst with connection distances to the nearest selected cell.
+// Breadth-first search also follows Links and detours around map obstructions.
 func (b *Bot) distances(dst []int16, from func(i int) bool) []int16 {
 	n := b.geo.Cells()
 	far := int16(b.geo.Cols + b.geo.Rows) // longer than any real distance, so it also marks "unvisited"
+	if b.g.Map != nil {
+		far = int16(n + 1) // custom routes may be much longer than cols+rows
+	}
 	dst = slices.Grow(dst[:0], n)[:n]
 	q := b.queue[:0]
 	for i := range dst {
 		dst[i] = far
-		if from(i) {
+		if b.geo.Playable(i) && from(i) {
 			dst[i] = 0
 			q = append(q, int16(i))
 		}

@@ -16,15 +16,20 @@ type Wave []int16
 // Game is the full rules state. Count, Owner, Orbs and the scalar fields are exported for fast reads by the AI
 // and the client; change them only through methods, or the per-player tallies stop matching the board.
 type Game struct {
-	Geo     *Geometry
-	Count   []uint8 // orbs in each cell
-	Owner   []int8  // owner of each cell, NoOwner when empty
-	Players int
-	Turn    int               // player to move
-	Played  uint16            // bit p is set once player p has had a turn
-	Moves   int               // moves applied so far
-	Winner  int8              // NoOwner until someone wins
-	Orbs    [MaxPlayers]int32 // orbs on the board per player
+	Geo           *Geometry
+	Count         []uint8 // orbs in each cell
+	Owner         []int8  // owner of each cell, NoOwner when empty
+	Players       int
+	Turn          int               // player to move
+	Played        uint16            // bit p is set once player p has had a turn
+	Moves         int               // moves applied so far
+	Winner        int8              // NoOwner until someone wins
+	Orbs          [MaxPlayers]int32 // orbs on the board per player
+	Map           *MapDefinition    // immutable design; nil is a classic rectangle
+	Durability    []uint8
+	OpenGates     [256]bool
+	Pressed       []uint8
+	TerrainEvents []TerrainEvent // events in the last recorded move
 
 	// Exploded counts the cell explosions in the last move: a deterministic measure of its cost, which the AI's
 	// budget charges for. It isn't part of the game state (not hashed or snapshotted).
@@ -36,6 +41,7 @@ type Game struct {
 
 	// Scratch reused by every move so the hot path doesn't allocate.
 	cur, next []int16 // cells exploding in this wave / the next one
+	arrived   []uint8 // at least one orb received in this placement or wave
 	from      []int8  // owner of each cur cell at the start of the wave
 	waveCells []int16 // every recorded wave, back to back
 	waveEnds  []int32 // end of each wave in waveCells
@@ -71,6 +77,7 @@ func (g *Game) setGeometry(geo *Geometry) {
 		return
 	}
 	g.Count, g.Owner = make([]uint8, n), make([]int8, n)
+	g.arrived = make([]uint8, n)
 	g.cur, g.next, g.from = make([]int16, 0, n), make([]int16, 0, n), make([]int8, 0, n)
 }
 
@@ -82,6 +89,10 @@ func (g *Game) CopyFrom(src *Game) {
 	copy(g.Owner, src.Owner)
 	g.Players, g.Turn, g.Played, g.Moves, g.Winner = src.Players, src.Turn, src.Played, src.Moves, src.Winner
 	g.Orbs, g.Exploded, g.unstable = src.Orbs, src.Exploded, src.unstable
+	g.Map, g.OpenGates = src.Map, src.OpenGates
+	g.Durability = append(g.Durability[:0], src.Durability...)
+	g.Pressed = append(g.Pressed[:0], src.Pressed...)
+	g.TerrainEvents = g.TerrainEvents[:0]
 }
 
 // Clone returns an independent copy of g.
@@ -100,7 +111,7 @@ func (g *Game) Alive(p int) bool { return g.Orbs[p] > 0 || g.Played&(1<<p) == 0 
 // Legal reports whether the current player may place an orb in cell: the game isn't over and the cell is
 // empty or already theirs.
 func (g *Game) Legal(cell int) bool {
-	return !g.Over() && cell >= 0 && cell < len(g.Owner) &&
+	return !g.Over() && g.Geo.Playable(cell) && g.Count[cell] < 255 &&
 		(g.Owner[cell] == NoOwner || g.Owner[cell] == int8(g.Turn))
 }
 
@@ -111,7 +122,7 @@ func (g *Game) LegalMoves(dst []int) []int {
 	}
 	p := int8(g.Turn)
 	for i, o := range g.Owner {
-		if o == NoOwner || o == p {
+		if g.Geo.Playable(i) && g.Count[i] < 255 && (o == NoOwner || o == p) {
 			dst = append(dst, i)
 		}
 	}
@@ -125,6 +136,7 @@ func (g *Game) LegalMoves(dst []int) []int {
 // instead, the cells still at or over capacity explode first in the next move's chain.
 func (g *Game) Apply(cell int) ([]Wave, error) {
 	g.waveCells, g.waveEnds, g.waves = g.waveCells[:0], g.waveEnds[:0], g.waves[:0]
+	g.TerrainEvents = g.TerrainEvents[:0]
 	if err := g.play(cell, true); err != nil {
 		return nil, err
 	}
@@ -166,11 +178,20 @@ func (g *Game) play(cell int, record bool) error {
 	g.Owner[cell] = p
 	g.Count[cell]++
 	g.Orbs[p]++
+	topologyChanged := false
+	if g.Map != nil {
+		clear(g.arrived)
+		g.arrived[cell] = 1
+		if g.switchInputs(-1, record) {
+			g.Geo = g.mapGeometry()
+			topologyChanged = true
+		}
+	}
 
 	g.cur = g.cur[:0]
-	if g.unstable {
+	if g.unstable || topologyChanged {
 		for i, n := range g.Count {
-			if n >= g.Geo.Cap[i] {
+			if g.Geo.Playable(i) && n >= g.Geo.Cap[i] {
 				g.cur = append(g.cur, int16(i))
 			}
 		}
@@ -205,6 +226,9 @@ func (g *Game) resolve(record bool) {
 		}
 		g.Exploded += len(g.cur)
 		g.explode()
+		if g.Map != nil {
+			g.terrainWave(wave, record)
+		}
 		g.cur, g.next = g.next, g.cur
 	}
 }
@@ -217,22 +241,25 @@ func (g *Game) resolve(record bool) {
 // reaches capacity at most once per wave and g.next needs no de-duplication.
 func (g *Game) explode() {
 	geo := g.Geo
+	if g.Map != nil {
+		clear(g.arrived)
+	}
 	g.next, g.from = g.next[:0], g.from[:0]
 	for _, e := range g.cur {
-		p, capacity := g.Owner[e], geo.Cap[e]
+		p, capacity := g.Owner[e], geo.Degree[e]
 		g.from = append(g.from, p)
 		g.Count[e] -= capacity
 		g.Orbs[p] -= int32(capacity)
 		switch {
 		case g.Count[e] == 0:
 			g.Owner[e] = NoOwner
-		case g.Count[e] >= capacity: // only after a MaxWaves cut, when the placed cell can start at 2×capacity
+		case g.Count[e] >= geo.Cap[e]:
 			g.next = append(g.next, e)
 		}
 	}
 	for k, e := range g.cur {
 		p := g.from[k]
-		for _, n := range geo.Nbr[4*int(e) : 4*int(e)+int(geo.Cap[e])] {
+		for _, n := range geo.Neighbours(int(e)) {
 			if o := g.Owner[n]; o != p {
 				// Capture: the cell's existing orbs change hands with it.
 				if o != NoOwner {
@@ -242,6 +269,9 @@ func (g *Game) explode() {
 				g.Owner[n] = p
 			}
 			g.Count[n]++
+			if g.Map != nil {
+				g.arrived[n] = 1
+			}
 			g.Orbs[p]++
 			if g.Count[n] == geo.Cap[n] {
 				g.next = append(g.next, n)

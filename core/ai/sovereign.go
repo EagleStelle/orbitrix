@@ -713,7 +713,7 @@ func sovPattern(g *core.Game, i int, p int8) int {
 	geo := g.Geo
 	k := geo.Cap[i]
 	code := int32(0)
-	for _, j := range geo.Nbr[4*i : 4*i+int(k)] {
+	for _, j := range geo.Neighbours(i) {
 		o := g.Owner[j]
 		switch {
 		case o == core.NoOwner:

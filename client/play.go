@@ -32,7 +32,7 @@ const (
 )
 
 // The pause menu, in order.
-var pauseItems = [...]string{"Resume", "Restart", "Settings", "Main menu"}
+var pauseItems = [...]string{"Resume", "Restart", "Settings", "Main menu", "Save map"}
 
 // pauseConfirm is what a button that waits for its second tap reads.
 var pauseConfirm = [len(pauseItems)]string{pauseRestart: "Restart?"}
@@ -42,6 +42,7 @@ const (
 	pauseRestart
 	pauseSettings
 	pauseMainMenu
+	pauseSaveMap
 )
 
 // playScene is a local game with a landscape turn wheel or a portrait turn dot, a scrolling seat table,
@@ -52,6 +53,7 @@ type playScene struct {
 	labels     []string // what each seat is called: its type, or an online player's name
 	items      []int    // the pause menu's buttons, from pauseItems
 	game       *core.Game
+	returnTo   scene // editor test play returns to its unchanged draft
 	b          *board
 	seed       uint64 // per game; AI seeds derive from it
 
@@ -125,6 +127,9 @@ type playScene struct {
 
 func newPlay(a *app, cols, rows int, seats []int) (*playScene, error) {
 	g, err := core.NewGame(cols, rows, len(seats))
+	if a.set.Map != nil {
+		g, err = core.NewGameWithMap(*a.set.Map, len(seats))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("new game: %w", err)
 	}
@@ -149,10 +154,13 @@ func newPlayOn(a *app, g *core.Game, seats []int, labels []string, items []int) 
 		b: newBoard(g), seed: a.rng.Uint64(), scratch: g.Clone(), aiMove: make(chan int, 1), confirm: -1, pace: -1,
 		goneP: -1, goneN: -1,
 	}
+	if g.Map != nil {
+		p.items = append(append([]int(nil), items...), pauseSaveMap)
+	}
 	// Every orb of a settled board sits in a cell below its capacity, and a player can't own more than all of them.
 	most := 0
 	for _, c := range g.Geo.Cap {
-		most += int(c) - 1
+		most += max(0, int(c)-1)
 	}
 	p.orbsMax = strings.Repeat("8", len(strconv.Itoa(most)))
 	p.settle()
@@ -184,6 +192,7 @@ func (p *playScene) move(a *app, cell int) {
 		return
 	}
 	a.snd.place(mover)
+	p.b.v.events = p.game.TerrainEvents
 	p.b.start(cell, int8(mover), waves, a.snd)
 	p.biggest = max(p.biggest, len(waves))
 	if len(waves) >= 2 {
@@ -201,12 +210,29 @@ func (p *playScene) restartGame(a *app) {
 		}
 		return
 	}
-	if np, err := newPlay(a, p.cols, p.rows, p.seats); err == nil {
+	g, err := core.NewGame(p.cols, p.rows, len(p.seats))
+	if p.game.Map != nil {
+		g, err = core.NewGameWithMap(*p.game.Map, len(p.seats))
+	}
+	if err == nil {
+		np := newPlayOn(a, g, p.seats, p.labels, pauseLocal)
+		np.returnTo = p.returnTo
 		a.next = np
 	}
 }
 
 func (p *playScene) update(a *app) error {
+	defer func() {
+		if p.returnTo != nil {
+			if _, ok := a.next.(*homeScene); ok {
+				a.next = p.returnTo
+			}
+		}
+	}()
+	if p.returnTo != nil && a.in.esc {
+		a.next = p.returnTo
+		return nil
+	}
 	if p.net != nil && p.pumpNet(a) {
 		return nil
 	}
@@ -361,6 +387,12 @@ func (p *playScene) updatePause(a *app) error {
 		case pauseMainMenu:
 			p.leave(a)
 			a.next = newHome()
+		case pauseSaveMap:
+			if p.game.Map != nil {
+				s := newMaps(a, p, nil)
+				s.importText, _ = core.MapCode(*p.game.Map)
+				a.next = s
+			}
 		}
 		return nil
 	}

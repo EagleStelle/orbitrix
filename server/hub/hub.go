@@ -53,7 +53,8 @@ type Seat struct {
 type Config struct {
 	Code       string // room code a player's Hello must carry; empty accepts any
 	Cols, Rows int
-	Seats      []Seat // in turn order
+	Map        *core.MapDefinition // nil selects an ordinary rectangle; copied when the room takes ownership
+	Seats      []Seat              // in turn order
 	TurnTimer  time.Duration
 	Grace      time.Duration // seat hold after a drop; 0 means DefaultGrace
 	AIDelay    time.Duration // pause before each AI move or pass, so the stream of moves isn't a burst
@@ -105,7 +106,12 @@ type peer struct {
 
 // New checks cfg and returns a room in the lobby.
 func New(cfg Config) (*Room, error) {
-	if _, err := core.NewGame(cfg.Cols, cfg.Rows, len(cfg.Seats)); err != nil {
+	if cfg.Map != nil {
+		m := cfg.Map.Clone()
+		cfg.Map = &m
+		cfg.Cols, cfg.Rows = m.Cols, m.Rows
+	}
+	if _, err := configuredGame(cfg, len(cfg.Seats)); err != nil {
 		return nil, fmt.Errorf("hub: %w", err)
 	}
 	for i, s := range cfg.Seats {
@@ -131,6 +137,13 @@ func New(cfg Config) (*Room, error) {
 		r.seats[i].Seat = s
 	}
 	return r, nil
+}
+
+func configuredGame(cfg Config, players int) (*core.Game, error) {
+	if cfg.Map != nil {
+		return core.NewGameWithMap(*cfg.Map, players)
+	}
+	return core.NewGame(cfg.Cols, cfg.Rows, players)
 }
 
 // Add runs c as a new player connection. It returns at once; the room reads and writes c on its own goroutines.
@@ -392,6 +405,10 @@ func (r *Room) Lobby() proto.Lobby {
 func (r *Room) lobby() proto.Lobby {
 	l := proto.Lobby{Cols: uint8(r.cfg.Cols), Rows: uint8(r.cfg.Rows), TurnTimer: uint16(r.cfg.TurnTimer / time.Second),
 		Playing: r.game != nil, Seats: make([]proto.Seat, len(r.seats))}
+	if r.cfg.Map != nil {
+		m := r.cfg.Map.Clone()
+		l.Map = &m
+	}
 	for i, s := range r.seats {
 		st := proto.SeatOpen
 		switch {
@@ -423,7 +440,11 @@ func (r *Room) Start() error {
 			return fmt.Errorf("%w: seat %d isn't ready", ErrState, i)
 		}
 	}
-	r.game, _ = core.NewGame(r.cfg.Cols, r.cfg.Rows, len(r.seats)) // checked by New
+	g, err := configuredGame(r.cfg, len(r.seats))
+	if err != nil {
+		return fmt.Errorf("hub: %w", err)
+	}
+	r.game = g
 	r.seq = 0
 	r.broadcastLobby()
 	r.broadcast(proto.Snapshot{Game: r.game.Snapshot()})
@@ -475,6 +496,12 @@ func (r *Room) Configure(cols, rows int, seats []Seat) error {
 	if r.shut || r.game != nil {
 		return ErrState
 	}
+	keepMap := r.cfg.Map != nil && cols == r.cfg.Cols && rows == r.cfg.Rows
+	if keepMap {
+		if _, err := configuredGame(r.cfg, len(seats)); err != nil {
+			return fmt.Errorf("hub: %w", err)
+		}
+	}
 	for i := range r.seats {
 		if i < len(seats) && seats[i].Human && r.seats[i].Human {
 			continue
@@ -494,6 +521,32 @@ func (r *Room) Configure(cols, rows int, seats []Seat) error {
 		r.seats[i].Seat = s
 	}
 	r.cfg.Cols, r.cfg.Rows = cols, rows
+	if !keepMap {
+		r.cfg.Map = nil
+	}
+	r.broadcastLobby()
+	return nil
+}
+
+// SetMap selects a custom map in the lobby. A nil map restores an ordinary board of the current dimensions.
+func (r *Room) SetMap(m *core.MapDefinition) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.shut || r.game != nil {
+		return ErrState
+	}
+	cfg := r.cfg
+	if m == nil {
+		cfg.Map = nil
+	} else {
+		copy := m.Clone()
+		cfg.Map = &copy
+		cfg.Cols, cfg.Rows = copy.Cols, copy.Rows
+	}
+	if _, err := configuredGame(cfg, len(r.seats)); err != nil {
+		return fmt.Errorf("hub: %w", err)
+	}
+	r.cfg.Map, r.cfg.Cols, r.cfg.Rows = cfg.Map, cfg.Cols, cfg.Rows
 	r.broadcastLobby()
 	return nil
 }

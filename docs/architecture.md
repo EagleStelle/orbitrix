@@ -19,9 +19,17 @@ Orbitrix is one Go module that builds four things: the game client (desktop, And
 ### `core`: the rules
 
 - A board is `cols × rows` cells in flat arrays: `[]uint8` counts and `[]int8` owners, indexed `c*rows + r`. `Geometry` precomputes each cell's capacity and neighbours, so the hot loops have no bounds logic and no maps.
+- Custom map definitions are copied on entry and retained as immutable designs. Geometry separates outgoing degree
+  from capacity and supports a fifth connection for Links; Reservoirs add one reserve to capacity. Each circuit has
+  exactly one Latch, Toggle, or Hold controlling one or more initially closed Gates. `Pressed` records controller
+  state, and `OpenGates` follows it. Direct placement applies switch effects before the first exploding cells are
+  selected. Each wave transfers on its starting topology, then aggregates wall damage and switch effects before
+  rebuilding connections/capacities and selecting the next wave. Gate opening, Gate closure, and destruction install
+  replacement topology safely isolated from AI copies. Terrain events record placement at wave −1 and subsequent
+  changes at their wave boundaries. See [maps.md](maps.md).
 - `Apply(cell)` places an orb and resolves the chain in waves, returning every wave in reused buffers. A wave runs in two passes: every cell at capacity gives, then every neighbour receives, taking the sender's owner from the start of the wave. The result doesn't depend on cell order.
 - The win check runs after the placement and after every wave, once every player has had a turn, and stops the chain on the spot. A safety cap of 10,000 waves leaves any cells still over capacity to the next move's first wave.
-- `Simulate` and `CopyFrom` give the bots an allocation-free search path. `Snapshot` and `Restore` (validated) carry a whole game over the network, and `Hash` (64-bit FNV-1a) detects desync.
+- `Simulate` and `CopyFrom` give the bots an allocation-free search path on fixed topology; custom maps allocate replacement geometry when terrain changes. `Snapshot` and `Restore` (validated) carry a whole game over the network, including map durability, `Pressed`, and `OpenGates`. `Hash` (64-bit FNV-1a) includes the map and its runtime state to detect desync.
 - All randomness comes from `core.RNG`, a splitmix64 generator.
 
 Worst-case chains resolve in about 5 µs on 9×9, 56 µs on 20×20 and 440 µs on 40×40.
@@ -32,14 +40,18 @@ Worst-case chains resolve in about 5 µs on 9×9, 56 µs on 20×20 and 440 µs o
 
 Each strategy has its own file. The seven heuristic bots (Jester to Spy) score candidate moves by simulating them. Voyager runs Monte Carlo tree search, Tactician iterative-deepening alpha-beta, and Hunter alpha-beta with Best-Reply Search and capture quiescence. Prodigy runs PUCT over a small graph network trained by self-play, recomputing only the cells a move changed. Sovereign runs alpha-beta with Best-Reply Search, a transposition table and quiescence over an int16 network whose accumulators update incrementally; integer inference keeps its moves identical on every platform. Both networks are generated Go source, not data files.
 
+All twelve strategies accept custom maps. Sovereign uses the existing Tactician search on them because its trained rectangular pattern table does not cover map neighborhoods or the fifth Link connection. Prodigy refreshes its full network evaluation on custom maps rather than retaining topology-dependent cached features.
+
 `DefaultBudget` (1,200) keeps every bot's worst move around 16 ms on a desktop at 40×40, inside the 150 ms target for a mid-range phone. Sovereign alone gets four times that where it thinks on its own thread. In the browser, where thinking holds up drawing, bots on boards bigger than Floor get a budget scaled down by cell count.
 
 ### `client`: the game
 
-An Ebitengine game with one scene at a time: Home, Setup (which is also the host's room page), the join page, the host password page, the game and the "room ended" page. Everything is laid out in code from the safe area and a UI scale capped at 2.
+An Ebitengine game with one scene at a time: Home, Setup (which is also the host's room page), the Maps library, import/share views, Map Editor, the join page, the host password page, the game and the "room ended" page. Everything is laid out in code from the safe area and a UI scale capped at 2.
 
 - Drawing: shapes are white sprites, nine-sliced and tinted per draw. The board is four batched `DrawTriangles32` calls (tiles, orbs, burst rings, flying orbs) from one atlas, and labels cache their glyphs, so a frame allocates nothing.
 - Animation: a move is applied to the game at once, then its waves replay from a copy of the old position. Bursts last about 18 ticks and orbs fly to neighbours over about 14. Orb motion is the prototype's, run at its 80 px cell and scaled to the board.
+- Map art: `client/mapart.go` draws the same flat terrain, devices, relationship patterns and edges for palette icons, editor canvas, thumbnails and the match board. Callers cache their rendered layers; the shared renderer retains no map-sized image or buffer. Adjacent walls and edge posts join using local neighbor lookups. Editor map rendering is bounded to 48 px per cell and scaled for zoom, so zoom does not allocate an oversized target. Match animation replays placement terrain events before the first explosion and wave events after the corresponding transfers.
+- Map editing/storage: editor drafts are cloned, strokes share one undo checkpoint, and recovery is saved separately from the library. Test uses a private Setup/settings copy and returns to the same editor draft. Import validates structure before preview and saves only on an explicit action; gameplay-invalid drafts remain editable. The local library uses `client/platform` storage, while portable files/codes use format 2 with a bounded legacy format-1 import path.
 - Bots think on a goroutine against a copy of the game; the 300 to 600 ms delay before a bot's move is presentation only.
 - Audio: C major pentatonic notes, C4 to A6, generated at startup as PCM, with a 100 ms minimum gap and 15 voices.
 - Settings: JSON written through a temporary file, through `client/platform`.
@@ -77,8 +89,8 @@ Native Mage builds embed the web game's gzip files. The LAN host serves that gam
 
 On one device:
 
-1. A tap on a legal cell calls `core.Game.Apply`, which returns the waves.
-2. The board replays the waves from the old position, one sound per wave, while the turn display waits for the chain to finish.
+1. A tap on a legal cell calls `core.Game.Apply`, which returns the waves and records terrain events for custom maps.
+2. The board replays from the old position: placement effects first, then each wave's transfers and terrain effects, one sound per wave, while the turn display waits for the chain to finish.
 
 In a room:
 
@@ -91,7 +103,7 @@ In a room:
 
 - Pure core: `core` and `core/ai` import no Ebitengine, net or OS packages, which keeps them deterministic, testable without a window, and identical on every target.
 - Transport-agnostic hub: one engine for online and LAN play, behind a three-method `Conn`, so a new transport needs no change to the rules of a room.
-- Host authority with client replay: only moves travel, and clients recompute the result. Messages stay at most 128 bytes, and a state hash catches any divergence.
+- Host authority with client replay: clients recompute ordinary moves from small messages, and a state hash catches any divergence. Lobby and snapshot messages also carry the chosen map and, for snapshots, runtime terrain state; incoming player messages remain bounded to 128 bytes. The binary game protocol is version 3.
 - Build tags for platforms: `client/platform` holds the storage, clipboard, keyboard and server-address code for each target, so the rest of the client has no platform branches.
 - Budgets instead of clocks: AI cost is counted, which makes bots reproducible in tests and fair across devices.
 

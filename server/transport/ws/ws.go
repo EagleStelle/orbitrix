@@ -12,7 +12,7 @@ import (
 )
 
 // readLimit covers the largest message either side sends: a Snapshot of a 40×40 board is about 3.2 KB.
-const readLimit = 16 << 10
+const readLimit = 128 << 10 // bounded map definition plus full board and terrain state
 
 const writeTimeout = 10 * time.Second
 

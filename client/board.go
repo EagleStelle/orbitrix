@@ -3,6 +3,7 @@ package client
 import (
 	"image/color"
 	"math"
+	"strconv"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
@@ -91,14 +92,28 @@ type board struct {
 	idx         []uint32
 	tri         ebiten.DrawTrianglesOptions
 	badge       *text.GoTextFace
+
+	mapImg      *ebiten.Image // physical map pieces, rebuilt only when their appearance changes
+	mapTheme    *scheme
+	mapRevision uint64
+	mapMarks    bool
 }
 
+var orbCountLabels = func() (labels [256]string) {
+	for i := range labels {
+		labels[i] = strconv.Itoa(i)
+	}
+	return labels
+}()
+
+// Kept until the editor's remaining numeric group labels are removed.
 func newBoard(g *core.Game) *board {
 	n := g.Geo.Cells()
 	b := &board{
 		geo: g.Geo, v: newView(g), orbs: newOrbField(g.Geo),
 		burstStart: make([]float64, n), burstLen: make([]float64, n), burstOwner: make([]int8, n),
 	}
+	b.geo, b.orbs.geo = b.v.geo, b.v.geo
 	b.tri.Filter = ebiten.FilterLinear
 	s := 2*burstSrcR + 4
 	b.burstImg = ebiten.NewImage(s, s)
@@ -128,6 +143,10 @@ func (b *board) layout(area rect, u float64) {
 	if b.tileImg != nil {
 		b.tileImg.Deallocate()
 		b.orbImg.Deallocate()
+	}
+	if b.mapImg != nil {
+		b.mapImg.Deallocate()
+		b.mapImg = nil
 	}
 	cell := b.base * b.k
 	ts := int(math.Ceil(cell*(1-2*tileGutter))) + 2
@@ -227,13 +246,17 @@ func (b *board) bounds() rect {
 // start shows a move: mover's orb lands in cell, then waves (from core.Game.Apply) play out. snd may be nil.
 func (b *board) start(cell int, mover int8, waves []core.Wave, snd *sound) {
 	b.v.place(cell, mover)
+	b.geo, b.orbs.geo = b.v.geo, b.v.geo
 	b.waves, b.wave, b.t, b.playing = waves, -1, 0, true
 	b.tailCap, b.skipCap = tailCap(len(waves)), 0
 	b.next(snd)
 }
 
 // sync makes the view match g without animating.
-func (b *board) sync(g *core.Game) { b.v.sync(g) }
+func (b *board) sync(g *core.Game) {
+	b.v.sync(g)
+	b.geo, b.orbs.geo = b.v.geo, b.v.geo
+}
 
 // next launches the following wave, or ends playback.
 func (b *board) next(snd *sound) {
@@ -270,6 +293,7 @@ func (b *board) tick(snd *sound) {
 	for b.playing && b.t >= b.dur {
 		b.t -= b.dur
 		b.v.land(b.waves[b.wave])
+		b.geo, b.orbs.geo = b.v.geo, b.v.geo
 		b.next(snd)
 	}
 }
@@ -290,6 +314,14 @@ func (b *board) draw(dst *ebiten.Image, sc *scheme, tms float64, turn int, marks
 	}
 	for i, o := range b.v.owner {
 		c := sc.tile
+		if b.v.replay != nil {
+			switch b.v.replay.TerrainAt(i) {
+			case core.Void:
+				continue
+			case core.Wall, core.BreakableWall:
+				c = sc.tileHi
+			}
+		}
 		if int(o) == turn {
 			c = lit
 		}
@@ -297,6 +329,9 @@ func (b *board) draw(dst *ebiten.Image, sc *scheme, tms float64, turn int, marks
 		b.quad(x, y, ts/2, 0, ts, c, 1)
 	}
 	b.flush(dst, b.tileImg)
+	if b.v.replay != nil {
+		b.drawMapLayer(dst, sc)
+	}
 
 	// Orbs, rim then fill (then mark) for each, in one batch.
 	for i, n := range b.v.count {
@@ -342,6 +377,36 @@ func (b *board) draw(dst *ebiten.Image, sc *scheme, tms float64, turn int, marks
 	}
 }
 
+// drawMapLayer keeps the map's physical pieces in one cached image. Orb
+// ownership and motion stay in their existing batches above this layer.
+func (b *board) drawMapLayer(dst *ebiten.Image, sc *scheme) {
+	if b.mapImg == nil || b.mapTheme != sc || b.mapRevision != b.v.revision || b.mapMarks != b.marks {
+		cols, rows := b.screenSize()
+		cell := b.base * b.k
+		w, h := int(math.Ceil(float64(cols)*cell)), int(math.Ceil(float64(rows)*cell))
+		if b.mapImg == nil || b.mapImg.Bounds().Dx() != w || b.mapImg.Bounds().Dy() != h {
+			if b.mapImg != nil {
+				b.mapImg.Deallocate()
+			}
+			b.mapImg = ebiten.NewImage(max(1, w), max(1, h))
+		} else {
+			b.mapImg.Clear()
+		}
+		b.renderMapLayer(b.mapImg, sc)
+		b.mapTheme, b.mapRevision = sc, b.v.revision
+		b.mapMarks = b.marks
+	}
+	var op ebiten.DrawImageOptions
+	op.GeoM.Translate(b.ox, b.oy)
+	dst.DrawImage(b.mapImg, &op)
+}
+
+func (b *board) renderMapLayer(dst *ebiten.Image, sc *scheme) {
+	g := b.v.replay
+	drawMapArt(dst, sc, mapArtState{Map: g.Map, Durability: g.Durability, Pressed: g.Pressed, OpenGates: g.OpenGates, Owner: b.v.owner, Count: b.v.count},
+		mapArtTransform{Cell: b.base * b.k, Turned: b.turned}, false, b.marks)
+}
+
 // orb queues one of player p's orbs at (x, y): its rim in the mat's colour, its fill, and its mark if marks are on.
 func (b *board) orb(x, y float64, p int) {
 	s := b.orbSize
@@ -379,7 +444,7 @@ func (b *board) flush(dst, src *ebiten.Image) {
 	b.verts, b.idx = b.verts[:0], b.idx[:0]
 }
 
-// drawBadges labels cells holding more than four orbs, which only a chain stopped by a win leaves behind.
+// drawBadges labels crowded cells, including custom-map cells after a long chain.
 func (b *board) drawBadges(dst *ebiten.Image, sc *scheme) {
 	for i, n := range b.v.count {
 		if n <= 4 {
@@ -389,7 +454,7 @@ func (b *board) drawBadges(dst *ebiten.Image, sc *scheme) {
 		h := max(14, t.h*0.3)
 		r := rect{t.right() - h*1.3 - 2, t.bottom() - h - 2, h * 1.3, h}
 		fillPill(dst, r, sc.ink)
-		drawText(dst, numbers[n], b.badge, r.cx(), r.cy(), text.AlignCenter, sc.ground)
+		drawText(dst, orbCountLabels[n], b.badge, r.cx(), r.cy(), text.AlignCenter, sc.ground)
 	}
 }
 

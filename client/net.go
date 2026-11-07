@@ -73,7 +73,7 @@ func lanSession(a *app, c hub.Conn, w proto.Welcome, addr, code string) *session
 
 // hubConfig is the room the host's Setup describes.
 func hubConfig(a *app) hub.Config {
-	cfg := hub.Config{Cols: a.set.Cols, Rows: a.set.Rows, AIDelay: hostAIDelay, Budget: aiBudget}
+	cfg := hub.Config{Cols: a.set.Cols, Rows: a.set.Rows, Map: a.set.Map, AIDelay: hostAIDelay, Budget: aiBudget}
 	for _, opt := range a.set.seats {
 		cfg.Seats = append(cfg.Seats, hub.Seat{Human: opt == seatHuman, AI: ai.Strategy(max(0, opt-1))})
 	}
