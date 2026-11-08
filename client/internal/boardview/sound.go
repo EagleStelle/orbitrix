@@ -47,6 +47,11 @@ func (b *Board) linkSound() sound.Effects {
 			if b.State.Replay.Map.Cells[cell].Feature == core.Link {
 				return sound.Link
 			}
+			for connection := range b.State.Geo.Neighbours(int(cell)) {
+				if len(b.State.Geo.PortalPath(int(cell), connection)) != 0 {
+					return sound.Link
+				}
+			}
 		}
 	}
 	return 0

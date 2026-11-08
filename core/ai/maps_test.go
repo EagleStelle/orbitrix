@@ -9,7 +9,10 @@ func TestBotsOnCustomMaps(t *testing.T) {
 	barriers := core.NewMap(5, 5)
 	barriers.Name = "Breakable barriers"
 	barriers.Edges = []core.MapEdge{{A: 12, B: 13, Kind: core.BreakableBarrier}, {A: 12, B: 17, Kind: core.BreakableBarrier}}
-	for _, m := range append(core.StarterMaps(), barriers) {
+	portals := core.NewMap(7, 7)
+	portals.Name = "Portals"
+	portals.Cells[16], portals.Cells[32] = core.MapCell{Feature: core.Portal, Group: 1}, core.MapCell{Feature: core.Portal, Group: 1}
+	for _, m := range append(core.StarterMaps(), barriers, portals) {
 		t.Run(m.Name, func(t *testing.T) {
 			g, err := core.NewGameWithMap(m, 3)
 			if err != nil {

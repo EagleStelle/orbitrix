@@ -29,3 +29,28 @@ func TestSeats(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectedMapIndexRequiresUniqueName(t *testing.T) {
+	m := core.NewMap(7, 7)
+	m.Name = "Doritos"
+	other := m.Clone()
+	other.Name = "Other map"
+	for _, tc := range []struct {
+		name     string
+		selected *core.MapDefinition
+		maps     []core.MapDefinition
+		want     int
+	}{
+		{"classic", nil, []core.MapDefinition{m}, -1},
+		{"missing", &m, []core.MapDefinition{other}, -1},
+		{"unique", &m, []core.MapDefinition{other, m}, 1},
+		{"ambiguous", &m, []core.MapDefinition{m, m.Clone()}, -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &settings{Map: tc.selected}
+			if got := s.selectedMapIndex(tc.maps); got != tc.want {
+				t.Fatalf("selected map = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

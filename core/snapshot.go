@@ -111,6 +111,8 @@ func Restore(s Snapshot) (*Game, error) {
 			return nil, fmt.Errorf("restore: cell %d owner %d out of range", i, o)
 		case (c == 0) != (o == NoOwner):
 			return nil, fmt.Errorf("restore: cell %d has %d orbs and owner %d", i, c, o)
+		case c != 0 && g.Map != nil && g.Map.Cells[i].Feature == Portal:
+			return nil, fmt.Errorf("restore: orbs on Portal cell %d", i)
 		case !g.Geo.Playable(i) && c != 0 && (g.Map == nil || g.TerrainAt(i) != Floor && g.Map.Cells[i].Circuit != Door):
 			return nil, fmt.Errorf("restore: orbs on blocked cell %d", i)
 		case g.Map == nil && g.Geo.Playable(i) && c >= 2*g.Geo.Cap[i]:
@@ -151,7 +153,7 @@ func (g *Game) Hash() uint64 {
 			if c.InitiallyOpen {
 				initial = 1
 			}
-			for _, v := range []uint8{uint8(c.Terrain), uint8(c.Feature), uint8(c.Circuit), c.Group, initial, g.Durability[i], g.Pressed[i]} {
+			for _, v := range []uint8{uint8(c.Terrain), uint8(c.Feature), uint8(c.Circuit), c.Group, initial, uint8(c.PortalMode), g.Durability[i], g.Pressed[i]} {
 				h = (h ^ uint64(v)) * prime
 			}
 		}

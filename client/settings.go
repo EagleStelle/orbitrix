@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 
+	"orbitrix/client/internal/mapstore"
 	"orbitrix/client/internal/ui"
 	"orbitrix/client/platform"
 	"orbitrix/core"
@@ -122,6 +123,13 @@ func loadSettings(rng *core.RNG) *settings {
 	s.Rows = clampInt(s.Rows, core.MinSize, core.MaxSize, 9)
 	s.Players = clampInt(s.Players, core.MinPlayers, core.MaxPlayers, 2)
 	if s.Map != nil {
+		if data, err := platform.Load("maps.json"); err == nil {
+			library := mapstore.Load(func(string) ([]byte, error) { return data, nil }, platform.Save)
+			if i := s.selectedMapIndex(library.Maps); library.LoadErr == nil && i >= 0 && len(library.Maps[i].Validate()) == 0 {
+				m := library.Maps[i].Clone()
+				s.Map = &m
+			}
+		}
 		if s.Map.ValidateStructure() != nil || len(s.Map.Validate()) != 0 {
 			s.Map = nil
 		} else {
@@ -145,6 +153,23 @@ func loadSettings(rng *core.RNG) *settings {
 		s.fitSeats()
 	}
 	return s
+}
+
+// Selections store a map copy; only a unique library name identifies its source safely.
+func (s *settings) selectedMapIndex(maps []core.MapDefinition) int {
+	if s.Map == nil || s.Map.Name == "" {
+		return -1
+	}
+	index := -1
+	for i, m := range maps {
+		if m.Name == s.Map.Name {
+			if index >= 0 {
+				return -1
+			}
+			index = i
+		}
+	}
+	return index
 }
 
 func clampInt(v, lo, hi, def int) int {

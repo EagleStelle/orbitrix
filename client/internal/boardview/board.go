@@ -370,10 +370,9 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 	if b.Playing {
 		f := min(1, b.t/b.dur)
 		for k, e := range b.Waves[b.Wave] {
-			sx, sy := b.Centre(int(e))
-			for _, n := range b.State.Geo.Neighbours(int(e)) {
-				ex, ey := b.Centre(int(n))
-				b.Orb(sx+(ex-sx)*f, sy+(ey-sy)*f, int(b.State.from[k]))
+			for connection := range b.State.Geo.Neighbours(int(e)) {
+				x, y := b.flightPosition(int(e), connection, f)
+				b.Orb(x, y, int(b.State.from[k]))
 			}
 		}
 		b.flush(dst, b.OrbImg)
@@ -387,6 +386,24 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 			}
 		}
 	}
+}
+
+func (b *Board) flightPosition(cell, connection int, fraction float64) (float64, float64) {
+	path := b.State.Geo.PortalPath(cell, connection)
+	segments := len(path)/2 + 1
+	progress := min(1, fraction) * float64(segments)
+	segment := min(int(progress), segments-1)
+	start, end := cell, int(b.State.Geo.Neighbours(cell)[connection])
+	if segment > 0 {
+		start = int(path[2*segment-1])
+	}
+	if segment < segments-1 {
+		end = int(path[2*segment])
+	}
+	sx, sy := b.Centre(start)
+	ex, ey := b.Centre(end)
+	f := progress - float64(segment)
+	return sx + (ex-sx)*f, sy + (ey-sy)*f
 }
 
 func (b *Board) releaseMapLayers() {
@@ -419,7 +436,7 @@ func (b *Board) drawMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 
 func (b *Board) renderMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 	g := b.State.Replay
-	DrawMapArt(dst, sc, MapState{Map: g.Map, Durability: g.Durability, EdgeDurability: g.EdgeDurability, Pressed: g.Pressed, CircuitOn: g.CircuitOn, Owner: b.State.Owner, Count: b.State.Count},
+	DrawMapArt(dst, sc, MapState{Map: g.Map, Durability: g.Durability, EdgeDurability: g.EdgeDurability, Pressed: g.Pressed, CircuitOn: g.CircuitOn, Owner: b.State.Owner, Count: b.State.Count, PortalAxes: g.Geo.PortalAxes},
 		MapTransform{Cell: b.base * b.k, Turned: b.Turned}, false, b.marks)
 }
 

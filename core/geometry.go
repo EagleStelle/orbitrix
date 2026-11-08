@@ -26,6 +26,9 @@ type Geometry struct {
 	Degree []uint8 // outgoing connections, independent of Reservoir capacity
 	// Nbr holds MaxConnections slots per cell, of which Degree are active.
 	Nbr []int16
+	// PortalRoutes holds entry/exit pairs per connection, only on maps with active Portal routes.
+	PortalRoutes [][]int16
+	PortalAxes   []PortalAxes
 }
 
 // NewGeometry builds the capacity and neighbour tables for a cols×rows board.
@@ -63,5 +66,12 @@ func (g *Geometry) Neighbours(i int) []int16 {
 	return g.Nbr[MaxConnections*i : MaxConnections*i+int(g.Degree[i])]
 }
 
-// Playable distinguishes Floor from blocked terrain, including an empty destroyed wall.
+func (g *Geometry) PortalPath(cell, connection int) []int16 {
+	if g.PortalRoutes == nil {
+		return nil
+	}
+	return g.PortalRoutes[MaxConnections*cell+connection]
+}
+
+// Playable excludes blocked terrain and Portals, including an empty destroyed wall as Floor.
 func (g *Geometry) Playable(i int) bool { return i >= 0 && i < g.Cells() && g.Cap[i] != 0 }

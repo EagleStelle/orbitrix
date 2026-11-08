@@ -4,7 +4,7 @@ import "sync"
 
 // Cache a bounded set of immutable tables, shared by search copies and replay.
 // Only destruction and circuit polarity affect connections, not ownership or presses.
-const topologyCacheSize = 64 // about 1.2 MiB of tables at 40×40, shared by all search copies
+const topologyCacheSize = 64 // bounded tables shared by all search copies
 
 type topologyKey struct {
 	circuit     uint16
@@ -20,31 +20,33 @@ type topologyEntry struct {
 type mapTopology struct {
 	switches, walls []int16
 	barriers        []int16
-	links           []int16
+	pairs           []int16
 	mu              sync.Mutex
 	cache           [topologyCacheSize]topologyEntry
 	next            int
 }
 
 func newMapTopology(m *MapDefinition) *mapTopology {
-	t := &mapTopology{links: make([]int16, len(m.Cells))}
-	var first [256]int
+	t := &mapTopology{pairs: make([]int16, len(m.Cells))}
+	var first [Portal + 1][256]int
 	for i := range first {
-		first[i] = -1
+		for j := range first[i] {
+			first[i][j] = -1
+		}
 	}
 	for i, c := range m.Cells {
-		t.links[i] = -1
+		t.pairs[i] = -1
 		if c.Circuit.IsSwitch() {
 			t.switches = append(t.switches, int16(i))
 		}
 		if c.Terrain == BreakableWall {
 			t.walls = append(t.walls, int16(i))
 		}
-		if c.Feature == Link {
-			if j := first[c.Group]; j >= 0 {
-				t.links[i], t.links[j] = int16(j), int16(i)
+		if c.Feature == Link || c.Feature == Portal {
+			if j := first[c.Feature][c.Group]; j >= 0 {
+				t.pairs[i], t.pairs[j] = int16(j), int16(i)
 			} else {
-				first[c.Group] = i
+				first[c.Feature][c.Group] = i
 			}
 		}
 	}

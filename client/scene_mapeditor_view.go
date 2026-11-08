@@ -72,7 +72,7 @@ func (e *mapEditor) layout(a *app) {
 		if compact {
 			dockHeight = 136 * u
 		}
-		if e.outputTool() {
+		if e.outputTool() || e.tool == brushPortal {
 			dockHeight += 48 * u
 		}
 		dockH := min(dockHeight, body.H*.50)
@@ -115,9 +115,13 @@ func (e *mapEditor) layout(a *app) {
 	e.channelB = ui.Rect{X: e.info.X, Y: e.info.Cy() - button/2, W: button, H: button}
 	e.initialB = ui.Rect{}
 	paletteBottom := e.info.Y - 8*u
-	if e.outputTool() {
+	if e.outputTool() || e.tool == brushPortal {
 		e.initialB = ui.Rect{X: e.info.X, Y: e.info.Y - 48*u, W: e.info.W, H: 44 * u}
 		paletteBottom = e.initialB.Y - 8*u
+	}
+	e.portalPanel = ui.Rect{X: e.initialB.X, Y: e.initialB.Y - 152*u, W: e.initialB.W, H: 148 * u}
+	for i := range e.portalChoices {
+		e.portalChoices[i] = ui.Rect{X: e.portalPanel.X + 4*u, Y: e.portalPanel.Y + 4*u + float64(i)*48*u, W: e.portalPanel.W - 8*u, H: 44 * u}
 	}
 	e.palette = e.palette[:0]
 	e.paletteTools = e.paletteTools[:0]
@@ -360,6 +364,7 @@ func (e *mapEditor) renderMap(a *app) {
 		}
 		state.Pressed = e.previewState
 	}
+	state.PortalAxes = capacityDesign.InitialPortalAxes()
 	tr := boardview.MapTransform{Cell: cell}
 	boardview.DrawMapArt(e.mapImage, a.sc, state, tr, true, a.set.Marks)
 	face := ui.NewFace(ui.SrcUI, cell*.24, 700)
@@ -394,7 +399,7 @@ func (e *mapEditor) renderMap(a *app) {
 }
 
 func (e *mapEditor) renderIcons(a *app) {
-	if e.icons != nil && e.iconTheme == a.sc && e.iconMarks == a.set.Marks && e.iconGroup == e.group && e.iconPreview == e.preview && e.iconInitial == e.initiallyOpen {
+	if e.icons != nil && e.iconTheme == a.sc && e.iconMarks == a.set.Marks && e.iconGroup == e.group && e.iconPreview == e.preview && e.iconInitial == e.initiallyOpen && e.iconPortal == e.portalMode {
 		return
 	}
 	if e.icons == nil {
@@ -406,6 +411,9 @@ func (e *mapEditor) renderIcons(a *app) {
 		e.icons.Clear()
 	}
 	for i, b := range editorBrushes {
+		if b.Feature == core.Portal {
+			b.PortalMode = e.portalMode
+		}
 		if i == brushErase || i == brushPan {
 			continue
 		}
@@ -421,6 +429,7 @@ func (e *mapEditor) renderIcons(a *app) {
 
 	e.iconTheme, e.iconMarks, e.iconGroup, e.iconPreview = a.sc, a.set.Marks, e.group, e.preview
 	e.iconInitial = e.initiallyOpen
+	e.iconPortal = e.portalMode
 }
 func (e *mapEditor) brushIcon(dst *ebiten.Image, tool int, r ui.Rect, alpha float32) {
 	op := ebiten.DrawImageOptions{Filter: ebiten.FilterLinear, DisableMipmaps: true}
@@ -506,9 +515,9 @@ func (e *mapEditor) draw(dst *ebiten.Image, a *app) {
 			i = e.pair
 		}
 		c := e.m.Cells[i]
-		if c.Feature == core.Link {
+		if c.Feature == core.Link || c.Feature == core.Portal {
 			for j, p := range e.m.Cells {
-				if j != i && p.Feature == core.Link && p.Group == c.Group {
+				if j != i && p.Feature == c.Feature && p.Group == c.Group {
 					x0, y0 := ox+(float64(i/e.m.Rows)+.5)*k, oy+(float64(i%e.m.Rows)+.5)*k
 					x1, y1 := ox+(float64(j/e.m.Rows)+.5)*k, oy+(float64(j%e.m.Rows)+.5)*k
 					ui.Line(clip, x0, y0, x1, y1, max(1, 1.5*u), ui.WithAlpha(boardview.PartnerColor(sc, c.Group), .55))
@@ -536,6 +545,13 @@ func (e *mapEditor) draw(dst *ebiten.Image, a *app) {
 	}
 	if e.channelsOpen {
 		e.drawChannels(dst, a)
+	}
+	if e.portalOpen {
+		ui.FillRound(dst, e.portalPanel, 10*u, sc.Ground)
+		for i, r := range e.portalChoices {
+			mode := core.PortalMode(i)
+			editorControl(dst, a, r, portalLabels[i], mode == e.portalMode, e.portalAllowed&mode.Axes() == mode.Axes(), false)
+		}
 	}
 	if e.ask != nil {
 		e.ask.draw(dst, a)
@@ -610,6 +626,23 @@ func (e *mapEditor) drawDock(dst *ebiten.Image, a *app) {
 		}
 		editorControl(dst, a, e.initialB, label, e.initiallyOpen, true, false)
 	}
+	if e.tool == brushPortal {
+		label := portalLabels[e.portalMode]
+		if e.portalAllowed == 0 {
+			label = "No open route"
+		}
+		unlocked := e.portalAllowed == core.BothAxes
+		editorControl(dst, a, e.initialB, label, e.portalOpen, unlocked, false)
+		x, y := e.initialB.Right()-14*u, e.initialB.Cy()
+		if unlocked {
+			ui.Line(dst, x-4*u, y-2*u, x, y+2*u, 2*u, sc.Ink)
+			ui.Line(dst, x, y+2*u, x+4*u, y-2*u, 2*u, sc.Ink)
+		} else {
+			ui.StrokeRound(dst, ui.Rect{X: x - 3*u, Y: y - 7*u, W: 6 * u, H: 7 * u}, 2*u, 1.5*u, sc.Dim)
+			ui.FillRound(dst, ui.Rect{X: x - 5*u, Y: y - 2*u, W: 10 * u, H: 8 * u}, u, sc.Tile)
+			ui.StrokeRound(dst, ui.Rect{X: x - 5*u, Y: y - 2*u, W: 10 * u, H: 8 * u}, u, 1.5*u, sc.Dim)
+		}
+	}
 	ui.FillRound(dst, e.info, 8*u, sc.Tile)
 	x := e.info.X + 4*u
 	if e.channelTool() {
@@ -658,7 +691,7 @@ func (e *mapEditor) drawChannels(dst *ebiten.Image, a *app) {
 	ui.FillRound(dst, a.safe(), 0, ui.WithAlpha(sc.Ground, .8))
 	ui.FillRound(dst, e.channelPanel, 16*u, sc.Tile)
 	label := "Circuit color"
-	if e.tool == brushLink {
+	if e.tool == brushLink || e.tool == brushPortal {
 		label = "Pair color"
 	}
 	ui.DrawText(dst, label, a.f.LabelBold, e.channelPanel.X+16*u, e.channelPanel.Y+18*u, text.AlignStart, sc.Ink)

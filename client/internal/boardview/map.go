@@ -23,6 +23,7 @@ type MapState struct {
 	CircuitOn           [256]bool
 	Owner               []int8
 	Count               []uint8
+	PortalAxes          []core.PortalAxes
 }
 
 type MapTransform struct {
@@ -31,10 +32,11 @@ type MapTransform struct {
 }
 
 type Brush struct {
-	Terrain core.Terrain
-	Feature core.Feature
-	Circuit core.CircuitKind
-	Edge    int // -1: cell; otherwise core.EdgeKind
+	Terrain    core.Terrain
+	Feature    core.Feature
+	Circuit    core.CircuitKind
+	Edge       int // -1: cell; otherwise core.EdgeKind
+	PortalMode core.PortalMode
 }
 
 func PartnerColor(sc *ui.Palette, group uint8) color.RGBA {
@@ -44,7 +46,7 @@ func PartnerColor(sc *ui.Palette, group uint8) color.RGBA {
 	return sc.Players[group-1]
 }
 
-func drawPartnerMark(dst *ebiten.Image, sc *ui.Palette, group uint8, x, y, size float64, _ bool) {
+func drawPartnerMark(dst *ebiten.Image, sc *ui.Palette, group uint8, x, y, size float64, portal bool, axes core.PortalAxes) {
 	if size <= 0 {
 		return
 	}
@@ -58,6 +60,34 @@ func drawPartnerMark(dst *ebiten.Image, sc *ui.Palette, group uint8, x, y, size 
 	width := mapFeatureStroke(cell)
 	ui.FillRound(dst, body, rad, coreInk)
 	ui.StrokeRound(dst, body, rad, width, c)
+	if portal {
+		for axis := range 2 {
+			if axes&core.PortalAxes(1<<axis) == 0 {
+				continue
+			}
+			for _, side := range []float64{-1, 1} {
+				tip, rim, span, bend := .10, .25, .28, .19
+				if axes == core.BothAxes {
+					tip, rim, span, bend = .23, .30, .17, .10
+				}
+				p := &mapPath
+				p.Reset()
+				for j, point := range [4][2]float64{{side * tip, -span}, {side * rim, -bend}, {side * rim, bend}, {side * tip, span}} {
+					dx, dy := point[0], point[1]
+					if axis == 1 {
+						dx, dy = dy, dx
+					}
+					if j == 0 {
+						p.MoveTo(float32(x+dx*body.W), float32(y+dy*body.W))
+					} else {
+						p.LineTo(float32(x+dx*body.W), float32(y+dy*body.W))
+					}
+				}
+				ui.StrokePath(dst, p, width, c)
+			}
+		}
+		return
+	}
 	// Inset portal bends inherit the frame radius, with at least one stroke of rounding.
 	for _, arc := range [][3]float64{{.25, -.15, 1}, {.13, -.04, -1}} {
 		a, end, direction := size*arc[0], size*arc[1], arc[2]
@@ -271,12 +301,12 @@ func mapArtWallVertex(state *MapState, gx, gy int) (terrain [4]core.Terrain, cou
 	return
 }
 
-func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, r ui.Rect) {
+func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, axes core.PortalAxes, r ui.Rect) {
 	x, y := r.Cx(), r.Cy()
 	body, _, radius, _, width := mapDeviceGeometry(r)
 	switch feature {
-	case core.Link:
-		drawPartnerMark(dst, sc, group, x, y, body.W/.72, false)
+	case core.Link, core.Portal:
+		drawPartnerMark(dst, sc, group, x, y, body.W/.72, feature == core.Portal, axes)
 	case core.Reservoir:
 		ui.StrokeRound( // A recessed square well seen from above; the inset is the reserve pocket.
 			dst, body, radius, width, sc.Dim)
@@ -470,6 +500,9 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 	if m == nil || m.Rows <= 0 || m.Cols <= 0 || m.Rows > core.MaxSize || m.Cols > core.MaxSize || tr.Cell <= 0 {
 		return
 	}
+	if state.PortalAxes == nil {
+		state.PortalAxes = m.InitialPortalAxes()
+	}
 	for i, cfg := range m.Cells {
 		t := mapArtTerrain(&state, i)
 		if t == core.Void {
@@ -498,7 +531,14 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		if cfg.Feature == core.Reservoir {
 			featureScheme.Dim = mapReservoirColor(sc, state, i)
 		}
-		drawMapFeature(dst, &featureScheme, cfg.Feature, cfg.Group, r)
+		axes := core.BothAxes
+		if cfg.Feature == core.Portal {
+			axes = state.PortalAxes[i]
+			if tr.Turned {
+				axes = (axes<<1 | axes>>1) & core.BothAxes
+			}
+		}
+		drawMapFeature(dst, &featureScheme, cfg.Feature, cfg.Group, axes, r)
 		if cfg.Circuit.IsOutput() {
 			pressed = core.CircuitOpen(cfg.InitiallyOpen, state.CircuitOn[cfg.Group])
 		}
@@ -586,6 +626,6 @@ func DrawMapBrush(dst *ebiten.Image, sc *ui.Palette, brush Brush, r ui.Rect, gro
 	}
 	body, radius := mapTileGeometry(r)
 	ui.FillRound(dst, body, radius, sc.Tile)
-	drawMapFeature(dst, sc, brush.Feature, group, r)
+	drawMapFeature(dst, sc, brush.Feature, group, brush.PortalMode.Axes(), r)
 	drawMapCircuit(dst, sc, brush.Circuit, group, r, pressed)
 }

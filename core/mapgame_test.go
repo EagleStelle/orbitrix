@@ -97,7 +97,12 @@ func TestCustomMapConservationAndDeterminism(t *testing.T) {
 	barriers := NewMap(7, 7)
 	barriers.Name = "Breakable barriers"
 	barriers.Edges = []MapEdge{{A: 24, B: 25, Kind: BreakableBarrier}, {A: 24, B: 31, Kind: BreakableBarrier}}
-	for _, m := range append(StarterMaps(), barriers) {
+	horizontal, vertical := portalMap(), portalMap()
+	horizontal.Name, vertical.Name = "Horizontal Portals", "Vertical Portals"
+	for _, i := range []int{16, 32} {
+		horizontal.Cells[i].PortalMode, vertical.Cells[i].PortalMode = PortalHorizontal, PortalVertical
+	}
+	for _, m := range append(StarterMaps(), barriers, portalMap(), horizontal, vertical) {
 		t.Run(m.Name, func(t *testing.T) {
 			g, err := NewGameWithMap(m, 3)
 			if err != nil {

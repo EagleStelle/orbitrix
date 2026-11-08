@@ -23,18 +23,20 @@ const (
 	NoFeature Feature = iota
 	Link
 	Reservoir
+	Portal
 )
 
 const MaxMapGroups = MaxPlayers
 
-// MapCell stores terrain, a passive feature or a circuit component. Link pair
-// groups and circuit groups have independent namespaces.
+// MapCell stores terrain, a passive feature or a circuit component. Link pairs,
+// Portal pairs and circuits have independent group namespaces.
 type MapCell struct {
 	Terrain       Terrain
 	Feature       Feature
 	Circuit       CircuitKind
 	Group         uint8
 	InitiallyOpen bool
+	PortalMode    PortalMode
 }
 
 type MapEdge struct {
@@ -105,7 +107,7 @@ func (m MapDefinition) ValidateStructure() error {
 		return fmt.Errorf("map has too many edges")
 	}
 	for i, c := range m.Cells {
-		if c.Terrain > BreakableWall || c.Feature > Reservoir || c.Circuit > Door {
+		if c.Terrain > BreakableWall || c.Feature > Portal || c.Circuit > Door {
 			return fmt.Errorf("map cell %d has unknown terrain or feature", i)
 		}
 		if c.Feature != NoFeature && c.Circuit != NoCircuit {
@@ -113,6 +115,9 @@ func (m MapDefinition) ValidateStructure() error {
 		}
 		if c.InitiallyOpen && !c.Circuit.IsOutput() {
 			return fmt.Errorf("map cell %d has an initial state without an output", i)
+		}
+		if c.PortalMode > PortalVertical || c.PortalMode != PortalBoth && c.Feature != Portal {
+			return fmt.Errorf("map cell %d has invalid Portal directions", i)
 		}
 	}
 	for i, e := range m.Edges {
@@ -136,36 +141,98 @@ func (m MapDefinition) floor(i int) bool {
 }
 
 func (m MapDefinition) initialFloor(i int) bool {
-	return m.floor(i) && (m.Cells[i].Circuit != Door || m.Cells[i].InitiallyOpen)
+	return m.floor(i) && m.Cells[i].Feature != Portal && (m.Cells[i].Circuit != Door || m.Cells[i].InitiallyOpen)
+}
+
+func (m MapDefinition) neighbor(cell, direction int) int {
+	d := [4][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}[direction]
+	x, y := cell/m.Rows+d[0], cell%m.Rows+d[1]
+	if x < 0 || x >= m.Cols || y < 0 || y >= m.Rows {
+		return -1
+	}
+	return x*m.Rows + y
+}
+
+func (m MapDefinition) partner(cell int) int {
+	c := m.Cells[cell]
+	if c.Group == 0 || c.Terrain != Floor {
+		return -1
+	}
+	pair, count := -1, 0
+	for i, other := range m.Cells {
+		if other.Terrain == Floor && other.Feature == c.Feature && other.Group == c.Group {
+			count++
+			if i != cell {
+				pair = i
+			}
+		}
+	}
+	if count != 2 || pair < 0 || m.adjacent(cell, pair) {
+		return -1
+	}
+	return pair
+}
+
+func (m MapDefinition) routeBlocked(cell, direction int, blocked []uint8) bool {
+	if blocked != nil {
+		return blocked[4*cell+direction] != 0
+	}
+	next := m.neighbor(cell, direction)
+	for _, e := range m.Edges {
+		if e.Kind == Gate && e.InitiallyOpen {
+			continue
+		}
+		if e.A == cell && e.B == next || e.B == cell && e.A == next {
+			return true
+		}
+	}
+	return false
+}
+
+// route follows a cardinal move through Portal pairs without changing direction.
+// A nonnil path collects entry/exit pairs for presentation; nil avoids draft allocations.
+func (m MapDefinition) route(cell, direction int, pairs []int16, blocked []uint8, axes []PortalAxes, path []int16) (int, []int16) {
+	for hops := 0; hops <= len(m.Cells); hops++ {
+		next := m.neighbor(cell, direction)
+		if next < 0 || m.routeBlocked(cell, direction, blocked) {
+			return -1, path
+		}
+		if m.Cells[next].Feature != Portal {
+			return next, path
+		}
+		if axes == nil {
+			axes = m.InitialPortalAxes()
+		}
+		if axes[next]&PortalAxes(1<<(direction/2)) == 0 {
+			return -1, path
+		}
+		pair := -1
+		if pairs != nil {
+			pair = int(pairs[next])
+		} else {
+			pair = m.partner(next)
+		}
+		if pair < 0 {
+			return -1, path
+		}
+		if path != nil {
+			path = append(path, int16(next), int16(pair))
+		}
+		cell = pair
+	}
+	return -1, path // A Portal-only loop has no landing cell.
 }
 
 // InitialConnections appends a cell's open neighbors in left/right/up/down/Link
-// order, respecting output starting states. Incomplete Link pairs are omitted.
+// order, respecting output starting states and routing through Portals.
+// Incomplete pairs are omitted.
 func (m MapDefinition) InitialConnections(cell int, dst []int) []int {
 	if !m.initialFloor(cell) || m.Rows <= 0 || m.Cols <= 0 {
 		return dst
 	}
-	c, r := cell/m.Rows, cell%m.Rows
-	for _, d := range [4][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
-		x, y := c+d[0], r+d[1]
-		if x < 0 || x >= m.Cols || y < 0 || y >= m.Rows {
-			continue
-		}
-		j := x*m.Rows + y
-		if !m.initialFloor(j) {
-			continue
-		}
-		blocked := false
-		for _, e := range m.Edges {
-			if e.Kind == Gate && e.InitiallyOpen {
-				continue
-			}
-			if e.A == cell && e.B == j || e.B == cell && e.A == j {
-				blocked = true
-				break
-			}
-		}
-		if !blocked {
+	for d := range 4 {
+		j, _ := m.route(cell, d, nil, nil, nil, nil)
+		if m.initialFloor(j) {
 			dst = append(dst, j)
 		}
 	}
@@ -173,16 +240,7 @@ func (m MapDefinition) InitialConnections(cell int, dst []int) []int {
 	if cfg.Feature != Link || cfg.Group == 0 {
 		return dst
 	}
-	pair, count := -1, 0
-	for i, other := range m.Cells {
-		if other.Terrain == Floor && other.Feature == Link && other.Group == cfg.Group {
-			count++
-			if i != cell {
-				pair = i
-			}
-		}
-	}
-	if count == 2 && pair >= 0 && !m.adjacent(cell, pair) {
+	if pair := m.partner(cell); pair >= 0 {
 		dst = append(dst, pair)
 	}
 	return dst
@@ -209,6 +267,7 @@ func (m MapDefinition) Validate() []MapIssue {
 	}
 	var issues []MapIssue
 	var links [256][]int
+	var portals [256][]int
 	var switches, gates, doors [256][]int
 	for i, c := range m.Cells {
 		if c.Feature != NoFeature && c.Terrain != Floor {
@@ -220,13 +279,15 @@ func (m MapDefinition) Validate() []MapIssue {
 		switch {
 		case c.Feature == Link:
 			links[c.Group] = append(links[c.Group], i)
+		case c.Feature == Portal:
+			portals[c.Group] = append(portals[c.Group], i)
 		case c.Circuit.IsSwitch():
 			switches[c.Group] = append(switches[c.Group], i)
 		case c.Circuit.IsOutput():
 			doors[c.Group] = append(doors[c.Group], i)
 		default:
 			if c.Group != 0 {
-				issues = append(issues, MapIssue{Message: "Only Links and circuit components use a group", Cells: []int{i}, Group: c.Group})
+				issues = append(issues, MapIssue{Message: "Only Links, Portals and circuit components use a group", Cells: []int{i}, Group: c.Group})
 			}
 		}
 		if c.Terrain == BreakableWall {
@@ -261,16 +322,33 @@ func (m MapDefinition) Validate() []MapIssue {
 	}
 	for group := 0; group < len(links); group++ {
 		cells := links[group]
+		portalCells := portals[group]
 		circuitCells := append(slices.Clone(switches[group]), doors[group]...)
-		if group > MaxMapGroups && len(cells)+len(circuitCells)+len(gates[group]) > 0 {
-			issues = append(issues, MapIssue{Message: "Choose one of the 12 group colors", Cells: append(slices.Clone(cells), circuitCells...), Edges: slices.Clone(gates[group]), Group: uint8(group)})
+		if group > MaxMapGroups && len(cells)+len(portalCells)+len(circuitCells)+len(gates[group]) > 0 {
+			issues = append(issues, MapIssue{Message: "Choose one of the 12 group colors", Cells: append(append(slices.Clone(cells), portalCells...), circuitCells...), Edges: slices.Clone(gates[group]), Group: uint8(group)})
 			continue
 		}
 		if len(cells) > 0 && (group == 0 || len(cells) != 2 || m.adjacent(cells[0], cells[len(cells)-1])) {
 			issues = append(issues, MapIssue{Message: "Link group needs exactly two nonadjacent Floor endpoints and a nonzero group", Cells: slices.Clone(cells), Group: uint8(group)})
 		}
+		if len(portalCells) > 0 && (group == 0 || len(portalCells) != 2 || m.adjacent(portalCells[0], portalCells[len(portalCells)-1])) {
+			issues = append(issues, MapIssue{Message: "Portal group needs exactly two nonadjacent Floor endpoints and a nonzero group", Cells: slices.Clone(portalCells), Group: uint8(group)})
+		}
 		if len(circuitCells)+len(gates[group]) > 0 && (group == 0 || len(switches[group]) == 0 || len(gates[group])+len(doors[group]) == 0) {
 			issues = append(issues, MapIssue{Message: "A circuit needs at least one switch and one Gate or Door", Cells: circuitCells, Edges: slices.Clone(gates[group]), Group: uint8(group)})
+		}
+	}
+	portalAxes := m.InitialPortalAxes()
+	for entry, c := range m.Cells {
+		if c.Feature != Portal {
+			continue
+		}
+		pair := m.partner(entry)
+		if pair < 0 {
+			continue
+		}
+		if portalAxes[entry] == 0 {
+			issues = append(issues, MapIssue{Message: "Portal needs an open horizontal or vertical route", Cells: []int{entry, pair}, Group: c.Group})
 		}
 	}
 	var neighbors [5]int
@@ -380,7 +458,7 @@ func (m MapDefinition) Validate() []MapIssue {
 	}
 	var disconnected []int
 	for i, c := range m.Cells {
-		if c.Terrain == Floor && regions[i] != regions[first] {
+		if c.Terrain == Floor && c.Feature != Portal && regions[i] != regions[first] {
 			disconnected = append(disconnected, i)
 		}
 	}

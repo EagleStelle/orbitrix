@@ -31,21 +31,23 @@ const (
 	brushHold
 	brushDoor
 	brushBreakBarrier
+	brushPortal
 )
 
-var editorTools = [...]string{"Floor", "Wall", "Void", "Breakable Wall", "Link", "Reservoir", "Latch", "Barrier", "Gate", "Erase", "Pan", "Toggle", "Hold", "Door", "Breakable Barrier"}
+var editorTools = [...]string{"Floor", "Wall", "Void", "Breakable Wall", "Link", "Reservoir", "Latch", "Barrier", "Gate", "Erase", "Pan", "Toggle", "Hold", "Door", "Breakable Barrier", "Portal"}
 var editorHelp = [...]string{
 	"Playable surface. Open routes set its capacity.", "Blocks explosions permanently.", "Empty space outside the playable board.", "Two nearby blasts turn it into floor.",
 	"Pair two distant cells to route explosions.", "Stores one extra orb before exploding.", "Reverses once; another switch rearms it.", "Blocks a route between two floor cells.",
 	"Reverses with its circuit. Repaint to set its start.", "Remove an edge or restore a cell to floor.", "Drag the map to move around.", "Reverses on empty placement or orbs popping in or out.", "Reverses on press and release.", "A wall. Repaint to set its start.",
 	"Blocks a route. Two blasts from its two bordering cells break it.",
+	"Passes to its pair. Holds no orbs.",
 }
 var editorGroups = [...]struct {
 	name  string
 	tools []int
 }{
 	{"Terrain", []int{brushFloor, brushVoid, brushWall, brushBarrier, brushBreak, brushBreakBarrier}},
-	{"Devices", []int{brushLink, brushReservoir}},
+	{"Devices", []int{brushLink, brushPortal, brushReservoir}},
 	{"Circuit", []int{brushLatch, brushToggle, brushHold, brushGate, brushDoor}},
 }
 var editorBrushes = [...]boardview.Brush{
@@ -54,6 +56,7 @@ var editorBrushes = [...]boardview.Brush{
 	{Edge: -1}, {Edge: -1}, {Circuit: core.Toggle, Edge: -1}, {Circuit: core.Hold, Edge: -1},
 	{Circuit: core.Door, Edge: -1},
 	{Edge: int(core.BreakableBarrier)},
+	{Feature: core.Portal, Edge: -1},
 }
 
 type mapEditor struct {
@@ -71,6 +74,10 @@ type mapEditor struct {
 	tool, category                 int
 	group                          uint8
 	initiallyOpen                  bool
+	portalMode                     core.PortalMode
+	portalCell                     int
+	portalAllowed                  core.PortalAxes
+	portalOpen                     bool
 	pair, last, hover              int
 	dirty, stroke, strokeChanged   bool
 	edgeDrag                       bool
@@ -100,6 +107,8 @@ type mapEditor struct {
 	option                                                              [1]ui.Rect
 	channelB, channelPanel                                              ui.Rect
 	initialB                                                            ui.Rect
+	portalPanel                                                         ui.Rect
+	portalChoices                                                       [3]ui.Rect
 	channels                                                            [core.MaxMapGroups]ui.Rect
 	channelDone                                                         ui.Rect
 	helpTool                                                            int
@@ -119,10 +128,11 @@ type mapEditor struct {
 	iconMarks, iconPreview            bool
 	iconInitial                       bool
 	iconGroup                         uint8
+	iconPortal                        core.PortalMode
 }
 
 func newMapEditor(a *app, back scene, m core.MapDefinition, save func(core.MapDefinition) error) *mapEditor {
-	e := &mapEditor{back: back, m: m.Clone(), save: save, name: newField(64, false, printable), group: 1, pair: -1, last: -1, hover: -1, zoom: 1, helpTool: -1, revision: 1}
+	e := &mapEditor{back: back, m: m.Clone(), save: save, name: newField(64, false, printable), group: 1, pair: -1, last: -1, hover: -1, portalCell: -1, portalAllowed: core.BothAxes, zoom: 1, helpTool: -1, revision: 1}
 	e.name.set(m.Name)
 	e.nameEdits = e.name.edits
 	e.validate()
@@ -158,6 +168,7 @@ func (e *mapEditor) validate() {
 			}
 		}
 	}
+	e.refreshPortal()
 }
 func (e *mapEditor) checkpoint() {
 	e.undo = append(e.undo, e.m.Clone())
@@ -353,10 +364,10 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 	if i < 0 {
 		return false
 	}
-	if e.pair >= 0 && (e.m.Cells[e.pair].Feature != core.Link || e.m.Cells[e.pair].Terrain != core.Floor) {
+	if e.pair >= 0 && ((e.m.Cells[e.pair].Feature != core.Link && e.m.Cells[e.pair].Feature != core.Portal) || e.m.Cells[e.pair].Terrain != core.Floor) {
 		e.pair = -1
 	}
-	if e.pair == i && e.tool != brushLink {
+	if e.pair == i && e.tool != brushLink && e.tool != brushPortal {
 		e.pair = -1
 	}
 	if editorBrushes[e.tool].Edge >= 0 {
@@ -381,12 +392,17 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 		case brushBreak:
 			next.Terrain = core.BreakableWall
 		}
-	case brushLink:
+	case brushLink, brushPortal:
 		if i == e.last {
 			return false
 		}
 		if e.m.Cells[i].Terrain != core.Floor {
-			e.notify("Links need floor underneath.")
+			e.notify(editorTools[e.tool] + "s need floor underneath.")
+			return false
+		}
+		if e.tool == brushPortal && e.m.Cells[i].Feature == core.Portal && (e.pair < 0 || e.pair == i) {
+			e.portalCell, e.group = i, e.m.Cells[i].Group
+			e.refreshPortal()
 			return false
 		}
 		if e.pair >= 0 && e.pair != i {
@@ -394,12 +410,15 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 				e.notify("Choose a distant cell for the partner portal.")
 				return false
 			}
-			next = core.MapCell{Feature: core.Link, Group: e.m.Cells[e.pair].Group}
+			next = core.MapCell{Feature: editorBrushes[e.tool].Feature, Group: e.m.Cells[e.pair].Group}
+			if e.tool == brushPortal {
+				next.PortalMode = e.m.Cells[e.pair].PortalMode
+			}
 			e.pair = -1
 		} else {
 			var used [256]bool
 			for _, c := range e.m.Cells {
-				if c.Feature == core.Link {
+				if c.Feature == editorBrushes[e.tool].Feature {
 					used[c.Group] = true
 				}
 			}
@@ -407,8 +426,14 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 				e.notify("Choose an unused pair color.")
 				return false
 			}
-			next = core.MapCell{Feature: core.Link, Group: e.group}
+			next = core.MapCell{Feature: editorBrushes[e.tool].Feature, Group: e.group}
 			e.pair = i
+		}
+		if e.tool == brushPortal {
+			if e.pair == i {
+				next.PortalMode = e.portalMode
+			}
+			e.portalCell = i
 		}
 	case brushReservoir, brushLatch, brushToggle, brushHold, brushDoor:
 		if e.m.Cells[i].Terrain != core.Floor {
@@ -452,11 +477,14 @@ func resizeMap(m core.MapDefinition, cols, rows int) core.MapDefinition {
 	return n
 }
 func (e *mapEditor) selectTool(tool int) {
-	e.tool = tool
-	e.revealTool = true
-	if tool != brushLink {
+	if tool != e.tool || tool != brushLink && tool != brushPortal {
 		e.pair = -1
 	}
+	if tool != e.tool {
+		e.portalCell, e.portalAllowed, e.portalOpen = -1, core.BothAxes, false
+	}
+	e.tool = tool
+	e.revealTool = true
 	for g, c := range editorGroups {
 		for _, t := range c.tools {
 			if t == tool {
@@ -467,7 +495,7 @@ func (e *mapEditor) selectTool(tool int) {
 }
 func (e *mapEditor) channelTool() bool {
 	brush := editorBrushes[e.tool]
-	return brush.Feature == core.Link || brush.Edge == int(core.Gate) || brush.Circuit != core.NoCircuit
+	return brush.Feature == core.Link || brush.Feature == core.Portal || brush.Edge == int(core.Gate) || brush.Circuit != core.NoCircuit
 }
 
 func (e *mapEditor) outputTool() bool {
@@ -489,7 +517,7 @@ func (e *mapEditor) finishStroke() {
 // Temporary hand/erase tools do not select a palette tool or discard a pending Link pair.
 func (e *mapEditor) updateMouseTool(a *app) (pressed bool) {
 	mode := 0
-	if !a.in.finger && e.ask == nil && !e.more && !e.channelsOpen && !e.tools && (e.mouseTool != 0 || e.canvas.Contains(a.in.x, a.in.y)) {
+	if !a.in.finger && e.ask == nil && !e.more && !e.channelsOpen && !e.tools && !e.portalOpen && (e.mouseTool != 0 || e.canvas.Contains(a.in.x, a.in.y)) {
 		if a.in.middle {
 			mode = 1
 		} else if a.in.right {
@@ -535,6 +563,19 @@ func (e *mapEditor) update(a *app) error {
 	}
 	if e.channelsOpen {
 		return e.updateChannels(a)
+	}
+	if e.portalOpen {
+		for i, r := range e.portalChoices {
+			if a.clicked(r) && e.portalAllowed&core.PortalMode(i).Axes() == core.PortalMode(i).Axes() {
+				e.setPortalMode(core.PortalMode(i))
+				e.portalOpen = false
+				return nil
+			}
+		}
+		if a.in.esc || a.in.clicked && !e.portalPanel.Contains(a.in.x, a.in.y) {
+			e.portalOpen = false
+		}
+		return nil
 	}
 	if e.more {
 		return e.updateOptions(a)
@@ -688,6 +729,9 @@ func (e *mapEditor) update(a *app) error {
 	case e.outputTool() && a.clicked(e.initialB):
 		e.initiallyOpen = !e.initiallyOpen
 		return nil
+	case e.tool == brushPortal && a.clicked(e.initialB):
+		e.portalOpen = e.portalAllowed == core.BothAxes
+		return nil
 	}
 	for i, r := range e.control {
 		if i == 0 && len(e.undo) == 0 || i == 1 && len(e.redo) == 0 {
@@ -773,7 +817,7 @@ func (e *mapEditor) updateCanvas(a *app, pressed, down bool) {
 		} else if e.stroke && (i != e.last || (editorBrushes[e.tool].Edge >= 0 || e.tool == brushErase) && (a.in.x != e.prevX || a.in.y != e.prevY)) {
 			if editorBrushes[e.tool].Edge >= 0 {
 				e.strokeChanged = e.paintEdgeStroke(a.in.x, a.in.y) || e.strokeChanged
-			} else if e.tool == brushLink || editorBrushes[e.tool].Circuit.IsSwitch() {
+			} else if e.tool == brushLink || e.tool == brushPortal || editorBrushes[e.tool].Circuit.IsSwitch() {
 				e.strokeChanged = e.paint(i, a.in.x, a.in.y) || e.strokeChanged
 			} else {
 				k, _, _ := e.grid()
@@ -837,6 +881,9 @@ func (e *mapEditor) updateChannels(a *app) error {
 	for i, r := range e.channels {
 		if a.clicked(r) {
 			e.group = uint8(i + 1)
+			if e.portalCell >= 0 && e.pair < 0 && e.m.Cells[e.portalCell].Group != e.group {
+				e.portalCell, e.portalAllowed = -1, core.BothAxes
+			}
 			e.channelsOpen = false
 			return nil
 		}

@@ -64,7 +64,7 @@ func TestMapDraftValidation(t *testing.T) {
 		{"orphan Switch", func(m *MapDefinition) { m.Cells[12] = MapCell{Circuit: Latch, Group: 1} }, "circuit"},
 		{"orphan Gate", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 12, B: 13, Kind: Gate, Group: 1}} }, "circuit"},
 		{"feature on Wall", func(m *MapDefinition) { m.Cells[12] = MapCell{Terrain: Wall, Feature: Reservoir} }, "Features need Floor"},
-		{"unused group", func(m *MapDefinition) { m.Cells[12].Group = 1 }, "Only Links and circuit"},
+		{"unused group", func(m *MapDefinition) { m.Cells[12].Group = 1 }, "Only Links, Portals and circuit"},
 		{"Barrier group", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 12, B: 13, Group: 1}} }, "Barriers do not use"},
 		{"Breakable Barrier group", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 12, B: 13, Kind: BreakableBarrier, Group: 1}} }, "Barriers do not use"},
 		{"Breakable Barrier on Wall", func(m *MapDefinition) {
@@ -121,6 +121,8 @@ func TestMapStructureRejectsMalformedData(t *testing.T) {
 		{"missing cells", func(m *MapDefinition) { m.Cells = m.Cells[:24] }},
 		{"unknown terrain", func(m *MapDefinition) { m.Cells[0].Terrain = 255 }},
 		{"unknown feature", func(m *MapDefinition) { m.Cells[0].Feature = 255 }},
+		{"unknown Portal mode", func(m *MapDefinition) { m.Cells[0] = MapCell{Feature: Portal, PortalMode: 3} }},
+		{"Portal mode without Portal", func(m *MapDefinition) { m.Cells[0].PortalMode = PortalHorizontal }},
 		{"unknown edge", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 0, B: 1, Kind: 255}} }},
 		{"outside edge", func(m *MapDefinition) { m.Edges = []MapEdge{{A: -1, B: 0}} }},
 		{"wrapped edge", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 4, B: 5}} }},

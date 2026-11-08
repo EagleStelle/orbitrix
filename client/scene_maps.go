@@ -139,10 +139,14 @@ func (s *mapsScene) readDraft() {
 	}
 }
 
-func (s *mapsScene) saveAt(index int) func(core.MapDefinition) error {
+func (s *mapsScene) saveAt(a *app, index int) func(core.MapDefinition) error {
 	return func(m core.MapDefinition) error {
+		selected := index >= 0 && a.set.selectedMapIndex(s.store.Maps) == index
 		if err := s.store.Put(index, m); err != nil {
 			return err
+		}
+		if selected && len(m.Validate()) == 0 {
+			s.applyMap(a, &m)
 		}
 		if index < 0 {
 			index = len(s.store.Maps) - 1
@@ -157,10 +161,15 @@ func (s *mapsScene) saveAt(index int) func(core.MapDefinition) error {
 
 func (s *mapsScene) edit(a *app, m core.MapDefinition, index int) {
 	s.reloadDraft = true
-	a.next = newMapEditor(a, s, m.Clone(), s.saveAt(index))
+	a.next = newMapEditor(a, s, m.Clone(), s.saveAt(a, index))
 }
 
 func (s *mapsScene) choose(a *app, m *core.MapDefinition) {
+	s.applyMap(a, m)
+	a.next = s.back
+}
+
+func (s *mapsScene) applyMap(a *app, m *core.MapDefinition) {
 	if m != nil {
 		copy := m.Clone()
 		m = &copy
@@ -174,7 +183,6 @@ func (s *mapsScene) choose(a *app, m *core.MapDefinition) {
 		}
 		a.set.save()
 	}
-	a.next = s.back
 }
 
 func (s *mapsScene) layout(a *app) {
@@ -221,7 +229,7 @@ func (s *mapsScene) update(a *app) error {
 	if s.importText != "" {
 		text := s.importText
 		s.importText = ""
-		i := newMapImport(a, s, s.saveAt(-1))
+		i := newMapImport(a, s, s.saveAt(a, -1))
 		i.input.set(text)
 		i.previewCode(text)
 		a.next = i
@@ -265,7 +273,7 @@ func (s *mapsScene) update(a *app) error {
 	}
 	switch {
 	case a.clicked(ui.CompactHit(s.toolbar[0], a.u)):
-		a.next = newMapImport(a, s, s.saveAt(-1))
+		a.next = newMapImport(a, s, s.saveAt(a, -1))
 	case a.clicked(ui.CompactHit(s.toolbar[1], a.u)):
 		s.choose(a, nil)
 	case s.draft != nil && a.clicked(ui.CompactHit(s.recovery[0], a.u)):

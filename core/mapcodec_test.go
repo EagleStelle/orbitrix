@@ -73,6 +73,9 @@ func TestMapCodecRoundTrip(t *testing.T) {
 	draft.Cells[12].Terrain = Void
 	draft.Cells[13].Terrain = Wall
 	draft.Cells[15] = MapCell{Circuit: Door, Group: 2, InitiallyOpen: true}
+	draft.Cells[19] = MapCell{Feature: Portal, Group: 1}
+	draft.Cells[20] = MapCell{Feature: Portal, Group: 2, PortalMode: PortalHorizontal}
+	draft.Cells[21] = MapCell{Feature: Portal, Group: 3, PortalMode: PortalVertical}
 	draft.Edges = []MapEdge{{A: 1, B: 2, Kind: Barrier}, {A: 2, B: 3, Kind: Gate, Group: 2}, {A: 3, B: 4, Kind: BreakableBarrier}}
 	draft.Edges[1].InitiallyOpen = true
 	large := NewMap(MaxSize, MaxSize)

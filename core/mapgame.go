@@ -1,6 +1,9 @@
 package core
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // TerrainEvent is applied after a wave's orb transfers, before the following wave.
 // Cell -1 records circuit polarity in Open. Edge marks Cell as an edge index;
@@ -98,24 +101,28 @@ func (g *Game) mapGeometry() *Geometry {
 		}
 		blocked[4*e.A+d], blocked[4*e.B+(d^1)] = 1, 1
 	}
+	geo.PortalAxes = m.portalAxes(t.pairs, blocked[:], func(i int) bool { return g.TerrainAt(i) == Floor }, 0)
 	for i, c := range m.Cells {
-		if g.TerrainAt(i) != Floor {
+		if g.TerrainAt(i) != Floor || c.Feature == Portal {
 			continue
 		}
-		x, y := geo.Coords(i)
-		for d, off := range [4][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
-			nx, ny := x+off[0], y+off[1]
-			if nx < 0 || ny < 0 || nx >= m.Cols || ny >= m.Rows || blocked[4*i+d] != 0 {
-				continue
-			}
-			j := geo.Index(nx, ny)
-			if g.TerrainAt(j) == Floor {
-				geo.Nbr[MaxConnections*i+int(geo.Degree[i])] = int16(j)
+		for d := range 4 {
+			var scratch [4 * MaxMapGroups]int16
+			j, path := m.route(i, d, t.pairs, blocked[:], geo.PortalAxes, scratch[:0])
+			if j >= 0 && g.TerrainAt(j) == Floor {
+				slot := MaxConnections*i + int(geo.Degree[i])
+				geo.Nbr[slot] = int16(j)
+				if len(path) != 0 {
+					if geo.PortalRoutes == nil {
+						geo.PortalRoutes = make([][]int16, n*MaxConnections)
+					}
+					geo.PortalRoutes[slot] = slices.Clone(path)
+				}
 				geo.Degree[i]++
 			}
 		}
-		if t.links[i] >= 0 {
-			geo.Nbr[MaxConnections*i+int(geo.Degree[i])] = t.links[i]
+		if c.Feature == Link && t.pairs[i] >= 0 {
+			geo.Nbr[MaxConnections*i+int(geo.Degree[i])] = t.pairs[i]
 			geo.Degree[i]++
 		}
 		geo.Cap[i] = geo.Degree[i]

@@ -32,6 +32,16 @@ type mapCaptureCase struct {
 }
 
 var mapCaptureCases = []mapCaptureCase{
+	{"portal-desktop", 1040, 640, false, false, false, "", brushPortal},
+	{"portal-mobile", 390, 844, true, true, false, "", brushPortal},
+	{"portal-landscape", 568, 320, false, false, false, "", brushPortal},
+	{"portal-art-light", 1100, 500, false, false, false, "portals", brushPortal},
+	{"portal-art-dark", 1100, 500, true, true, false, "portals", brushPortal},
+	{"portal-options-desktop", 1040, 640, false, false, false, "portal-options", brushPortal},
+	{"portal-options-mobile", 390, 844, true, false, false, "portal-options", brushPortal},
+	{"portal-locked-desktop", 1040, 640, false, false, false, "portal-vertical", brushPortal},
+	{"portal-locked-mobile", 390, 844, true, false, false, "portal-vertical", brushPortal},
+	{"portal-locked-landscape", 568, 320, false, false, false, "portal-horizontal", brushPortal},
 	{"breakable-barrier-desktop", 1040, 640, false, false, false, "", brushBreakBarrier},
 	{"breakable-barrier-mobile", 390, 844, true, false, false, "", brushBreakBarrier},
 	{"breakable-barrier-small", 320, 640, false, false, false, "", brushBreakBarrier},
@@ -123,6 +133,8 @@ func editorShowcaseMap() core.MapDefinition {
 	}
 	m.Cells[2*m.Rows+2] = core.MapCell{Feature: core.Link, Group: 4}
 	m.Cells[10*m.Rows+8] = core.MapCell{Feature: core.Link, Group: 4}
+	m.Cells[2*m.Rows+5] = core.MapCell{Feature: core.Portal, Group: 4}
+	m.Cells[10*m.Rows+5] = core.MapCell{Feature: core.Portal, Group: 4}
 	m.Cells[2*m.Rows+3] = core.MapCell{Circuit: core.Latch, Group: 1}
 	m.Cells[9*m.Rows+4] = core.MapCell{Circuit: core.Toggle, Group: 2}
 	m.Cells[2*m.Rows+7] = core.MapCell{Circuit: core.Hold, Group: 3}
@@ -168,7 +180,7 @@ func drawArtStates(dst *ebiten.Image, a *app) {
 			ui.DrawText(dst, state, a.f.LabelBold, r.Cx(), 260, text.AlignCenter, sc.Ink)
 		}
 	}
-	ui.DrawText(dst, "Portal pairs", a.f.Heading, 32, 316, text.AlignStart, sc.Ink)
+	ui.DrawText(dst, "Link pairs", a.f.Heading, 32, 316, text.AlignStart, sc.Ink)
 	for i := 0; i < core.MaxMapGroups; i++ {
 		boardview.DrawMapBrush(dst, sc, boardview.Brush{Feature: core.Link, Edge: -1}, ui.Rect{X: 30 + float64(i)*87, Y: 352, W: 76, H: 76}, uint8(i+1), false, a.set.Marks)
 	}
@@ -357,7 +369,7 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		lib := &mapsScene{back: newHome(), selected: 1, store: store}
 		lib.refresh()
 		s = lib
-	case "art", "wall-corners", "door-orbs", "barriers":
+	case "art", "wall-corners", "door-orbs", "barriers", "portals":
 	default:
 		if c.mode == "large" {
 			m = resizeMap(m, 40, 40)
@@ -417,6 +429,17 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		if c.tool == brushHold || c.tool == brushGate {
 			e.group = 3
 		}
+		if c.mode == "portal-options" || c.mode == "portal-vertical" || c.mode == "portal-horizontal" {
+			e.portalCell = 2*m.Rows + 5
+			if c.mode == "portal-vertical" {
+				e.m.Cells[m.Rows+5].Terrain = core.Wall
+			}
+			if c.mode == "portal-horizontal" {
+				e.m.Cells[2*m.Rows+4].Terrain = core.Wall
+			}
+			e.changed()
+			e.portalOpen = c.mode == "portal-options"
+		}
 		if c.mode == "channels" {
 			e.channelsOpen = true
 		}
@@ -436,7 +459,24 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 	out := ebiten.NewImage(int(c.w), int(c.h))
 	defer out.Deallocate()
 	out.Fill(a.sc.Ground)
-	if c.mode == "barriers" {
+	if c.mode == "portals" {
+		for row, feature := range []core.Feature{core.Link, core.Portal} {
+			y := 30 + float64(row)*170
+			ui.DrawText(out, []string{"Link pairs", "Portal pairs"}[row], a.f.Heading, 30, y, text.AlignStart, a.sc.Ink)
+			for i := range core.MaxMapGroups {
+				boardview.DrawMapBrush(out, a.sc, boardview.Brush{Feature: feature, Edge: -1}, ui.Rect{X: 30 + float64(i)*87, Y: y + 35, W: 76, H: 76}, uint8(i+1), false, c.marks)
+			}
+		}
+		ui.DrawText(out, "Portal at map and palette sizes", a.f.LabelBold, 30, 380, text.AlignStart, a.sc.Ink)
+		for i, size := range []float64{64, 48, 32, 24} {
+			boardview.DrawMapBrush(out, a.sc, boardview.Brush{Feature: core.Portal, Edge: -1}, ui.Rect{X: 30 + float64(i)*100, Y: 410, W: size, H: size}, 4, false, c.marks)
+		}
+		for i, mode := range []core.PortalMode{core.PortalBoth, core.PortalHorizontal, core.PortalVertical} {
+			x := 520 + float64(i)*190
+			ui.DrawText(out, portalLabels[mode], a.f.LabelBold, x, 380, text.AlignStart, a.sc.Ink)
+			boardview.DrawMapBrush(out, a.sc, boardview.Brush{Feature: core.Portal, PortalMode: mode, Edge: -1}, ui.Rect{X: x, Y: 410, W: 64, H: 64}, 4, false, c.marks)
+		}
+	} else if c.mode == "barriers" {
 		ui.DrawText(out, "Breakable Barriers", a.f.Title, 30, 36, text.AlignStart, a.sc.Ink)
 		for i, durability := range []uint8{2, 1, 0} {
 			m := core.NewMap(3, 3)
@@ -494,9 +534,15 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		e.draw(out, a)
 		drawSnackbarOverlay(out, a, s)
 		out.ReadPixels(pixels.Pix)
-		if !bytes.Equal(before, pixels.Pix) {
-			g.err = &captureMapError{"erase mode highlighted plain floor"}
-			return
+		// Check the canvas; unrelated toolbar antialiasing can differ by one pixel.
+		bounds := image.Rect(int(e.canvas.X), int(e.canvas.Y), int(e.canvas.Right()), int(e.canvas.Bottom())).Intersect(pixels.Bounds())
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			i := pixels.PixOffset(bounds.Min.X, y)
+			end := i + 4*bounds.Dx()
+			if !bytes.Equal(before[i:end], pixels.Pix[i:end]) {
+				g.err = &captureMapError{"erase mode highlighted plain floor"}
+				return
+			}
 		}
 	}
 	if c.mode == "wall-corners" {

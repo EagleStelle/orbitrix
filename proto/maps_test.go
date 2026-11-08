@@ -13,7 +13,10 @@ func TestMapMessagesRoundTrip(t *testing.T) {
 	circuit.Cells[24] = core.MapCell{Circuit: core.Toggle, Group: 1}
 	circuit.Cells[32] = core.MapCell{Circuit: core.Door, Group: 1, InitiallyOpen: true}
 	circuit.Edges = []core.MapEdge{{A: 8, B: 9, Kind: core.Gate, Group: 1, InitiallyOpen: true}, {A: 24, B: 25, Kind: core.BreakableBarrier}}
-	for _, m := range append(core.StarterMaps(), circuit) {
+	portals := core.NewMap(7, 7)
+	portals.Cells[16], portals.Cells[32] = core.MapCell{Feature: core.Portal, Group: 1}, core.MapCell{Feature: core.Portal, Group: 1}
+	portals.Cells[16].PortalMode, portals.Cells[32].PortalMode = core.PortalVertical, core.PortalVertical
+	for _, m := range append(core.StarterMaps(), circuit, portals) {
 		g, err := core.NewGameWithMap(m, 2)
 		if err != nil {
 			t.Fatal(err)

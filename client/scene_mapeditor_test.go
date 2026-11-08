@@ -151,8 +151,8 @@ func TestEditorPaintStrokeKeepsValidationCurrent(t *testing.T) {
 				a.in.x, a.in.y = ox+6.5*k, oy+6.5*k
 			}
 			step()
-			if tool == brushLink && (e.pair != -1 || len(e.issues) != 0) {
-				t.Fatal("completing a Link pair must clear its issue during the stroke")
+			if (tool == brushLink || tool == brushPortal) && (e.pair != -1 || len(e.issues) != 0) {
+				t.Fatal("completing a pair must clear its issue during the stroke")
 			}
 			if editorBrushes[tool].Edge >= 0 && e.m.Edges[0].Kind == core.EdgeKind(editorBrushes[tool].Edge) {
 				t.Fatal("replacing an edge must update its validation even when the edge count is unchanged")
