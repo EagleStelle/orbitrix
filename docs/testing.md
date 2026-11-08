@@ -51,6 +51,10 @@ ORBITRIX_PERF_SECONDS=60 go test -tags perf -run TestPerf -v ./client
 
 A case fails when its 99th-percentile frame gap is over 25 ms, and an idle screen fails when it redraws more than about twice a second. `ORBITRIX_PERF_MARKS=1` turns colorblind marks on, and `ORBITRIX_PERF_NOVSYNC=1` measures headroom without vsync. It opens a window, so it doesn't run in CI.
 
+The circuit cases use 40×40 boards, twelve bots, and 361 switches, 361 Doors and 361 Gates across all twelve groups, at desktop and phone render sizes. Set `ORBITRIX_PERF_CASE=circuits` to run just those cases. Phone dimensions on a desktop check rendering load; frame timing still needs checking on real browser and Android hardware.
+
+`BenchmarkDenseCircuitTopology` measures both repeated and changing connection states on a 40×40 circuit map. `TestTopologyCacheIsolationAndEviction` checks cache limits, destroyed walls, independent search copies and concurrent cache access. Run the latter with the race detector where a C compiler is available.
+
 ## Bot tournament and matches
 
 The tournament plays every pair of bots and prints win rates and move times:

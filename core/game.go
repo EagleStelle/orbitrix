@@ -30,6 +30,7 @@ type Game struct {
 	CircuitOn     [256]bool // polarity: outputs reverse their individual starting states
 	Pressed       []uint8
 	TerrainEvents []TerrainEvent // events in the last recorded move
+	topology      *mapTopology   // immutable designs and bounded, shared connection tables
 
 	// Exploded counts the cell explosions in the last move: a deterministic measure of its cost, which the AI's
 	// budget charges for. It isn't part of the game state (not hashed or snapshotted).
@@ -90,6 +91,7 @@ func (g *Game) CopyFrom(src *Game) {
 	g.Players, g.Turn, g.Played, g.Moves, g.Winner = src.Players, src.Turn, src.Played, src.Moves, src.Winner
 	g.Orbs, g.Exploded, g.unstable = src.Orbs, src.Exploded, src.unstable
 	g.Map, g.CircuitOn = src.Map, src.CircuitOn
+	g.topology = src.topology
 	g.Durability = append(g.Durability[:0], src.Durability...)
 	g.Pressed = append(g.Pressed[:0], src.Pressed...)
 	g.TerrainEvents = g.TerrainEvents[:0]

@@ -96,7 +96,6 @@ type Board struct {
 	badge       *text.GoTextFace
 
 	mapImg      *ebiten.Image // physical map pieces, rebuilt only when their appearance changes
-	mapLocks    *ebiten.Image // closed-Door icons above trapped orbs
 	mapTheme    *ui.Palette
 	mapRevision uint64
 	mapMarks    bool
@@ -379,23 +378,25 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 		}
 		b.flush(dst, b.OrbImg)
 	}
-	if b.State.Replay != nil && b.mapLocks != nil {
-		var op ebiten.DrawImageOptions
-		op.GeoM.Translate(b.ox, b.oy)
-		dst.DrawImage(b.mapLocks, &op)
+	if b.State.Replay != nil {
+		for i, c := range b.State.Replay.Map.Cells {
+			if c.Circuit == core.Door && b.State.Count[i] > 0 && !b.State.Geo.Playable(i) {
+				x, y := b.Centre(i)
+				cell := b.base * b.k
+				drawMapSprite(dst, sc, ui.Rect{X: x - cell/2, Y: y - cell/2, W: cell, H: cell}, mapSpriteKey{group: c.Group, lock: true})
+			}
+		}
 	}
 }
 
 func (b *Board) releaseMapLayers() {
-	for _, img := range [2]*ebiten.Image{b.mapImg, b.mapLocks} {
-		if img != nil {
-			img.Deallocate()
-		}
+	if b.mapImg != nil {
+		b.mapImg.Deallocate()
 	}
-	b.mapImg, b.mapLocks = nil, nil
+	b.mapImg = nil
 }
 
-// Physical pieces and foreground locks are cached separately around the orb batch.
+// Only visible terrain changes rebuild the physical layer; locks use shared sprites above orbs.
 func (b *Board) drawMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 	if b.mapImg == nil || b.mapTheme != sc || b.mapRevision != b.State.revision || b.mapMarks != b.marks {
 		cols, rows := b.ScreenSize()
@@ -406,9 +407,6 @@ func (b *Board) drawMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 			b.mapImg = ebiten.NewImage(max(1, w), max(1, h))
 		} else {
 			b.mapImg.Clear()
-			if b.mapLocks != nil {
-				b.mapLocks.Clear()
-			}
 		}
 		b.renderMapLayer(b.mapImg, sc)
 		b.mapTheme, b.mapRevision = sc, b.State.revision
@@ -423,26 +421,6 @@ func (b *Board) renderMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 	g := b.State.Replay
 	DrawMapArt(dst, sc, MapState{Map: g.Map, Durability: g.Durability, Pressed: g.Pressed, CircuitOn: g.CircuitOn, Owner: b.State.Owner, Count: b.State.Count},
 		MapTransform{Cell: b.base * b.k, Turned: b.Turned}, false, b.marks)
-	lockInk := ui.Palettes[ui.Dark].Tile
-	if ui.Luminance(sc.Tile) < .25 {
-		lockInk = ui.Palettes[ui.Light].Tile
-	}
-	for i, c := range g.Map.Cells {
-		if c.Circuit != core.Door || b.State.Count[i] == 0 || b.State.Geo.Playable(i) {
-			continue
-		}
-		if b.mapLocks == nil {
-			b.mapLocks = ebiten.NewImage(b.mapImg.Bounds().Dx(), b.mapImg.Bounds().Dy())
-		}
-		x, y := b.Centre(i)
-		cell := b.base * b.k
-		_, inner, _, _, width := mapDeviceGeometry(ui.Rect{X: x - b.ox - cell/2, Y: y - b.oy - cell/2, W: cell, H: cell})
-		path := mapDoorLockPath(inner, width, false)
-		ink := PartnerColor(sc, c.Group)
-		// A solid keyline preserves contrast where the lock crosses neutral orbs.
-		ui.StrokePath(b.mapLocks, path, width*1.5, ink)
-		ui.StrokePath(b.mapLocks, path, width, lockInk)
-	}
 }
 
 // Orb queues a player's orb, or a floor-colored, unmarked trapped orb for NoOwner.

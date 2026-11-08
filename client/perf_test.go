@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,6 +197,19 @@ func TestPerf(t *testing.T) {
 	const phoneDPR = 2.625 // a 1080×2400 phone, drawn at maxScale like Layout does
 	phoneW, phoneH, phoneU := 1080/phoneDPR, 2400/phoneDPR, min(phoneDPR, maxScale)
 	game := func(a *app) scene { return denseGame(a) }
+	circuits := func(a *app) scene {
+		m := core.NewMap(40, 40)
+		for x := 1; x+1 < m.Cols; x += 2 {
+			for y := 1; y+1 < m.Rows; y += 2 {
+				group := uint8((x/2*7+y/2)%core.MaxMapGroups + 1)
+				m.Cells[x*m.Rows+y] = core.MapCell{Circuit: core.Latch + core.CircuitKind((x/2+y/2)%3), Group: group}
+				m.Cells[(x+1)*m.Rows+y] = core.MapCell{Circuit: core.Door, Group: group, InitiallyOpen: true}
+				m.Edges = append(m.Edges, core.MapEdge{A: x*m.Rows + y + 1, B: (x+1)*m.Rows + y + 1, Kind: core.Gate, Group: group, InitiallyOpen: true})
+			}
+		}
+		a.set.Map = &m
+		return denseGame(a)
+	}
 	paused := func(a *app) scene { p := denseGame(a); p.paused = true; return p }
 	results := func(a *app) scene {
 		p := denseGame(a)
@@ -210,6 +224,8 @@ func TestPerf(t *testing.T) {
 	cases := []perfCase{
 		{"game 40×40, 12 AIs", 1920, 1080, 1, false, game},
 		{"game 40×40, 12 AIs, phone", phoneW, phoneH, phoneU, false, game},
+		{"circuits 40×40, 12 AIs", 1920, 1080, 1, false, circuits},
+		{"circuits 40×40, 12 AIs, phone", phoneW, phoneH, phoneU, false, circuits},
 		{"game paused, phone", phoneW, phoneH, phoneU, false, paused},
 		{"results, phone", phoneW, phoneH, phoneU, false, results},
 		{"setup idle, phone", phoneW, phoneH, phoneU, false, setup},
@@ -218,6 +234,12 @@ func TestPerf(t *testing.T) {
 		{"setup 12 players 40×40 scrolling, phone", phoneW, phoneH, phoneU, true, setup},
 		{"home", 1920, 1080, 1, false, home},
 		{"home, phone", phoneW, phoneH, phoneU, false, home},
+	}
+	if filter := os.Getenv("ORBITRIX_PERF_CASE"); filter != "" {
+		cases = slices.DeleteFunc(cases, func(c perfCase) bool { return !strings.Contains(c.name, filter) })
+		if len(cases) == 0 {
+			t.Fatalf("no performance case matches %q", filter)
+		}
 	}
 	n := secs * 1000 // room for 1000 FPS, so recording never allocates mid-run
 	g := &perfGame{cases: cases, stats: make([]perfStats, len(cases)), secs: secs}

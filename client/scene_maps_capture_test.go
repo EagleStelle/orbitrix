@@ -507,7 +507,7 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 					for dy := -2; dy <= 2; dy++ {
 						got := pixels.RGBAAt(int(x)+dx, int(y)+dy)
 						if got != a.sc.Dim {
-							g.err = &captureMapError{"wall join contains an antialias seam"}
+							g.err = &captureMapError{fmt.Sprintf("%s: wall join at (%d, %d) is %v, want %v", c.name, int(x)+dx, int(y)+dy, got, a.sc.Dim)}
 							return
 						}
 					}

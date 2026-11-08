@@ -30,16 +30,15 @@ func CircuitOpen(initiallyOpen, reversed bool) bool { return initiallyOpen != re
 func (g *Game) circuitInputs(wave int, record bool) bool {
 	var next [MaxSize * MaxSize]uint8
 	var exploding [MaxSize * MaxSize]bool
-	var flips, last [256]int
+	var flips, last [MaxMapGroups + 1]int
 	if wave >= 0 {
 		for _, cell := range g.cur {
 			exploding[cell] = true
 		}
 	}
-	for i, c := range g.Map.Cells {
-		if !c.Circuit.IsSwitch() {
-			continue
-		}
+	for _, cell := range g.topology.switches {
+		i := int(cell)
+		c := g.Map.Cells[i]
 		pressed := g.Pressed[i]
 		switch c.Circuit {
 		case Latch:
@@ -66,10 +65,9 @@ func (g *Game) circuitInputs(wave int, record bool) bool {
 			last[c.Group] = i
 		}
 	}
-	for i, c := range g.Map.Cells {
-		if !c.Circuit.IsSwitch() {
-			continue
-		}
+	for _, cell := range g.topology.switches {
+		i := int(cell)
+		c := g.Map.Cells[i]
 		// Resetting a latch arms it; it is not an additional circuit input.
 		if c.Circuit == Latch && (flips[c.Group] > 1 || flips[c.Group] == 1 && last[c.Group] != i) {
 			next[i] = 0

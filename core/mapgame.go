@@ -31,6 +31,7 @@ func NewGameWithMap(m MapDefinition, players int) (*Game, error) {
 	}
 	m = m.Clone()
 	g.Map = &m
+	g.topology = newMapTopology(&m)
 	g.Durability, g.Pressed = make([]uint8, len(m.Cells)), make([]uint8, len(m.Cells))
 	for i, c := range m.Cells {
 		if c.Terrain == BreakableWall {
@@ -60,9 +61,18 @@ func (g *Game) TerrainAt(i int) Terrain {
 // mapGeometry produces an immutable topology. Search copies can share it safely;
 // a later Gate change or destruction installs a new topology only in that game.
 func (g *Game) mapGeometry() *Geometry {
+	t := g.topology
+	key := g.topologyKey()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, entry := range t.cache {
+		if entry.geo != nil && entry.key == key {
+			return entry.geo
+		}
+	}
 	m, n := g.Map, len(g.Map.Cells)
 	geo := &Geometry{Cols: m.Cols, Rows: m.Rows, Cap: make([]uint8, n), Degree: make([]uint8, n), Nbr: make([]int16, n*MaxConnections)}
-	blocked := make([]uint8, n*4)
+	var blocked [MaxSize * MaxSize * 4]uint8
 	for _, e := range m.Edges {
 		if e.Kind == Gate && CircuitOpen(e.InitiallyOpen, g.CircuitOn[e.Group]) {
 			continue
@@ -80,23 +90,6 @@ func (g *Game) mapGeometry() *Geometry {
 		}
 		blocked[4*e.A+d], blocked[4*e.B+(d^1)] = 1, 1
 	}
-	var first [256]int
-	for i := range first {
-		first[i] = -1
-	}
-	links := make([]int16, n)
-	for i := range links {
-		links[i] = -1
-	}
-	for i, c := range m.Cells {
-		if c.Feature == Link {
-			if j := first[c.Group]; j >= 0 {
-				links[i], links[j] = int16(j), int16(i)
-			} else {
-				first[c.Group] = i
-			}
-		}
-	}
 	for i, c := range m.Cells {
 		if g.TerrainAt(i) != Floor {
 			continue
@@ -113,8 +106,8 @@ func (g *Game) mapGeometry() *Geometry {
 				geo.Degree[i]++
 			}
 		}
-		if links[i] >= 0 {
-			geo.Nbr[MaxConnections*i+int(geo.Degree[i])] = links[i]
+		if t.links[i] >= 0 {
+			geo.Nbr[MaxConnections*i+int(geo.Degree[i])] = t.links[i]
 			geo.Degree[i]++
 		}
 		geo.Cap[i] = geo.Degree[i]
@@ -122,35 +115,40 @@ func (g *Game) mapGeometry() *Geometry {
 			geo.Cap[i]++
 		}
 	}
+	t.cache[t.next] = topologyEntry{key: key, geo: geo}
+	t.next = (t.next + 1) % len(t.cache)
 	return geo
 }
 
 func (g *Game) terrainWave(wave int, record bool) {
 	var damage [MaxSize * MaxSize]uint8
 	changed := false
-	for _, e := range g.cur {
-		i := int(e)
-		x, y := g.Geo.Coords(i)
-		for _, d := range [4][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
-			nx, ny := x+d[0], y+d[1]
-			if nx >= 0 && ny >= 0 && nx < g.Geo.Cols && ny < g.Geo.Rows {
-				j := g.Geo.Index(nx, ny)
-				if g.Map.Cells[j].Terrain == BreakableWall && g.Durability[j] > 0 {
-					damage[j]++
+	if len(g.topology.walls) != 0 {
+		for _, e := range g.cur {
+			i := int(e)
+			x, y := g.Geo.Coords(i)
+			for _, d := range [4][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+				nx, ny := x+d[0], y+d[1]
+				if nx >= 0 && ny >= 0 && nx < g.Geo.Cols && ny < g.Geo.Rows {
+					j := g.Geo.Index(nx, ny)
+					if g.Map.Cells[j].Terrain == BreakableWall && g.Durability[j] > 0 {
+						damage[j]++
+					}
 				}
 			}
 		}
-	}
-	for i, d := range damage[:len(g.Count)] {
-		if d > 0 {
-			if d >= g.Durability[i] {
-				g.Durability[i] = 0
-				changed = true
-			} else {
-				g.Durability[i] -= d
-			}
-			if record {
-				g.TerrainEvents = append(g.TerrainEvents, TerrainEvent{Wave: wave, Cell: i, Durability: g.Durability[i]})
+		for _, cell := range g.topology.walls {
+			i, d := int(cell), damage[cell]
+			if d > 0 {
+				if d >= g.Durability[i] {
+					g.Durability[i] = 0
+					changed = true
+				} else {
+					g.Durability[i] -= d
+				}
+				if record {
+					g.TerrainEvents = append(g.TerrainEvents, TerrainEvent{Wave: wave, Cell: i, Durability: g.Durability[i]})
+				}
 			}
 		}
 	}

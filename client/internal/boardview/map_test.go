@@ -32,6 +32,66 @@ func TestReservoirColorFollowsDisplayedOccupancy(t *testing.T) {
 	}
 }
 
+func TestMapRevisionTracksArtChanges(t *testing.T) {
+	m := core.NewMap(5, 5)
+	m.Cells[12].Feature = core.Reservoir
+	m.Cells[18] = core.MapCell{Circuit: core.Hold, Group: 1}
+	m.Cells[8] = core.MapCell{Circuit: core.Door, Group: 1, InitiallyOpen: true}
+	g, err := core.NewGameWithMap(m, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := NewView(g)
+	revision := v.revision
+	v.Place(0, 0)
+	v.Count[0] = v.Geo.Cap[0]
+	v.Launch(core.Wave{0})
+	v.Land(core.Wave{0})
+	if v.revision != revision {
+		t.Fatal("ordinary placement or wave invalidates unchanged map art")
+	}
+	v.Place(12, 0)
+	if v.revision == revision {
+		t.Fatal("occupying a Reservoir did not change its ink")
+	}
+	revision = v.revision
+	v.Place(12, 0)
+	if v.revision != revision {
+		t.Fatal("same-owner Reservoir placement invalidates its unchanged ink")
+	}
+	v.Count[11], v.Owner[11] = v.Geo.Cap[11], 1
+	v.Launch(core.Wave{11})
+	v.Land(core.Wave{11})
+	if v.revision == revision || v.Owner[12] != 1 {
+		t.Fatal("capturing a Reservoir did not invalidate its old ink")
+	}
+	revision = v.revision
+	v.Events = []core.TerrainEvent{{Wave: -1, Cell: 18, Switch: true, Pressed: true}, {Wave: -1, Cell: -1, Group: 1, Open: true}}
+	v.Place(18, 0)
+	if v.revision == revision || v.Geo.Playable(8) {
+		t.Fatal("circuit art or Door topology did not update")
+	}
+}
+
+func TestGateEndpointIndexMatchesScan(t *testing.T) {
+	m := core.NewMap(40, 40)
+	for x := 0; x < m.Cols; x++ {
+		for y := 0; y+1 < m.Rows; y++ {
+			m.Edges = append(m.Edges, core.MapEdge{A: x*m.Rows + y, B: x*m.Rows + y + 1, Kind: core.Gate, Group: uint8(x%core.MaxMapGroups + 1), InitiallyOpen: y%5 == 0})
+		}
+	}
+	shared := mapGateVertices(&m)
+	for i, e := range m.Edges {
+		x0, y0, x1, y1, _ := MapArtEdge(&m, e)
+		for _, point := range [2][2]float64{{x0, y0}, {x1, y1}} {
+			got := shared[int(point[0])*(m.Rows+1)+int(point[1])]&mapGateBit(e) != 0
+			if got != mapArtGateContinuesAt(&m, m.Edges, i, point[0], point[1]) {
+				t.Fatalf("edge %d endpoint %v changed its open Gate cap", i, point)
+			}
+		}
+	}
+}
+
 func TestMapGroupsUseExactOrbColors(t *testing.T) {
 	for mode := range ui.Palettes {
 		sc := &ui.Palettes[mode]

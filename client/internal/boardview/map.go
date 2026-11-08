@@ -180,6 +180,11 @@ func DrawMapWall(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, terrain core.Terr
 	if terrain == core.Wall {
 		return
 	}
+	drawMapSprite(dst, sc, r, mapSpriteKey{cracks: true, durability: durability})
+}
+
+func renderMapCracks(dst *ebiten.Image, r ui.Rect, durability uint8, ink color.RGBA) {
+	k := r.W
 	spread := 1.0
 	if durability == 1 {
 		spread = 1.24
@@ -205,7 +210,7 @@ func DrawMapWall(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, terrain core.Terr
 			}
 		}
 		p.Close()
-		ui.FillPath(dst, p, sc.Ground)
+		ui.FillPath(dst, p, ink)
 	}
 }
 
@@ -225,28 +230,33 @@ func drawMapWallCorners(dst *ebiten.Image, sc *ui.Palette, state *MapState, tr M
 					g := tr.Cell * TileGutter
 					ui.FillRound(dst, ui.Rect{X: x - g/2 - 1, Y: y - g/2 - 1, W: g + 2, H: g + 2}, 0, mapArtWallColor(sc, terrain[corner]))
 				} else if !mapArtSolid(terrain[corner]) {
-					x, y := float64(gx)-sx*TileGutter, float64(gy)-sy*TileGutter
-					px, py := tr.Point(m.Rows, x, y)
-					ax, ay := tr.Point(m.Rows, x, y+sy*.14)
-					bx, by := tr.Point(m.Rows, x+sx*.14, y)
-					p := &mapPath
-					p.Reset()
-					// Extend into the existing arms to avoid antialiased seams at the patch boundary.
-					overlap := .75 / tr.Cell
-					ix, iy := tr.Point(m.Rows, x-sx*overlap, y-sy*overlap)
-					ex, ey := tr.Point(m.Rows, x-sx*overlap, y+sy*.14)
-					fx, fy := tr.Point(m.Rows, x+sx*.14, y-sy*overlap)
-					p.MoveTo(float32(ix), float32(iy))
-					p.LineTo(float32(ex), float32(ey))
-					p.LineTo(float32(ax), float32(ay))
-					p.QuadTo(float32(px), float32(py), float32(bx), float32(by))
-					p.LineTo(float32(fx), float32(fy))
-					p.Close()
-					ui.FillPath(dst, p, mapArtWallColor(sc, terrain[(corner+2)%4]))
+					x, y := tr.Point(m.Rows, float64(gx), float64(gy))
+					rotation := corner
+					if tr.Turned {
+						rotation = (rotation + 1) % 4
+					}
+					drawMapSprite(dst, sc, ui.Rect{X: x - tr.Cell/2, Y: y - tr.Cell/2, W: tr.Cell, H: tr.Cell},
+						mapSpriteKey{terrain: terrain[(corner+2)%4], corner: uint8(rotation + 1)})
 				}
 			}
 		}
 	}
+}
+
+func renderMapWallCorner(dst *ebiten.Image, r ui.Rect, ink color.RGBA, corner int) {
+	d := [4][2]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}}[corner]
+	sx, sy := d[0], d[1]
+	x, y := r.Cx()-sx*TileGutter*r.W, r.Cy()-sy*TileGutter*r.W
+	p := &mapPath
+	p.Reset()
+	// Extend into both arms so antialiasing cannot leave a seam.
+	p.MoveTo(float32(x-sx*.75), float32(y-sy*.75))
+	p.LineTo(float32(x-sx*.75), float32(y+sy*.14*r.W))
+	p.LineTo(float32(x), float32(y+sy*.14*r.W))
+	p.QuadTo(float32(x), float32(y), float32(x+sx*.14*r.W), float32(y))
+	p.LineTo(float32(x+sx*.14*r.W), float32(y-sy*.75))
+	p.Close()
+	ui.FillPath(dst, p, ink)
 }
 
 func mapArtWallVertex(state *MapState, gx, gy int) (terrain [4]core.Terrain, count int) {
@@ -260,7 +270,7 @@ func mapArtWallVertex(state *MapState, gx, gy int) (terrain [4]core.Terrain, cou
 	return
 }
 
-func drawMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, r ui.Rect) {
+func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, r ui.Rect) {
 	x, y := r.Cx(), r.Cy()
 	body, _, radius, _, width := mapDeviceGeometry(r)
 	switch feature {
@@ -279,7 +289,7 @@ func drawMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, gro
 	}
 }
 
-func drawMapCircuit(dst *ebiten.Image, sc *ui.Palette, component core.CircuitKind, group uint8, r ui.Rect, pressed bool) {
+func renderMapCircuit(dst *ebiten.Image, sc *ui.Palette, component core.CircuitKind, group uint8, r ui.Rect, pressed bool) {
 	c := PartnerColor(sc, group)
 	body, inner, radius, innerRadius, width := mapDeviceGeometry(r)
 	switch component {
@@ -439,7 +449,7 @@ func DrawMapEdgePiece(dst *ebiten.Image, sc *ui.Palette, kind core.EdgeKind, gro
 
 func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransform, drawFloor, marks bool) {
 	m := state.Map
-	if m == nil || m.Rows <= 0 || m.Cols <= 0 || tr.Cell <= 0 {
+	if m == nil || m.Rows <= 0 || m.Cols <= 0 || m.Rows > core.MaxSize || m.Cols > core.MaxSize || tr.Cell <= 0 {
 		return
 	}
 	for i, cfg := range m.Cells {
@@ -477,6 +487,7 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		drawMapCircuit(dst, sc, cfg.Circuit, cfg.Group, r, pressed)
 	}
 	drawMapWallCorners(dst, sc, &state, tr)
+	shared := mapGateVertices(m)
 	for edgeIndex, e := range m.Edges {
 		gx0, gy0, gx1, gy1, ok := MapArtEdge(m, e)
 		if !ok {
@@ -489,11 +500,45 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		open := e.Kind == core.Gate && core.CircuitOpen(e.InitiallyOpen, state.CircuitOn[e.Group])
 		openStart, openEnd := true, true
 		if open {
-			openStart = !mapArtGateContinuesAt(m, m.Edges, edgeIndex, gx0, gy0)
-			openEnd = !mapArtGateContinuesAt(m, m.Edges, edgeIndex, gx1, gy1)
+			if e.Group <= core.MaxMapGroups {
+				bit := mapGateBit(e)
+				openStart = shared[int(gx0)*(m.Rows+1)+int(gy0)]&bit == 0
+				openEnd = shared[int(gx1)*(m.Rows+1)+int(gy1)]&bit == 0
+			} else {
+				openStart = !mapArtGateContinuesAt(m, m.Edges, edgeIndex, gx0, gy0)
+				openEnd = !mapArtGateContinuesAt(m, m.Edges, edgeIndex, gx1, gy1)
+			}
 		}
 		drawMapEdgePieceWithEnds(dst, sc, e.Kind, e.Group, open, openStart, openEnd, x0, y0, x1, y1, tr.Cell, marks)
 	}
+}
+
+func mapGateBit(e core.MapEdge) uint32 {
+	bit := uint32(1) << (2 * e.Group)
+	if e.InitiallyOpen {
+		bit <<= 1
+	}
+	return bit
+}
+
+// Count matching endpoints once, rather than scanning all edges for every open Gate.
+func mapGateVertices(m *core.MapDefinition) (shared [(core.MaxSize + 1) * (core.MaxSize + 1)]uint32) {
+	var seen [len(shared)]uint32
+	for _, e := range m.Edges {
+		if e.Kind != core.Gate || e.Group > core.MaxMapGroups {
+			continue
+		}
+		x0, y0, x1, y1, ok := MapArtEdge(m, e)
+		if !ok {
+			continue
+		}
+		bit := mapGateBit(e)
+		for _, v := range [2]int{int(x0)*(m.Rows+1) + int(y0), int(x1)*(m.Rows+1) + int(y1)} {
+			shared[v] |= seen[v] & bit
+			seen[v] |= bit
+		}
+	}
+	return
 }
 
 func DrawMapBrush(dst *ebiten.Image, sc *ui.Palette, brush Brush, r ui.Rect, group uint8, pressed, marks bool) {

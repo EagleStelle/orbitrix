@@ -44,7 +44,7 @@ func (v *view) sync(g *core.Game) {
 }
 
 func (v *view) Place(cell int, p int8) []core.TerrainEvent {
-	v.revision++
+	v.reservoirChanged(cell, p)
 	v.wave = 0
 	v.Owner[cell] = p
 	v.Count[cell]++
@@ -54,7 +54,6 @@ func (v *view) Place(cell int, p int8) []core.TerrainEvent {
 // launch takes one orb per connection out of every cell in w; a Reservoir keeps
 // its reserve. The launched orbs are in flight until land.
 func (v *view) Launch(w core.Wave) {
-	v.revision++
 	v.from = v.from[:0]
 	for _, e := range w {
 		v.from = append(v.from, v.Owner[e])
@@ -67,9 +66,9 @@ func (v *view) Launch(w core.Wave) {
 
 // land gives one orb to each neighbour of every cell in w, capturing it for the launching cell's owner.
 func (v *view) Land(w core.Wave) []core.TerrainEvent {
-	v.revision++
 	for k, e := range w {
 		for _, n := range v.Geo.Neighbours(int(e)) {
+			v.reservoirChanged(int(n), v.from[k])
 			v.Owner[n] = v.from[k]
 			v.Count[n]++
 		}
@@ -77,6 +76,12 @@ func (v *view) Land(w core.Wave) []core.TerrainEvent {
 	events := v.applyTerrain(v.wave)
 	v.wave++
 	return events
+}
+
+func (v *view) reservoirChanged(cell int, owner int8) {
+	if v.Replay != nil && v.Replay.Map.Cells[cell].Feature == core.Reservoir && (v.Count[cell] == 0 || v.Owner[cell] != owner) {
+		v.revision++
+	}
 }
 
 func (v *view) applyTerrain(wave int) []core.TerrainEvent {
