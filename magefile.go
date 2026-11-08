@@ -205,11 +205,13 @@ func zipFiles(name string, files map[string][]byte) error {
 // Web builds the browser game into dist/web: game.wasm, its loader page and the landing page, under content-hashed
 // names with .gz and .br copies.
 func Web() error {
-	dir := filepath.Join(out, "web")
-	// webdist renames files after their hash, so old builds would pile up.
-	if err := os.RemoveAll(dir); err != nil {
-		return err
-	}
+	mg.Deps(webSource)
+	return sh.RunV("go", "run", "./cmd/webdist", "-src", filepath.Join(out, "web-src"), filepath.Join(out, "web"))
+}
+
+// webSource is shared by website and native LAN packaging within one Mage run.
+func webSource() error {
+	dir := filepath.Join(out, "web-src")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -223,33 +225,47 @@ func Web() error {
 	}
 	// wasm_exec.js must match the Go version that built game.wasm.
 	for _, f := range []string{filepath.Join(goroot, "lib", "wasm", "wasm_exec.js"), "web/index.html", "web/landing.html", "client/fonts/Unbounded.ttf"} {
-		if err := sh.Copy(filepath.Join(dir, filepath.Base(f)), f); err != nil {
+		dst := filepath.Join(dir, filepath.Base(f))
+		// The toolchain's wasm_exec.js is read-only, and Copy preserves that on Windows.
+		if err := os.Chmod(dst, 0o644); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err := sh.Copy(dst, f); err != nil {
 			return err
 		}
 	}
-	return sh.RunV("go", "run", "./cmd/webdist", dir)
+	return nil
 }
 
 // lanWeb bundles the current browser game into native clients so their LAN rooms can serve it offline.
 func lanWeb() error {
-	mg.Deps(Web)
+	mg.Deps(webSource)
+	build := filepath.Join(out, "lan-web")
+	if err := sh.RunV("go", "run", "./cmd/webdist", "-gzip-only", "-src", filepath.Join(out, "web-src"), build); err != nil {
+		return err
+	}
 	dir := filepath.Join("server", "lan", "web")
 	old, err := filepath.Glob(filepath.Join(dir, "*.gz"))
 	if err != nil {
 		return err
 	}
-	for _, name := range old {
-		if err := os.Remove(name); err != nil {
-			return err
-		}
-	}
-	files, err := filepath.Glob(filepath.Join(out, "web", "*.gz"))
+	files, err := filepath.Glob(filepath.Join(build, "*.gz"))
 	if err != nil {
 		return err
 	}
+	current := map[string]bool{}
 	for _, name := range files {
-		if err := sh.Copy(filepath.Join(dir, filepath.Base(name)), name); err != nil {
+		dst := filepath.Join(dir, filepath.Base(name))
+		if err := sh.Copy(dst, name); err != nil {
 			return err
+		}
+		current[dst] = true
+	}
+	for _, name := range old {
+		if !current[name] {
+			if err := os.Remove(name); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -46,7 +46,9 @@ Mage and `ebitenmobile` are pinned in `go.mod` as tools, so `go tool` runs them 
 | `push` | The same image, pushed to Docker Hub (needs `docker login`) |
 | `all` | Every target above except `push`, in that order |
 
-Native build targets first build the web game and copy its gzip files into `server/lan/web/` for embedding. Generated files there are ignored by git. A plain `go run` or `go build` from a fresh checkout still plays native LAN games but cannot serve browsers; use Mage to include that feature. The browser build excludes the embedded bundle.
+Native build targets first build the web game, package gzip-only assets in `dist/lan-web/`, and copy them into `server/lan/web/` for embedding. They skip Brotli, which LAN browsers do not use. Generated files there are ignored by git. A plain `go run` or `go build` from a fresh checkout still plays native LAN games but cannot serve browsers; use Mage to include that feature. The browser build excludes the embedded bundle.
+
+Website and native packaging share raw inputs in `dist/web-src/`. Packaging reuses compressed files when their input content, compression settings and encoder versions match, recreates missing files, and removes obsolete compressed files after a successful build. Cache metadata lives beside each output folder (`dist/web.cache.json` and `dist/lan-web.cache.json`); deleting `dist/` clears it. `web` still produces both gzip and Brotli for the website.
 
 ### Environment variables
 
