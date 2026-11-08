@@ -108,7 +108,7 @@ func TestEditorPaintStrokeKeepsValidationCurrent(t *testing.T) {
 			} else if tool == brushErase {
 				m.Cells[40].Feature = core.Reservoir
 			}
-			if editorBrushes[tool].Feature.IsSwitch() {
+			if editorBrushes[tool].Circuit.IsSwitch() {
 				m.Edges = []core.MapEdge{{A: 30, B: 31, Kind: core.Gate, Group: 1}}
 			}
 			e := newMapEditor(a, newHome(), m, nil)
@@ -229,7 +229,7 @@ func TestCustomMapViewReplaysTopology(t *testing.T) {
 					v.Launch(w)
 					v.Land(w)
 				}
-				if !slices.Equal(v.Count, g.Count) || !slices.Equal(v.Owner, g.Owner) || !slices.Equal(v.Geo.Cap, g.Geo.Cap) || !slices.Equal(v.Replay.Durability, g.Durability) || !slices.Equal(v.Replay.Pressed, g.Pressed) || v.Replay.OpenGates != g.OpenGates {
+				if !slices.Equal(v.Count, g.Count) || !slices.Equal(v.Owner, g.Owner) || !slices.Equal(v.Geo.Cap, g.Geo.Cap) || !slices.Equal(v.Replay.Durability, g.Durability) || !slices.Equal(v.Replay.Pressed, g.Pressed) || v.Replay.CircuitOn != g.CircuitOn {
 					t.Fatalf("replay differs at turn %d", turn)
 				}
 			}
@@ -329,7 +329,7 @@ func TestEditorToolsRemainReachable(t *testing.T) {
 	}
 }
 
-func TestEditorOneSwitchPerCircuit(t *testing.T) {
+func TestEditorMixedSwitchesPerCircuit(t *testing.T) {
 	a := setupTestApp(390, 844, 1, 2)
 	e := newMapEditor(a, newHome(), core.NewMap(9, 9), func(core.MapDefinition) error { return nil })
 	e.tool = brushLatch
@@ -337,10 +337,10 @@ func TestEditorOneSwitchPerCircuit(t *testing.T) {
 		t.Fatal("could not place first switch")
 	}
 	e.tool = brushToggle
-	if e.paint(20, 0, 0) || e.m.Cells[20].Feature.IsSwitch() {
-		t.Fatal("placed duplicate controller")
+	if !e.paint(20, 0, 0) || e.m.Cells[20].Circuit != core.Toggle {
+		t.Fatal("could not add another controller")
 	}
-	if !e.paint(10, 0, 0) || e.m.Cells[10].Feature != core.ToggleSwitch {
+	if !e.paint(10, 0, 0) || e.m.Cells[10].Circuit != core.Toggle {
 		t.Fatal("could not replace controller type in its own cell")
 	}
 }
@@ -420,9 +420,9 @@ func TestEditorIssueHighlightsTargetElements(t *testing.T) {
 		{"invalid circuit color", func(m *core.MapDefinition) {
 			m.Cells[40].Group, m.Edges[0].Group = 13, 13
 		}, []int{40}, []int{0}},
-		{"duplicate switches", func(m *core.MapDefinition) {
-			m.Cells[50] = core.MapCell{Feature: core.ToggleSwitch, Group: 1}
-		}, []int{40, 50}, []int{0}},
+		{"multiple switches", func(m *core.MapDefinition) {
+			m.Cells[50] = core.MapCell{Circuit: core.Toggle, Group: 1}
+		}, nil, nil},
 		{"barrier with group", func(m *core.MapDefinition) {
 			m.Cells[40], m.Edges[0].Kind = core.MapCell{}, core.Barrier
 		}, nil, []int{0}},
@@ -433,7 +433,7 @@ func TestEditorIssueHighlightsTargetElements(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := core.NewMap(9, 9)
-			m.Cells[40] = core.MapCell{Feature: core.Switch, Group: 1}
+			m.Cells[40] = core.MapCell{Circuit: core.Latch, Group: 1}
 			m.Edges = []core.MapEdge{{A: 30, B: 31, Kind: core.Gate, Group: 1}}
 			valid := m.Clone()
 			tt.edit(&m)
@@ -471,7 +471,7 @@ func TestEditorAllowsBreakableEnclosureAndHighlightsUnreachableGate(t *testing.T
 		}
 	}
 	controller := 4*m.Rows + 4
-	m.Cells[controller] = core.MapCell{Feature: core.Switch, Group: 1}
+	m.Cells[controller] = core.MapCell{Circuit: core.Latch, Group: 1}
 	m.Edges = []core.MapEdge{{A: m.Rows + 4, B: m.Rows + 5, Kind: core.Gate, Group: 1}}
 	e := newMapEditor(nil, nil, m, nil)
 	s := settings{Map: &e.m, Players: 2}
@@ -775,7 +775,7 @@ func TestEditorPortraitHorizontalOverflow(t *testing.T) {
 		t.Fatal("last toolbar action is unreachable")
 	}
 	// Auto-reveal and wheel work on the independent element strip.
-	e.selectTool(brushHold)
+	e.selectTool(brushDoor)
 	e.layout(a)
 	if !containsRect(e.dockScroll.Viewport, e.palette[len(e.palette)-1]) {
 		t.Fatal("selected element is not revealed")

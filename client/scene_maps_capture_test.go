@@ -30,6 +30,10 @@ type mapCaptureCase struct {
 }
 
 var mapCaptureCases = []mapCaptureCase{
+	{"circuit-door-desktop", 1040, 640, false, false, false, "", brushDoor},
+	{"circuit-door-mobile", 390, 844, true, false, false, "initial-open", brushDoor},
+	{"circuit-gate-small", 320, 640, false, false, false, "initial-open", brushGate},
+	{"circuit-door-landscape", 568, 320, true, false, false, "", brushDoor},
 	{"editor-place-edge", 1040, 640, false, false, false, "erase-edge", brushGate},
 	{"editor-erase-floor", 390, 844, true, false, false, "erase-floor", brushErase},
 	{"editor-overflow-end", 320, 640, true, false, false, "overflow-end", brushHold},
@@ -105,10 +109,13 @@ func editorShowcaseMap() core.MapDefinition {
 	}
 	m.Cells[2*m.Rows+2] = core.MapCell{Feature: core.Link, Group: 4}
 	m.Cells[10*m.Rows+8] = core.MapCell{Feature: core.Link, Group: 4}
-	m.Cells[2*m.Rows+3] = core.MapCell{Feature: core.Switch, Group: 1}
-	m.Cells[9*m.Rows+4] = core.MapCell{Feature: core.ToggleSwitch, Group: 2}
-	m.Cells[2*m.Rows+7] = core.MapCell{Feature: core.HoldSwitch, Group: 3}
+	m.Cells[2*m.Rows+3] = core.MapCell{Circuit: core.Latch, Group: 1}
+	m.Cells[9*m.Rows+4] = core.MapCell{Circuit: core.Toggle, Group: 2}
+	m.Cells[2*m.Rows+7] = core.MapCell{Circuit: core.Hold, Group: 3}
 	m.Cells[8*m.Rows+8].Feature = core.Reservoir
+	m.Cells[6*m.Rows+3] = core.MapCell{Circuit: core.Toggle, Group: 1}
+	m.Cells[8*m.Rows+2] = core.MapCell{Circuit: core.Door, Group: 1}
+	m.Cells[9*m.Rows+2] = core.MapCell{Circuit: core.Door, Group: 1, InitiallyOpen: true}
 	m.Edges = []core.MapEdge{
 		{A: 3*m.Rows + 1, B: 4*m.Rows + 1, Kind: core.Gate, Group: 1},
 		{A: 3*m.Rows + 2, B: 4*m.Rows + 2, Kind: core.Gate, Group: 1},
@@ -126,16 +133,22 @@ func editorShowcaseMap() core.MapDefinition {
 func drawArtStates(dst *ebiten.Image, a *app) {
 	sc := a.sc
 	ui.DrawText(dst, "Shared map pieces", a.f.Title, 32, 32, text.AlignStart, sc.Ink)
-	for i, feature := range []core.Feature{core.Switch, core.ToggleSwitch, core.HoldSwitch} {
-		x := 32 + float64(i)*354
-		label := []string{"Latch", "Toggle", "Hold"}[i]
+	for i, feature := range []core.CircuitKind{core.Latch, core.Toggle, core.Hold, core.Door} {
+		x := 32 + float64(i)*270
+		label := []string{"Latch", "Toggle", "Hold", "Door"}[i]
 		ui.DrawText(dst, label, a.f.Heading, x, 86, text.AlignStart, sc.Ink)
 		for j, pressed := range []bool{false, true} {
-			r := ui.Rect{X: x + float64(j)*150, Y: 112, W: 128, H: 128}
-			boardview.DrawMapBrush(dst, sc, boardview.Brush{Feature: feature, Edge: -1}, r, uint8(i+1), pressed, a.set.Marks)
+			r := ui.Rect{X: x + float64(j)*120, Y: 112, W: 104, H: 104}
+			boardview.DrawMapBrush(dst, sc, boardview.Brush{Circuit: feature, Edge: -1}, r, uint8(i+1), pressed, a.set.Marks)
 			state := "Released"
 			if pressed {
 				state = "Pressed"
+			}
+			if feature == core.Door {
+				state = "Closed"
+				if pressed {
+					state = "Open"
+				}
 			}
 			ui.DrawText(dst, state, a.f.LabelBold, r.Cx(), 260, text.AlignCenter, sc.Ink)
 		}
@@ -214,7 +227,7 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		}
 		if c.preview {
 			for i, cfg := range m.Cells {
-				if cfg.Feature.IsSwitch() {
+				if cfg.Circuit.IsSwitch() {
 					_, _ = game.Apply(i)
 				}
 			}
@@ -224,7 +237,7 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		for i := 0; i < 18 && !game.Over(); i++ {
 			moves = game.LegalMoves(moves[:0])
 			cell := moves[rng.Intn(len(moves))]
-			if m.Cells[cell].Feature.IsSwitch() || game.Count[cell]+1 >= game.Geo.Cap[cell] {
+			if m.Cells[cell].Circuit.IsSwitch() || game.Count[cell]+1 >= game.Geo.Cap[cell] {
 				continue
 			}
 			_, _ = game.Apply(cell)
@@ -253,6 +266,9 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 			}
 		}
 		e := newMapEditor(a, newHome(), m, func(core.MapDefinition) error { return nil })
+		if c.mode == "initial-open" {
+			e.initiallyOpen = true
+		}
 		if c.mode == "title" {
 			e.name.set("A long custom map title being edited")
 			e.name.focused = true

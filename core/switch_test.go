@@ -2,10 +2,10 @@ package core
 
 import "testing"
 
-func newSwitchGame(t *testing.T, feature Feature) *Game {
+func newSwitchGame(t *testing.T, feature CircuitKind) *Game {
 	t.Helper()
 	m := NewMap(7, 7)
-	m.Cells[24].Feature, m.Cells[24].Group = feature, 1
+	m.Cells[24].Circuit, m.Cells[24].Group = feature, 1
 	m.Edges = []MapEdge{{A: 8, B: 9, Kind: Gate, Group: 1}}
 	g, err := NewGameWithMap(m, 2)
 	if err != nil {
@@ -17,11 +17,11 @@ func newSwitchGame(t *testing.T, feature Feature) *Game {
 func TestSwitchManualPlacementIsImmediate(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		feature Feature
+		feature CircuitKind
 	}{
-		{"latch", Switch},
-		{"toggle", ToggleSwitch},
-		{"pressure", HoldSwitch},
+		{"latch", Latch},
+		{"toggle", Toggle},
+		{"pressure", Hold},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := newSwitchGame(t, tc.feature)
@@ -30,8 +30,8 @@ func TestSwitchManualPlacementIsImmediate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(waves) != 0 || g.Pressed[24] != 1 || !g.OpenGates[1] || g.Geo.Cap[8] != closedCap+1 {
-				t.Fatalf("waves=%v pressed=%d gate=%v capacity=%d", waves, g.Pressed[24], g.OpenGates[1], g.Geo.Cap[8])
+			if len(waves) != 0 || g.Pressed[24] != 1 || !g.CircuitOn[1] || g.Geo.Cap[8] != closedCap+1 {
+				t.Fatalf("waves=%v pressed=%d gate=%v capacity=%d", waves, g.Pressed[24], g.CircuitOn[1], g.Geo.Cap[8])
 			}
 			if len(g.TerrainEvents) != 2 || g.TerrainEvents[0] != (TerrainEvent{Wave: -1, Cell: 24, Group: 1, Switch: true, Pressed: true}) || g.TerrainEvents[1] != (TerrainEvent{Wave: -1, Cell: -1, Group: 1, Open: true}) {
 				t.Fatalf("placement events=%+v", g.TerrainEvents)
@@ -41,28 +41,28 @@ func TestSwitchManualPlacementIsImmediate(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantPressed := uint8(1)
-			if g.Pressed[24] != wantPressed || g.OpenGates[1] != (wantPressed != 0) {
-				t.Fatalf("second placement pressed=%d gate=%v", g.Pressed[24], g.OpenGates[1])
+			if g.Pressed[24] != wantPressed || g.CircuitOn[1] != (wantPressed != 0) {
+				t.Fatalf("second placement pressed=%d gate=%v", g.Pressed[24], g.CircuitOn[1])
 			}
 		})
 	}
 }
 
 func TestSwitchExplosionDoesNotPress(t *testing.T) {
-	for _, feature := range []Feature{Switch} {
+	for _, feature := range []CircuitKind{Latch} {
 		g := newSwitchGame(t, feature)
 		seedMapCell(g, 24, 0, g.Geo.Cap[24])
 		g.cur = append(g.cur[:0], 24)
 		g.explode()
 		g.terrainWave(0, true)
-		if g.Pressed[24] != 0 || g.OpenGates[1] || len(g.TerrainEvents) != 0 {
-			t.Fatalf("feature=%d pressed=%d gate=%v events=%+v", feature, g.Pressed[24], g.OpenGates[1], g.TerrainEvents)
+		if g.Pressed[24] != 0 || g.CircuitOn[1] || len(g.TerrainEvents) != 0 {
+			t.Fatalf("feature=%d pressed=%d gate=%v events=%+v", feature, g.Pressed[24], g.CircuitOn[1], g.TerrainEvents)
 		}
 	}
 }
 
 func TestSwitchReceivingWavePressesOnce(t *testing.T) {
-	for _, feature := range []Feature{Switch, ToggleSwitch} {
+	for _, feature := range []CircuitKind{Latch, Toggle} {
 		g := newSwitchGame(t, feature)
 		for wave := 0; wave < 2; wave++ {
 			for _, i := range []int{17, 23} {
@@ -73,14 +73,14 @@ func TestSwitchReceivingWavePressesOnce(t *testing.T) {
 			g.explode()
 			g.terrainWave(wave, true)
 			wantPressed := uint8(1)
-			if feature == ToggleSwitch && wave == 1 {
+			if feature == Toggle && wave == 1 {
 				wantPressed = 0
 			}
-			if g.Count[24] != uint8(2*(wave+1)) || g.Pressed[24] != wantPressed || g.OpenGates[1] != (wantPressed != 0) {
-				t.Fatalf("feature=%d wave=%d count=%d pressed=%d gate=%v", feature, wave, g.Count[24], g.Pressed[24], g.OpenGates[1])
+			if g.Count[24] != uint8(2*(wave+1)) || g.Pressed[24] != wantPressed || g.CircuitOn[1] != (wantPressed != 0) {
+				t.Fatalf("feature=%d wave=%d count=%d pressed=%d gate=%v", feature, wave, g.Count[24], g.Pressed[24], g.CircuitOn[1])
 			}
 			wantEvents := 2
-			if feature == Switch && wave == 1 {
+			if feature == Latch && wave == 1 {
 				wantEvents = 0
 			}
 			if len(g.TerrainEvents) != wantEvents {
@@ -91,8 +91,8 @@ func TestSwitchReceivingWavePressesOnce(t *testing.T) {
 }
 
 func TestPressureReleaseClosesGateAndRechecksCapacity(t *testing.T) {
-	g := newSwitchGame(t, HoldSwitch)
-	g.Pressed[24], g.OpenGates[1] = 1, true
+	g := newSwitchGame(t, Hold)
+	g.Pressed[24], g.CircuitOn[1] = 1, true
 	g.Geo = g.mapGeometry()
 	openCap := g.Geo.Cap[8]
 	seedMapCell(g, 8, 0, openCap-1)
@@ -101,8 +101,8 @@ func TestPressureReleaseClosesGateAndRechecksCapacity(t *testing.T) {
 	g.cur = append(g.cur[:0], 24)
 	g.explode()
 	g.terrainWave(0, true)
-	if g.Count[24] != 0 || g.Pressed[24] != 0 || g.OpenGates[1] || g.Geo.Cap[8] != openCap-1 {
-		t.Fatalf("count=%d pressed=%d gate=%v capacity=%d", g.Count[24], g.Pressed[24], g.OpenGates[1], g.Geo.Cap[8])
+	if g.Count[24] != 0 || g.Pressed[24] != 0 || g.CircuitOn[1] || g.Geo.Cap[8] != openCap-1 {
+		t.Fatalf("count=%d pressed=%d gate=%v capacity=%d", g.Count[24], g.Pressed[24], g.CircuitOn[1], g.Geo.Cap[8])
 	}
 	found := false
 	for _, i := range g.next {
@@ -120,26 +120,26 @@ func TestPressureReleaseClosesGateAndRechecksCapacity(t *testing.T) {
 }
 
 func TestReplayTerrainUsesExplicitSwitchAndGateState(t *testing.T) {
-	g := newSwitchGame(t, HoldSwitch)
+	g := newSwitchGame(t, Hold)
 	closedCap := g.Geo.Cap[8]
 	g.ReplayTerrain([]TerrainEvent{
 		{Cell: 24, Switch: true, Pressed: true},
 		{Cell: -1, Group: 1, Open: true},
 	})
-	if g.Pressed[24] != 1 || !g.OpenGates[1] || g.Geo.Cap[8] != closedCap+1 {
+	if g.Pressed[24] != 1 || !g.CircuitOn[1] || g.Geo.Cap[8] != closedCap+1 {
 		t.Fatal("replay did not press switch and open gate")
 	}
 	g.ReplayTerrain([]TerrainEvent{
 		{Cell: 24, Switch: true, Pressed: false},
 		{Cell: -1, Group: 1, Open: false},
 	})
-	if g.Pressed[24] != 0 || g.OpenGates[1] || g.Geo.Cap[8] != closedCap {
+	if g.Pressed[24] != 0 || g.CircuitOn[1] || g.Geo.Cap[8] != closedCap {
 		t.Fatal("replay did not release switch and close gate")
 	}
 }
 
 func TestSwitchConservationSimulationAndSnapshot(t *testing.T) {
-	for _, feature := range []Feature{Switch, ToggleSwitch, HoldSwitch} {
+	for _, feature := range []CircuitKind{Latch, Toggle, Hold} {
 		g := newSwitchGame(t, feature)
 		rng := NewRNG(938)
 		var moves []int
@@ -188,8 +188,8 @@ func TestTogglePlacementOnlyFlipsWhenEmptyOrPopping(t *testing.T) {
 			{"popping", 3, true, 1},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				g := newSwitchGame(t, ToggleSwitch)
-				g.Pressed[24], g.OpenGates[1] = pressed, pressed != 0
+				g := newSwitchGame(t, Toggle)
+				g.Pressed[24], g.CircuitOn[1] = pressed, pressed != 0
 				g.Geo = g.mapGeometry()
 				if tc.count > 0 {
 					seedMapCell(g, 24, 0, tc.count)
@@ -204,8 +204,8 @@ func TestTogglePlacementOnlyFlipsWhenEmptyOrPopping(t *testing.T) {
 					want ^= 1
 					wantEvents = 2
 				}
-				if len(waves) != tc.waves || g.Pressed[24] != want || g.OpenGates[1] != (want != 0) || len(g.TerrainEvents) != wantEvents {
-					t.Fatalf("initial pressed=%d waves=%v pressed=%d gate=%v events=%+v", pressed, waves, g.Pressed[24], g.OpenGates[1], g.TerrainEvents)
+				if len(waves) != tc.waves || g.Pressed[24] != want || g.CircuitOn[1] != (want != 0) || len(g.TerrainEvents) != wantEvents {
+					t.Fatalf("initial pressed=%d waves=%v pressed=%d gate=%v events=%+v", pressed, waves, g.Pressed[24], g.CircuitOn[1], g.TerrainEvents)
 				}
 				if tc.flip && (g.TerrainEvents[0] != (TerrainEvent{Wave: tc.waves - 1, Cell: 24, Group: 1, Switch: true, Pressed: want != 0}) || g.TerrainEvents[1] != (TerrainEvent{Wave: tc.waves - 1, Cell: -1, Group: 1, Open: want != 0})) {
 					t.Fatalf("transition events=%+v", g.TerrainEvents)
@@ -223,7 +223,7 @@ func TestTogglePlacementOnlyFlipsWhenEmptyOrPopping(t *testing.T) {
 
 func TestToggleOutgoingPopFlipsOnce(t *testing.T) {
 	for _, incoming := range []bool{false, true} {
-		g := newSwitchGame(t, ToggleSwitch)
+		g := newSwitchGame(t, Toggle)
 		for wave := 0; wave < 2; wave++ {
 			seedMapCell(g, 24, 0, g.Geo.Cap[24])
 			g.cur = append(g.cur[:0], 24)
@@ -235,8 +235,8 @@ func TestToggleOutgoingPopFlipsOnce(t *testing.T) {
 			g.explode()
 			g.terrainWave(wave, true)
 			want := uint8(1 - wave)
-			if g.Pressed[24] != want || g.OpenGates[1] != (want != 0) || len(g.TerrainEvents) != 2 {
-				t.Fatalf("incoming=%v wave=%d pressed=%d gate=%v events=%+v", incoming, wave, g.Pressed[24], g.OpenGates[1], g.TerrainEvents)
+			if g.Pressed[24] != want || g.CircuitOn[1] != (want != 0) || len(g.TerrainEvents) != 2 {
+				t.Fatalf("incoming=%v wave=%d pressed=%d gate=%v events=%+v", incoming, wave, g.Pressed[24], g.CircuitOn[1], g.TerrainEvents)
 			}
 		}
 	}

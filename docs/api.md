@@ -73,14 +73,14 @@ Binary, on every transport: `ws` on the LAN, a WebRTC data channel online and `l
 | `Welcome` | host to player | `Seat`, `Token` for rejoining |
 | `Lobby` | host to player | `Cols`, `Rows`, `TurnTimer`, `Playing`, `Seats[]` (`State`, `AI`, `Ready`, `Name`), optional map definition |
 | `MoveApplied` | host to player | `Seq`, `Player`, `C`, `R` (255, 255 for a pass), `Hash` after the move |
-| `Snapshot` | host to player | `Seq` and the whole game, including optional map definition, `Durability`, `OpenGates`, and per-cell `Pressed`; `Seq` 0 starts a game |
+| `Snapshot` | host to player | `Seq` and the whole game, including optional map definition, `Durability`, `CircuitOn`, and per-cell `Pressed`; `Seq` 0 starts a game |
 | `Bye` | host to player | the reason the host closed the connection |
 
 Seat states are AI, Open, Here, Away (dropped, inside the 60 s grace), Gone (left mid-game) and Skipped. Close reasons are Closed, Version, BadCode, Full, Kicked, Replaced and Timeout.
 
 A client applies each `MoveApplied` with `core` and compares the hash. A mismatch, a gap in `Seq` or a move that doesn't fit drops what is queued and sends `Resync`.
 
-Map definitions in `Lobby` and `Snapshot` use the bounded portable map encoding, with dimensions matching the board. Protocol decoding requires its current canonical encoding. `Snapshot` terrain state is validated by `core.Restore`: `Pressed` is a 0/1 value for each cell, set only on switch cells; Hold must agree with occupancy, and open Gate circuits must agree with their controller. The hash includes map terrain/features, relationships, wall durability, `Pressed`, and Gate state. Version 3 replaces the earlier spent-switch state with explicit pressed/released state; peers on another game protocol version must update together. Portable map versions and legacy imports are separate; see [maps.md](maps.md).
+Map definitions in `Lobby` and `Snapshot` use the bounded portable map encoding, with dimensions matching the board. Protocol decoding requires its current canonical encoding. `core.Restore` validates 0/1 `Pressed` values only on switch cells and Hold occupancy agreement. `CircuitOn` lists reversed circuit groups without duplicates and independently of individual switch states. The hash includes terrain, passive features, circuit components, output starting states, wall durability, `Pressed` and polarity. Closed Doors and temporarily isolated Floor preserve trapped orbs. Protocol remains version 3, already introduced after public release v1.0.0. Peers must run the same development build; the shared development identifier does not guarantee compatible rules. Portable exports remain format 2, with format-1/2 and temporary format-3 imports supported; see [maps.md](maps.md).
 
 The hub's limits on every connection: `Hello` within 5 s, inbound player messages of at most 128 bytes, 20 a second with a burst of 40, and a drop after 64 queued messages. Host-to-player lobby and snapshot messages can be larger because they carry maps; WebSocket messages have a 128 KiB read bound. Late or illegal moves are ignored.
 

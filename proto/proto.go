@@ -204,7 +204,7 @@ func Append(dst []byte, m Msg) []byte {
 		}
 		dst = appendMap(dst, g.Map)
 		dst = appendBytes(dst, g.Durability)
-		dst = appendBytes(dst, g.OpenGates)
+		dst = appendBytes(dst, g.CircuitOn)
 		dst = appendBytes(dst, g.Pressed)
 	case Bye:
 		dst = append(dst, byte(m.Reason))
@@ -402,7 +402,7 @@ func (r *reader) snapshot() Snapshot {
 	}
 	g.Map = r.mapDefinition()
 	g.Durability = r.bytes(core.MaxSize * core.MaxSize)
-	g.OpenGates = r.bytes(255)
+	g.CircuitOn = r.bytes(255)
 	g.Pressed = r.bytes(core.MaxSize * core.MaxSize)
 	return s
 }

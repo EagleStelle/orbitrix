@@ -56,7 +56,7 @@ func TestReservoirConserves(t *testing.T) {
 func TestMapWaveEventsAndIsolation(t *testing.T) {
 	m := NewMap(7, 7)
 	m.Cells[24].Terrain = BreakableWall
-	m.Cells[16].Feature = Switch
+	m.Cells[16].Circuit = Latch
 	m.Cells[16].Group = 1
 	m.Edges = []MapEdge{{A: 8, B: 9, Kind: Gate, Group: 1}}
 	g, err := NewGameWithMap(m, 2)
@@ -74,14 +74,14 @@ func TestMapWaveEventsAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.Durability[24] != 0 || !g.OpenGates[1] || g.Pressed[16] != 1 {
-		t.Fatalf("terrain state wall=%d gate=%v switch=%d", g.Durability[24], g.OpenGates[1], g.Pressed[16])
+	if g.Durability[24] != 0 || !g.CircuitOn[1] || g.Pressed[16] != 1 {
+		t.Fatalf("terrain state wall=%d gate=%v switch=%d", g.Durability[24], g.CircuitOn[1], g.Pressed[16])
 	}
-	if before.Hash() != beforeHash || before.Durability[24] != 2 || before.OpenGates[1] {
+	if before.Hash() != beforeHash || before.Durability[24] != 2 || before.CircuitOn[1] {
 		t.Fatal("simulation mutated parent")
 	}
 	before.ReplayTerrain(g.TerrainEvents)
-	if before.Geo.Cap[24] != g.Geo.Cap[24] || before.Durability[24] != 0 || !before.OpenGates[1] {
+	if before.Geo.Cap[24] != g.Geo.Cap[24] || before.Durability[24] != 0 || !before.CircuitOn[1] {
 		t.Fatal("events do not reconstruct topology")
 	}
 	r, err := Restore(g.Snapshot())
@@ -139,7 +139,7 @@ func BenchmarkCustomMapChain(b *testing.B) {
 		b.Run(fmt.Sprintf("%dx%d", n, n), func(b *testing.B) {
 			m := NewMap(n, n)
 			m.Cells[(n/2)*n+n/2].Terrain = BreakableWall
-			m.Cells[0].Feature, m.Cells[0].Group = Switch, 1
+			m.Cells[0].Circuit, m.Cells[0].Group = Latch, 1
 			m.Cells[n+1].Feature = Reservoir
 			m.Cells[2*n+2].Feature, m.Cells[2*n+2].Group = Link, 1
 			m.Cells[(n-3)*n+n-3].Feature, m.Cells[(n-3)*n+n-3].Group = Link, 1

@@ -27,7 +27,7 @@ type Game struct {
 	Orbs          [MaxPlayers]int32 // orbs on the board per player
 	Map           *MapDefinition    // immutable design; nil is a classic rectangle
 	Durability    []uint8
-	OpenGates     [256]bool
+	CircuitOn     [256]bool // polarity: outputs reverse their individual starting states
 	Pressed       []uint8
 	TerrainEvents []TerrainEvent // events in the last recorded move
 
@@ -89,7 +89,7 @@ func (g *Game) CopyFrom(src *Game) {
 	copy(g.Owner, src.Owner)
 	g.Players, g.Turn, g.Played, g.Moves, g.Winner = src.Players, src.Turn, src.Played, src.Moves, src.Winner
 	g.Orbs, g.Exploded, g.unstable = src.Orbs, src.Exploded, src.unstable
-	g.Map, g.OpenGates = src.Map, src.OpenGates
+	g.Map, g.CircuitOn = src.Map, src.CircuitOn
 	g.Durability = append(g.Durability[:0], src.Durability...)
 	g.Pressed = append(g.Pressed[:0], src.Pressed...)
 	g.TerrainEvents = g.TerrainEvents[:0]
@@ -182,7 +182,7 @@ func (g *Game) play(cell int, record bool) error {
 	if g.Map != nil {
 		clear(g.arrived)
 		g.arrived[cell] = 1
-		if g.switchInputs(-1, record) {
+		if g.circuitInputs(-1, record) {
 			g.Geo = g.mapGeometry()
 			topologyChanged = true
 		}

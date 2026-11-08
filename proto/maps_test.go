@@ -8,10 +8,23 @@ import (
 )
 
 func TestMapMessagesRoundTrip(t *testing.T) {
-	for _, m := range core.StarterMaps() {
+	circuit := core.NewMap(7, 7)
+	circuit.Cells[16] = core.MapCell{Circuit: core.Latch, Group: 1}
+	circuit.Cells[24] = core.MapCell{Circuit: core.Toggle, Group: 1}
+	circuit.Cells[32] = core.MapCell{Circuit: core.Door, Group: 1, InitiallyOpen: true}
+	circuit.Edges = []core.MapEdge{{A: 8, B: 9, Kind: core.Gate, Group: 1, InitiallyOpen: true}}
+	for _, m := range append(core.StarterMaps(), circuit) {
 		g, err := core.NewGameWithMap(m, 2)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if m.Cells[24].Circuit == core.Toggle {
+			if _, err := g.Apply(16); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := g.Apply(24); err != nil {
+				t.Fatal(err)
+			}
 		}
 		for _, msg := range []Msg{Lobby{Cols: uint8(m.Cols), Rows: uint8(m.Rows), Map: &m}, Snapshot{Seq: 9, Game: g.Snapshot()}} {
 			b := Append(nil, msg)

@@ -21,15 +21,16 @@ Orbitrix is one Go module that builds four things: the game client (desktop, And
 - A board is `cols × rows` cells in flat arrays: `[]uint8` counts and `[]int8` owners, indexed `c*rows + r`. `Geometry` precomputes each cell's capacity and neighbours, so the hot loops have no bounds logic and no maps.
 - Custom map definitions are copied on entry and retained as immutable designs. Geometry separates outgoing degree
   from capacity and supports a fifth connection for Links; Reservoirs add one reserve to capacity. Each circuit has
-  exactly one Latch, Toggle, or Hold controlling one or more initially closed Gates. `Pressed` records controller
-  state, and `OpenGates` follows it. Direct placement applies switch effects before the first exploding cells are
+  any number and mixture of Latch, Toggle and Hold controlling Gates and whole-cell Doors. `CircuitKind` is separate
+  from passive `Feature`; `core/circuit.go` owns circuit inputs. `Pressed` records individual switches; `CircuitOn`
+  records independent polarity. Outputs reverse their individual starting states with that polarity. Direct placement applies switch effects before the first exploding cells are
   selected. Each wave transfers on its starting topology, then aggregates wall damage and switch effects before
   rebuilding connections/capacities and selecting the next wave. Gate opening, Gate closure, and destruction install
   replacement topology safely isolated from AI copies. Terrain events record placement at wave −1 and subsequent
   changes at their wave boundaries. See [maps.md](maps.md).
 - `Apply(cell)` places an orb and resolves the chain in waves, returning every wave in reused buffers. A wave runs in two passes: every cell at capacity gives, then every neighbour receives, taking the sender's owner from the start of the wave. The result doesn't depend on cell order.
 - The win check runs after the placement and after every wave, once every player has had a turn, and stops the chain on the spot. A safety cap of 10,000 waves leaves any cells still over capacity to the next move's first wave.
-- `Simulate` and `CopyFrom` give the bots an allocation-free search path on fixed topology; custom maps allocate replacement geometry when terrain changes. `Snapshot` and `Restore` (validated) carry a whole game over the network, including map durability, `Pressed`, and `OpenGates`. `Hash` (64-bit FNV-1a) includes the map and its runtime state to detect desync.
+- `Simulate` and `CopyFrom` give the bots an allocation-free search path on fixed topology; custom maps allocate replacement geometry when terrain changes. `Snapshot` and `Restore` (validated) carry a whole game over the network, including map durability, `Pressed`, and `CircuitOn`. `Hash` (64-bit FNV-1a) includes the map, initial output states and runtime state to detect desync. Closed Doors preserve any trapped orbs until reopening.
 - All randomness comes from `core.RNG`, a splitmix64 generator.
 
 Worst-case chains resolve in about 5 µs on 9×9, 56 µs on 20×20 and 440 µs on 40×40.
@@ -111,7 +112,7 @@ In a room:
 
 - Pure core: `core` and `core/ai` import no Ebitengine, net or OS packages, which keeps them deterministic, testable without a window, and identical on every target.
 - Transport-agnostic hub: one engine for online and LAN play, behind a three-method `Conn`, so a new transport needs no change to the rules of a room.
-- Host authority with client replay: clients recompute ordinary moves from small messages, and a state hash catches any divergence. Lobby and snapshot messages also carry the chosen map and, for snapshots, runtime terrain state; incoming player messages remain bounded to 128 bytes. The binary game protocol is version 3.
+- Host authority with client replay: clients recompute ordinary moves from small messages, and a state hash catches any divergence. Lobby and snapshot messages also carry the chosen map and, for snapshots, runtime terrain state; incoming player messages remain bounded to 128 bytes. The binary game protocol remains version 3, already bumped after public release v1.0.0; peers must use the same development build.
 - Build tags for platforms: `client/platform` holds the storage, clipboard, keyboard and server-address code for each target, so the rest of the client has no platform branches.
 - Budgets instead of clocks: AI cost is counted, which makes bots reproducible in tests and fair across devices.
 

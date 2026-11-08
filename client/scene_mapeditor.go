@@ -29,26 +29,28 @@ const (
 	brushPan
 	brushToggle
 	brushHold
+	brushDoor
 )
 
-var editorTools = [...]string{"Floor", "Wall", "Void", "Breakable wall", "Link", "Reservoir", "Latch", "Barrier", "Gate", "Erase", "Pan", "Toggle", "Hold"}
+var editorTools = [...]string{"Floor", "Wall", "Void", "Breakable wall", "Link", "Reservoir", "Latch", "Barrier", "Gate", "Erase", "Pan", "Toggle", "Hold", "Door"}
 var editorHelp = [...]string{
 	"Playable surface. Open routes set its capacity.", "Blocks explosions permanently.", "Empty space outside the playable board.", "Two nearby blasts turn it into floor.",
-	"Pair two distant cells to route explosions.", "Stores one extra orb before exploding.", "Stays pressed after the first orb arrives.", "Blocks a route between two floor cells.",
-	"Opens while its circuit's switch is pressed.", "Remove an edge or restore a cell to floor.", "Drag the map to move around.", "Flips on placement into an empty cell or when orbs pop in or out.", "Stays pressed while this cell holds orbs.",
+	"Pair two distant cells to route explosions.", "Stores one extra orb before exploding.", "Reverses once; another switch rearms it.", "Blocks a route between two floor cells.",
+	"Reverses with its circuit. Repaint to set its start.", "Remove an edge or restore a cell to floor.", "Drag the map to move around.", "Reverses on empty placement or orbs popping in or out.", "Reverses on press and release.", "A wall. Repaint to set its start.",
 }
 var editorGroups = [...]struct {
 	name  string
 	tools []int
 }{
-	{"Terrain", []int{brushFloor, brushWall, brushVoid, brushBarrier}},
-	{"Structures", []int{brushBreak, brushGate}},
-	{"Devices", []int{brushLink, brushReservoir, brushLatch, brushToggle, brushHold}},
+	{"Terrain", []int{brushFloor, brushWall, brushVoid, brushBarrier, brushBreak}},
+	{"Devices", []int{brushLink, brushReservoir}},
+	{"Circuit", []int{brushLatch, brushToggle, brushHold, brushGate, brushDoor}},
 }
 var editorBrushes = [...]boardview.Brush{
 	{Terrain: core.Floor, Edge: -1}, {Terrain: core.Wall, Edge: -1}, {Terrain: core.Void, Edge: -1}, {Terrain: core.BreakableWall, Edge: -1},
-	{Feature: core.Link, Edge: -1}, {Feature: core.Reservoir, Edge: -1}, {Feature: core.Switch, Edge: -1}, {Edge: int(core.Barrier)}, {Edge: int(core.Gate)},
-	{Edge: -1}, {Edge: -1}, {Feature: core.ToggleSwitch, Edge: -1}, {Feature: core.HoldSwitch, Edge: -1},
+	{Feature: core.Link, Edge: -1}, {Feature: core.Reservoir, Edge: -1}, {Circuit: core.Latch, Edge: -1}, {Edge: int(core.Barrier)}, {Edge: int(core.Gate)},
+	{Edge: -1}, {Edge: -1}, {Circuit: core.Toggle, Edge: -1}, {Circuit: core.Hold, Edge: -1},
+	{Circuit: core.Door, Edge: -1},
 }
 
 type mapEditor struct {
@@ -65,6 +67,7 @@ type mapEditor struct {
 	undo, redo                     []core.MapDefinition
 	tool, category                 int
 	group                          uint8
+	initiallyOpen                  bool
 	pair, last, hover              int
 	dirty, stroke, strokeChanged   bool
 	edgeDrag                       bool
@@ -93,6 +96,7 @@ type mapEditor struct {
 	options                                                             ui.Rect
 	option                                                              [1]ui.Rect
 	channelB, channelPanel                                              ui.Rect
+	initialB                                                            ui.Rect
 	channels                                                            [core.MaxMapGroups]ui.Rect
 	channelDone                                                         ui.Rect
 	helpTool                                                            int
@@ -110,6 +114,7 @@ type mapEditor struct {
 	brushIcons                        [len(editorTools)]*ebiten.Image
 	iconTheme                         *ui.Palette
 	iconMarks, iconPreview            bool
+	iconInitial                       bool
 	iconGroup                         uint8
 }
 
@@ -296,6 +301,9 @@ func (e *mapEditor) paintEdge(a, b int) bool {
 	if e.channelTool() {
 		next.Group = e.group
 	}
+	if next.Kind == core.Gate {
+		next.InitiallyOpen = e.initiallyOpen
+	}
 	for j, edge := range e.m.Edges {
 		if min(edge.A, edge.B) != a || max(edge.A, edge.B) != b {
 			continue
@@ -399,19 +407,17 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 			next = core.MapCell{Feature: core.Link, Group: e.group}
 			e.pair = i
 		}
-	case brushReservoir, brushLatch, brushToggle, brushHold:
+	case brushReservoir, brushLatch, brushToggle, brushHold, brushDoor:
 		if e.m.Cells[i].Terrain != core.Floor {
-			e.notify("Devices need floor underneath.")
+			e.notify("Components need floor underneath.")
 			return false
 		}
 		next.Feature = editorBrushes[e.tool].Feature
-		if next.Feature.IsSwitch() {
+		next.Circuit = editorBrushes[e.tool].Circuit
+		if next.Circuit != core.NoCircuit {
 			next.Group = e.group
-			for j, c := range e.m.Cells {
-				if j != i && c.Feature.IsSwitch() && c.Group == e.group {
-					e.notify("This circuit already has a switch. Choose another circuit color.")
-					return false
-				}
+			if next.Circuit.IsOutput() {
+				next.InitiallyOpen = e.initiallyOpen
 			}
 		}
 	default:
@@ -458,7 +464,11 @@ func (e *mapEditor) selectTool(tool int) {
 }
 func (e *mapEditor) channelTool() bool {
 	brush := editorBrushes[e.tool]
-	return brush.Feature == core.Link || brush.Edge == int(core.Gate) || brush.Feature.IsSwitch()
+	return brush.Feature == core.Link || brush.Edge == int(core.Gate) || brush.Circuit != core.NoCircuit
+}
+
+func (e *mapEditor) outputTool() bool {
+	return editorBrushes[e.tool].Circuit.IsOutput() || editorBrushes[e.tool].Edge == int(core.Gate)
 }
 
 func (e *mapEditor) finishStroke() {
@@ -672,6 +682,9 @@ func (e *mapEditor) update(a *app) error {
 	case e.channelTool() && a.clicked(e.channelB):
 		e.channelsOpen = true
 		return nil
+	case e.outputTool() && a.clicked(e.initialB):
+		e.initiallyOpen = !e.initiallyOpen
+		return nil
 	}
 	for i, r := range e.control {
 		if i == 0 && len(e.undo) == 0 || i == 1 && len(e.redo) == 0 {
@@ -757,7 +770,7 @@ func (e *mapEditor) updateCanvas(a *app, pressed, down bool) {
 		} else if e.stroke && (i != e.last || (editorBrushes[e.tool].Edge >= 0 || e.tool == brushErase) && (a.in.x != e.prevX || a.in.y != e.prevY)) {
 			if editorBrushes[e.tool].Edge >= 0 {
 				e.strokeChanged = e.paintEdgeStroke(a.in.x, a.in.y) || e.strokeChanged
-			} else if e.tool == brushLink || editorBrushes[e.tool].Feature.IsSwitch() {
+			} else if e.tool == brushLink || editorBrushes[e.tool].Circuit.IsSwitch() {
 				e.strokeChanged = e.paint(i, a.in.x, a.in.y) || e.strokeChanged
 			} else {
 				k, _, _ := e.grid()

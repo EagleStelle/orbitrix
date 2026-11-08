@@ -32,13 +32,26 @@ func EncodeMap(m MapDefinition) ([]byte, error) {
 	payload = append(payload, byte(m.Cols), byte(m.Rows), byte(len(m.Name)))
 	payload = append(payload, m.Name...)
 	for _, c := range m.Cells {
-		payload = append(payload, byte(c.Terrain)|byte(c.Feature)<<4, c.Group)
+		// Keep legacy switch tags 3..5; Door uses 6 and bit 3 stores the initial state.
+		component := byte(c.Feature)
+		if c.Circuit != NoCircuit {
+			component = byte(c.Circuit) + 2
+		}
+		cell := byte(c.Terrain) | component<<4
+		if c.InitiallyOpen {
+			cell |= 8
+		}
+		payload = append(payload, cell, c.Group)
 	}
 	payload = binary.BigEndian.AppendUint16(payload, uint16(len(m.Edges)))
 	for _, e := range m.Edges {
 		payload = binary.BigEndian.AppendUint16(payload, uint16(e.A))
 		payload = binary.BigEndian.AppendUint16(payload, uint16(e.B))
-		payload = append(payload, byte(e.Kind), e.Group)
+		kind := byte(e.Kind)
+		if e.InitiallyOpen {
+			kind |= 0x80
+		}
+		payload = append(payload, kind, e.Group)
 	}
 	if len(payload) > MaxMapBytes {
 		return nil, fmt.Errorf("encode map: map exceeds %d bytes", MaxMapBytes)
@@ -74,7 +87,8 @@ func DecodeMap(b []byte) (MapDefinition, error) {
 	if string(b[:4]) != "ORBM" {
 		return bad("not an Orbitrix map")
 	}
-	if b[4] != MapFormatVersion && b[4] != 1 {
+	// Import the temporary circuit-build format too, without exporting it again.
+	if b[4] != 1 && b[4] != MapFormatVersion && b[4] != 3 {
 		return bad("unsupported map version")
 	}
 	if b[5] != 1 {
@@ -97,38 +111,52 @@ func DecodeMap(b []byte) (MapDefinition, error) {
 	if crc32.ChecksumIEEE(payload) != binary.BigEndian.Uint32(b[10:14]) {
 		return bad("map checksum mismatch")
 	}
-	m, err := decodeMapPayload(payload)
-	if err == nil && b[4] == 1 {
-		for _, c := range m.Cells {
-			if c.Feature > Switch {
-				return bad("feature requires a newer map version")
-			}
-		}
-	}
-	return m, err
+	return decodeMapPayload(payload, b[4])
 }
 
-func decodeMapPayload(b []byte) (MapDefinition, error) {
+func decodeMapPayload(b []byte, version byte) (MapDefinition, error) {
 	bad := func() (MapDefinition, error) { return MapDefinition{}, fmt.Errorf("decode map: invalid map contents") }
 	if len(b) < 5 {
 		return bad()
 	}
 	m := MapDefinition{Cols: int(b[0]), Rows: int(b[1])}
 	n, nameLen := m.Cols*m.Rows, int(b[2])
+	cellBytes, edgeBytes := 2, 6
+	if version == 3 {
+		cellBytes, edgeBytes = 4, 7
+	}
 	// Check dimensions before allocating using an untrusted cell count.
-	if m.Cols < MinSize || m.Cols > MaxSize || m.Rows < MinSize || m.Rows > MaxSize || nameLen > 64 || len(b) < 5+nameLen+2*n {
+	if m.Cols < MinSize || m.Cols > MaxSize || m.Rows < MinSize || m.Rows > MaxSize || nameLen > 64 || len(b) < 5+nameLen+cellBytes*n {
 		return bad()
 	}
 	m.Name = string(b[3 : 3+nameLen])
 	b = b[3+nameLen:]
 	m.Cells = make([]MapCell, n)
 	for i := range m.Cells {
-		m.Cells[i] = MapCell{Terrain: Terrain(b[2*i] & 15), Feature: Feature(b[2*i] >> 4), Group: b[2*i+1]}
+		p := b[cellBytes*i:]
+		if version == 3 {
+			if p[3] > 1 {
+				return bad()
+			}
+			m.Cells[i] = MapCell{Terrain: Terrain(p[0] & 15), Feature: Feature(p[0] >> 4), Group: p[1], Circuit: CircuitKind(p[2]), InitiallyOpen: p[3] != 0}
+			continue
+		}
+		cell, component := p[0], p[0]>>4
+		c := MapCell{Terrain: Terrain(cell & 7), Group: p[1], InitiallyOpen: cell&8 != 0}
+		if component > 6 || version == 1 && (component > 3 || c.InitiallyOpen) {
+			return bad()
+		}
+		if component > byte(Reservoir) {
+			c.Circuit = CircuitKind(component - 2)
+		} else {
+			c.Feature = Feature(component)
+		}
+		m.Cells[i] = c
 	}
-	b = b[2*n:]
+	b = b[cellBytes*n:]
 	edges := int(binary.BigEndian.Uint16(b[:2]))
 	b = b[2:]
-	if len(b) != 6*edges {
+	if len(b) != edgeBytes*edges {
 		return bad()
 	}
 	if edges > 0 {
@@ -137,9 +165,18 @@ func decodeMapPayload(b []byte) (MapDefinition, error) {
 	for i := range m.Edges {
 		m.Edges[i] = MapEdge{
 			A: int(binary.BigEndian.Uint16(b[:2])), B: int(binary.BigEndian.Uint16(b[2:4])),
-			Kind: EdgeKind(b[4]), Group: b[5],
+			Kind: EdgeKind(b[4] & 0x7f), Group: b[5], InitiallyOpen: b[4]&0x80 != 0,
 		}
-		b = b[6:]
+		if version == 3 {
+			if b[6] > 1 {
+				return bad()
+			}
+			m.Edges[i].Kind, m.Edges[i].InitiallyOpen = EdgeKind(b[4]), b[6] != 0
+		}
+		if version == 1 && m.Edges[i].InitiallyOpen {
+			return bad()
+		}
+		b = b[edgeBytes:]
 	}
 	if err := m.ValidateStructure(); err != nil {
 		return MapDefinition{}, fmt.Errorf("decode map: %w", err)
@@ -175,6 +212,9 @@ func ParseMapCode(text string) (MapDefinition, error) {
 	encoded, ok := strings.CutPrefix(code, mapCodePrefix)
 	if !ok {
 		encoded, ok = strings.CutPrefix(code, "orbitrix-map1.")
+	}
+	if !ok {
+		encoded, ok = strings.CutPrefix(code, "orbitrix-map3.")
 	}
 	if !ok {
 		return MapDefinition{}, fmt.Errorf("import map: unsupported share code")

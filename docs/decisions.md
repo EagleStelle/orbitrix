@@ -18,25 +18,33 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - Latch responds to direct accepted placements and orb arrivals, never to exploding by itself. Latch stays
   pressed after its first input; Toggle flips on direct placement into an empty cell and once per receiving or
   exploding wave, regardless of arrival count. Direct placement into an occupied Toggle does not flip it by itself;
-  Hold is pressed exactly while its count is nonzero. Each circuit has exactly one controller and at least one Gate,
-  so Gate state is unambiguous. Gates start closed and follow their controller, including closure.
+  Hold is pressed exactly while its count is nonzero. Circuits accept any mixture and number of switches and at least
+  one Gate or Door. Every input reverses independent circuit polarity; simultaneous inputs cancel in pairs.
+  Another switch transition rearms a Latch without an additional reversal. Hold press and release both reverse.
+  Outputs have individual initial open/closed states; polarity reverses them. Closing a Door preserves trapped orbs
+  and ownership until reopening, rather than destroying or relocating them.
 - Map topology is immutable per wave. A direct placement applies switch/Gate effects before selecting the first
   exploding cells (terrain event wave −1). Each wave uses its starting connections, then applies aggregate wall
   damage and switch effects after transfers and updates capacity before the next wave is selected. Search copies
   install their own replacement topology, and presentation replays explicit pressed/released and open/closed events
   at the same boundary. This prevents iteration order or animation timing from changing the rules.
-- Closed-Gate topology gives every initial Floor capacity of at least two, including a Reservoir's reserve, and
+- Configured initial output states give every initially playable Floor capacity of at least two, including a Reservoir's reserve, and
   Breakable Walls require two initial Floor neighbors, keeping first placements non-explosive. Connectivity counts
   destroyed Breakable Walls and Gates whose controller shares a Floor group with either endpoint. Reachable Gates
   merge groups until no more circuits can connect them; permanently isolated Floor and circular Gate dependencies
   remain invalid.
 - Map files carry a bounded, versioned binary payload and checksum. QR links embed it in a URL fragment; there is
   no map lookup service. Invalid gameplay drafts remain portable, but malformed data is rejected.
-- Portable exports use format 2 and `orbitrix-map2.` codes; format-1 files/codes remain importable. Legacy designs
-  with multiple switch controllers stay invalid editable drafts, without silent repair or overwriting stored maps.
-  The old `Switch` enum remains the Latch, and `HoldSwitch` retains its enum ordinal when its UI label is Hold.
-  Match snapshots carry durability, `Pressed`, and `OpenGates`, all covered by the hash. Replacing `Spent` with
-  explicit switch state requires binary game protocol 3; portable map import compatibility is a separate concern.
+- Portable exports remain format 2 with `orbitrix-map2.` codes. The two-byte cell and six-byte edge layouts keep
+  existing switch tags; Door uses the next tag, cell bit 3 and edge bit 7 store initial open state. Backend circuit
+  types stay separate from passive features. Format-1/2 maps and temporary format-3 circuit-build exports remain
+  importable without rewriting stored maps. New exports always use format 2.
+  Match snapshots carry durability, `Pressed`, and independent `CircuitOn` polarity, all covered by the hash.
+  Protocol 3 and map format 2 were already introduced after public release v1.0.0 (protocol 1, no custom maps), so
+  this circuit change reuses those unreleased identifiers. Compare against the last public release before bumping:
+  reuse an existing post-release bump; bump when the public release's identifier would otherwise be reused for an
+  incompatible change. All peers must run the same development build; equal unreleased identifiers do not prove
+  compatibility. Portable-map import compatibility is separate.
 
 - Players may not outnumber cells. Nothing explodes in the first round, so an extra player could have no legal first move. `NewGame` rejects it and Setup shows "Board too small".
 - The win check waits until every player has had a turn, not just two. In normal play that is the same thing, since nothing can explode in the first round, but it keeps a passed turn from ending a game before anyone has moved.

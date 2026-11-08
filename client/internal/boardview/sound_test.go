@@ -10,11 +10,11 @@ import (
 
 func TestPlacementSwitchSoundsFollowRecordedChanges(t *testing.T) {
 	for _, tc := range []struct {
-		feature core.Feature
+		feature core.CircuitKind
 		want    sound.Effects
-	}{{core.Switch, sound.Latch}, {core.ToggleSwitch, sound.ToggleOn}, {core.HoldSwitch, sound.HoldOn}} {
+	}{{core.Latch, sound.Latch}, {core.Toggle, sound.ToggleOn}, {core.Hold, sound.HoldOn}} {
 		m := core.NewMap(7, 7)
-		m.Cells[24].Feature, m.Cells[24].Group = tc.feature, 1
+		m.Cells[24].Circuit, m.Cells[24].Group = tc.feature, 1
 		m.Edges = []core.MapEdge{{A: 8, B: 9, Kind: core.Gate, Group: 1}}
 		g, err := core.NewGameWithMap(m, 2)
 		if err != nil {
@@ -30,7 +30,7 @@ func TestPlacementSwitchSoundsFollowRecordedChanges(t *testing.T) {
 			if got := v.terrainSounds(v.Place(24, 0)); got != tc.want {
 				t.Fatalf("feature %v: placement cue %v, want %v", tc.feature, got, tc.want)
 			}
-			if v.Replay.Pressed[24] != g.Pressed[24] || v.Replay.OpenGates[1] != g.OpenGates[1] {
+			if v.Replay.Pressed[24] != g.Pressed[24] || v.Replay.CircuitOn[1] != g.CircuitOn[1] {
 				t.Fatalf("feature %v: placement replay differs from game", tc.feature)
 			}
 			tc.want = 0 // Another arrival on an already-pressed switch makes no new transition.
@@ -40,8 +40,8 @@ func TestPlacementSwitchSoundsFollowRecordedChanges(t *testing.T) {
 
 func TestTerrainSoundVariantsAndCoalescing(t *testing.T) {
 	m := core.NewMap(7, 7)
-	m.Cells[16].Feature, m.Cells[16].Group = core.ToggleSwitch, 1
-	m.Cells[32].Feature, m.Cells[32].Group = core.HoldSwitch, 2
+	m.Cells[16].Circuit, m.Cells[16].Group = core.Toggle, 1
+	m.Cells[32].Circuit, m.Cells[32].Group = core.Hold, 2
 	m.Cells[24].Terrain = core.BreakableWall
 	m.Edges = []core.MapEdge{{A: 8, B: 9, Kind: core.Gate, Group: 1}, {A: 40, B: 41, Kind: core.Gate, Group: 2}}
 	g, err := core.NewGameWithMap(m, 2)

@@ -1,12 +1,9 @@
 package core
 
-import (
-	"fmt"
-	"slices"
-)
+import "fmt"
 
 // TerrainEvent is applied after a wave's orb transfers, before the following wave.
-// Cell -1 changes a Gate group; otherwise it changes durability or switch state.
+// Cell -1 records circuit polarity in Open; otherwise it changes durability or switch state.
 type TerrainEvent struct {
 	Wave       int
 	Cell       int
@@ -49,7 +46,11 @@ func (g *Game) TerrainAt(i int) Terrain {
 	if g.Map == nil {
 		return Floor
 	}
-	t := g.Map.Cells[i].Terrain
+	c := g.Map.Cells[i]
+	t := c.Terrain
+	if c.Circuit == Door && !CircuitOpen(c.InitiallyOpen, g.CircuitOn[c.Group]) {
+		return Wall
+	}
 	if t == BreakableWall && g.Durability[i] == 0 {
 		return Floor
 	}
@@ -63,7 +64,7 @@ func (g *Game) mapGeometry() *Geometry {
 	geo := &Geometry{Cols: m.Cols, Rows: m.Rows, Cap: make([]uint8, n), Degree: make([]uint8, n), Nbr: make([]int16, n*MaxConnections)}
 	blocked := make([]uint8, n*4)
 	for _, e := range m.Edges {
-		if e.Kind == Gate && g.OpenGates[e.Group] {
+		if e.Kind == Gate && CircuitOpen(e.InitiallyOpen, g.CircuitOn[e.Group]) {
 			continue
 		}
 		d := 0
@@ -124,55 +125,6 @@ func (g *Game) mapGeometry() *Geometry {
 	return geo
 }
 
-// switchInputs applies arrivals and occupancy after a placement or wave. Geometry
-// is rebuilt by the caller after all topology changes for that step are known.
-func (g *Game) switchInputs(wave int, record bool) bool {
-	var open [256]bool
-	for i, c := range g.Map.Cells {
-		if !c.Feature.IsSwitch() {
-			continue
-		}
-		pressed := g.Pressed[i]
-		switch c.Feature {
-		case Switch:
-			if g.arrived[i] != 0 {
-				pressed = 1
-			}
-		case ToggleSwitch:
-			if wave < 0 {
-				if g.arrived[i] != 0 && g.Count[i] == 1 {
-					pressed ^= 1
-				}
-			} else if g.arrived[i] != 0 || slices.Contains(g.cur, int16(i)) {
-				pressed ^= 1
-			}
-		case HoldSwitch:
-			pressed = 0
-			if g.Count[i] > 0 {
-				pressed = 1
-			}
-		}
-		if pressed != g.Pressed[i] {
-			g.Pressed[i] = pressed
-			if record {
-				g.TerrainEvents = append(g.TerrainEvents, TerrainEvent{Wave: wave, Cell: i, Group: c.Group, Switch: true, Pressed: pressed != 0})
-			}
-		}
-		open[c.Group] = pressed != 0
-	}
-	changed := false
-	for group, on := range open {
-		if g.OpenGates[group] != on {
-			g.OpenGates[group] = on
-			changed = true
-			if record {
-				g.TerrainEvents = append(g.TerrainEvents, TerrainEvent{Wave: wave, Cell: -1, Group: uint8(group), Open: on})
-			}
-		}
-	}
-	return changed
-}
-
 func (g *Game) terrainWave(wave int, record bool) {
 	var damage [MaxSize * MaxSize]uint8
 	changed := false
@@ -202,8 +154,8 @@ func (g *Game) terrainWave(wave int, record bool) {
 			}
 		}
 	}
-	gatesChanged := g.switchInputs(wave, record)
-	if changed || gatesChanged {
+	circuitsChanged := g.circuitInputs(wave, record)
+	if changed || circuitsChanged {
 		g.Geo = g.mapGeometry()
 		g.next = g.next[:0]
 		for i, c := range g.Count {
@@ -223,8 +175,8 @@ func (g *Game) ReplayTerrain(events []TerrainEvent) {
 	for _, e := range events {
 		switch {
 		case e.Cell < 0:
-			changed = changed || g.OpenGates[e.Group] != e.Open
-			g.OpenGates[e.Group] = e.Open
+			changed = changed || g.CircuitOn[e.Group] != e.Open
+			g.CircuitOn[e.Group] = e.Open
 		case e.Switch:
 			g.Pressed[e.Cell] = 0
 			if e.Pressed {

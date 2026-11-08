@@ -12,7 +12,7 @@ type Snapshot struct {
 	Owner               []int8
 	Map                 *MapDefinition
 	Durability          []uint8
-	OpenGates           []uint8
+	CircuitOn           []uint8
 	Pressed             []uint8
 }
 
@@ -28,9 +28,9 @@ func (g *Game) Snapshot() Snapshot {
 		s.Map = &m
 		s.Durability = append([]uint8(nil), g.Durability...)
 		s.Pressed = append([]uint8(nil), g.Pressed...)
-		for i, on := range g.OpenGates {
+		for i, on := range g.CircuitOn {
 			if on {
-				s.OpenGates = append(s.OpenGates, uint8(i))
+				s.CircuitOn = append(s.CircuitOn, uint8(i))
 			}
 		}
 	}
@@ -57,38 +57,33 @@ func Restore(s Snapshot) (*Game, error) {
 		if len(s.Durability) != n || len(s.Pressed) != n {
 			return nil, fmt.Errorf("restore: invalid terrain state lengths")
 		}
-		var gateGroups, pressedGroups [256]bool
+		var circuitGroups [256]bool
 		for _, e := range g.Map.Edges {
 			if e.Kind == Gate {
-				gateGroups[e.Group] = true
+				circuitGroups[e.Group] = true
 			}
 		}
 		for i, c := range g.Map.Cells {
-			if s.Durability[i] > 2 || c.Terrain != BreakableWall && s.Durability[i] != 0 || s.Pressed[i] > 1 || !c.Feature.IsSwitch() && s.Pressed[i] != 0 {
+			if s.Durability[i] > 2 || c.Terrain != BreakableWall && s.Durability[i] != 0 || s.Pressed[i] > 1 || !c.Circuit.IsSwitch() && s.Pressed[i] != 0 {
 				return nil, fmt.Errorf("restore: invalid terrain state at cell %d", i)
 			}
-			if c.Feature == HoldSwitch && (s.Pressed[i] != 0) != (s.Count[i] > 0) {
+			if c.Circuit == Hold && (s.Pressed[i] != 0) != (s.Count[i] > 0) {
 				return nil, fmt.Errorf("restore: Hold switch state differs from occupancy")
 			}
-			if s.Pressed[i] != 0 {
-				pressedGroups[c.Group] = true
+			if c.Circuit.IsOutput() {
+				circuitGroups[c.Group] = true
 			}
 		}
-		for _, group := range s.OpenGates {
-			if group == 0 || !gateGroups[group] || !pressedGroups[group] || g.OpenGates[group] {
-				return nil, fmt.Errorf("restore: invalid open Gate group")
+		for _, group := range s.CircuitOn {
+			if group == 0 || !circuitGroups[group] || g.CircuitOn[group] {
+				return nil, fmt.Errorf("restore: invalid circuit polarity")
 			}
-			g.OpenGates[group] = true
-		}
-		for group, pressed := range pressedGroups {
-			if pressed && !g.OpenGates[group] {
-				return nil, fmt.Errorf("restore: pressed switch has closed gates")
-			}
+			g.CircuitOn[group] = true
 		}
 		copy(g.Durability, s.Durability)
 		copy(g.Pressed, s.Pressed)
 		g.Geo = g.mapGeometry()
-	} else if len(s.Durability)+len(s.Pressed)+len(s.OpenGates) != 0 {
+	} else if len(s.Durability)+len(s.Pressed)+len(s.CircuitOn) != 0 {
 		return nil, fmt.Errorf("restore: terrain state without map")
 	}
 	switch {
@@ -110,7 +105,7 @@ func Restore(s Snapshot) (*Game, error) {
 			return nil, fmt.Errorf("restore: cell %d owner %d out of range", i, o)
 		case (c == 0) != (o == NoOwner):
 			return nil, fmt.Errorf("restore: cell %d has %d orbs and owner %d", i, c, o)
-		case !g.Geo.Playable(i) && c != 0:
+		case !g.Geo.Playable(i) && c != 0 && (g.Map == nil || g.TerrainAt(i) != Floor && g.Map.Cells[i].Circuit != Door):
 			return nil, fmt.Errorf("restore: orbs on blocked cell %d", i)
 		case g.Map == nil && g.Geo.Playable(i) && c >= 2*g.Geo.Cap[i]:
 			return nil, fmt.Errorf("restore: cell %d has %d orbs, capacity %d", i, c, g.Geo.Cap[i])
@@ -146,7 +141,11 @@ func (g *Game) Hash() uint64 {
 	}
 	if g.Map != nil {
 		for i, c := range g.Map.Cells {
-			for _, v := range []uint8{uint8(c.Terrain), uint8(c.Feature), c.Group, g.Durability[i], g.Pressed[i]} {
+			initial := uint8(0)
+			if c.InitiallyOpen {
+				initial = 1
+			}
+			for _, v := range []uint8{uint8(c.Terrain), uint8(c.Feature), uint8(c.Circuit), c.Group, initial, g.Durability[i], g.Pressed[i]} {
 				h = (h ^ uint64(v)) * prime
 			}
 		}
@@ -155,10 +154,13 @@ func (g *Game) Hash() uint64 {
 		for _, e := range g.Map.Edges {
 			a, b := min(e.A, e.B), max(e.A, e.B)
 			v := uint64(a) | uint64(b)<<16 | uint64(e.Kind)<<32 | uint64(e.Group)<<40
+			if e.InitiallyOpen {
+				v |= 1 << 48
+			}
 			edges ^= (v ^ 0x9e3779b97f4a7c15) * prime
 		}
 		h = (h ^ edges) * prime
-		for group, on := range g.OpenGates {
+		for group, on := range g.CircuitOn {
 			if on {
 				h = (h ^ uint64(group)) * prime
 			}

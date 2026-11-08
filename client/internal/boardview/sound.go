@@ -21,16 +21,16 @@ func (v *view) terrainSounds(events []core.TerrainEvent) (effects sound.Effects)
 			}
 			continue
 		}
-		switch v.Replay.Map.Cells[e.Cell].Feature {
-		case core.Switch:
+		switch v.Replay.Map.Cells[e.Cell].Circuit {
+		case core.Latch:
 			effects |= sound.Latch
-		case core.ToggleSwitch:
+		case core.Toggle:
 			if e.Pressed {
 				effects |= sound.ToggleOn
 			} else {
 				effects |= sound.ToggleOff
 			}
-		case core.HoldSwitch:
+		case core.Hold:
 			if e.Pressed {
 				effects |= sound.HoldOn
 			} else {

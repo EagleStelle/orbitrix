@@ -58,18 +58,13 @@ func TestMapDraftValidation(t *testing.T) {
 			m.Cells[6], m.Cells[18] = MapCell{Feature: Link, Group: 13}, MapCell{Feature: Link, Group: 13}
 		}, "12 group colors"},
 		{"extra circuit color", func(m *MapDefinition) {
-			m.Cells[6] = MapCell{Feature: Switch, Group: 13}
+			m.Cells[6] = MapCell{Circuit: Latch, Group: 13}
 			m.Edges = []MapEdge{{A: 12, B: 13, Kind: Gate, Group: 13}}
 		}, "12 group colors"},
-		{"orphan Switch", func(m *MapDefinition) { m.Cells[12] = MapCell{Feature: Switch, Group: 1} }, "circuit"},
+		{"orphan Switch", func(m *MapDefinition) { m.Cells[12] = MapCell{Circuit: Latch, Group: 1} }, "circuit"},
 		{"orphan Gate", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 12, B: 13, Kind: Gate, Group: 1}} }, "circuit"},
-		{"duplicate controller", func(m *MapDefinition) {
-			m.Cells[6] = MapCell{Feature: Switch, Group: 1}
-			m.Cells[12] = MapCell{Feature: ToggleSwitch, Group: 1}
-			m.Edges = []MapEdge{{A: 7, B: 8, Kind: Gate, Group: 1}}
-		}, "exactly one switch"},
 		{"feature on Wall", func(m *MapDefinition) { m.Cells[12] = MapCell{Terrain: Wall, Feature: Reservoir} }, "Features need Floor"},
-		{"unused group", func(m *MapDefinition) { m.Cells[12].Group = 1 }, "Only Links and Switches"},
+		{"unused group", func(m *MapDefinition) { m.Cells[12].Group = 1 }, "Only Links and circuit"},
 		{"Barrier group", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 12, B: 13, Group: 1}} }, "Barriers do not use"},
 		{"duplicate edge", func(m *MapDefinition) {
 			m.Edges = []MapEdge{{A: 12, B: 13}, {A: 13, B: 12}}
@@ -165,7 +160,7 @@ func TestMapReservoirDeadEnds(t *testing.T) {
 							e := MapEdge{A: cell, B: neighbor, Kind: obstruction.kind}
 							if e.Kind == Gate {
 								e.Group = 1
-								m.Cells[8] = MapCell{Feature: Switch, Group: 1}
+								m.Cells[8] = MapCell{Circuit: Latch, Group: 1}
 							}
 							m.Edges = append(m.Edges, e)
 						} else {
@@ -192,7 +187,7 @@ func TestMapReservoirDeadEnds(t *testing.T) {
 
 func TestMapGroupLimit(t *testing.T) {
 	m := NewMap(5, 5)
-	m.Cells[6] = MapCell{Feature: Switch, Group: MaxMapGroups}
+	m.Cells[6] = MapCell{Circuit: Latch, Group: MaxMapGroups}
 	m.Cells[0], m.Cells[24] = MapCell{Feature: Link, Group: MaxMapGroups}, MapCell{Feature: Link, Group: MaxMapGroups}
 	m.Edges = []MapEdge{{A: 12, B: 13, Kind: Gate, Group: MaxMapGroups}}
 	if _, err := NewGameWithMap(m, 2); err != nil {
@@ -269,7 +264,7 @@ func TestMapEnclosedFloorConnectivity(t *testing.T) {
 					}
 				}
 			}
-			m.Cells[4*m.Rows+4] = MapCell{Feature: Switch, Group: 1}
+			m.Cells[4*m.Rows+4] = MapCell{Circuit: Latch, Group: 1}
 			m.Edges = []MapEdge{{A: m.Rows + 4, B: m.Rows + 5, Kind: Gate, Group: 1}}
 			issues := m.Validate()
 			if terrain == BreakableWall {
@@ -294,7 +289,7 @@ func TestMapEnclosedFloorConnectivity(t *testing.T) {
 }
 
 func TestMapGateFloorGroups(t *testing.T) {
-	for _, feature := range []Feature{Switch, ToggleSwitch, HoldSwitch} {
+	for _, feature := range []CircuitKind{Latch, Toggle, Hold} {
 		for _, tt := range []struct {
 			name        string
 			controllers []int
@@ -324,7 +319,7 @@ func TestMapGateFloorGroups(t *testing.T) {
 					}
 				}
 				for i, cell := range tt.controllers {
-					m.Cells[cell] = MapCell{Feature: feature, Group: uint8(i + 1)}
+					m.Cells[cell] = MapCell{Circuit: feature, Group: uint8(i + 1)}
 				}
 				if tt.link {
 					m.Cells[11], m.Cells[46] = MapCell{Feature: Link, Group: 1}, MapCell{Feature: Link, Group: 1}
@@ -338,13 +333,13 @@ func TestMapGateFloorGroups(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if g.OpenGates[1] || g.OpenGates[2] || slices.Contains(g.Geo.Neighbours(17), int16(24)) {
+					if g.CircuitOn[1] || g.CircuitOn[2] || slices.Contains(g.Geo.Neighbours(17), int16(24)) {
 						t.Fatal("connectivity validation opened a starting Gate")
 					}
 					if _, err := g.Apply(tt.controllers[0]); err != nil {
 						t.Fatal(err)
 					}
-					if !g.OpenGates[1] || !slices.Contains(g.Geo.Neighbours(17), int16(24)) {
+					if !g.CircuitOn[1] || !slices.Contains(g.Geo.Neighbours(17), int16(24)) {
 						t.Fatal("pressing the switch did not connect the Gate's Floor regions")
 					}
 				} else {
@@ -355,7 +350,7 @@ func TestMapGateFloorGroups(t *testing.T) {
 					for _, issue := range issues {
 						if strings.Contains(issue.Message, "Floor group") {
 							badEdges = append(badEdges, issue.Edges...)
-							if len(issue.Cells) != 1 || !m.Cells[issue.Cells[0]].Feature.IsSwitch() {
+							if len(issue.Cells) != 1 || !m.Cells[issue.Cells[0]].Circuit.IsSwitch() {
 								t.Fatalf("Gate issue must identify its switch: %+v", issue)
 							}
 						}

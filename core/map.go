@@ -23,35 +23,25 @@ const (
 	NoFeature Feature = iota
 	Link
 	Reservoir
-	Switch
-	ToggleSwitch
-	HoldSwitch
 )
-
-func (f Feature) IsSwitch() bool { return f == Switch || f == ToggleSwitch || f == HoldSwitch }
 
 const MaxMapGroups = MaxPlayers
 
-// MapCell stores design-time terrain and a feature. Group identifies a Link pair
-// or a Switch's Gate group; those two kinds use independent group namespaces.
+// MapCell stores terrain, a passive feature or a circuit component. Link pair
+// groups and circuit groups have independent namespaces.
 type MapCell struct {
-	Terrain Terrain
-	Feature Feature
-	Group   uint8
+	Terrain       Terrain
+	Feature       Feature
+	Circuit       CircuitKind
+	Group         uint8
+	InitiallyOpen bool
 }
 
-// EdgeKind describes an obstruction between orthogonally adjacent cells.
-type EdgeKind uint8
-
-const (
-	Barrier EdgeKind = iota
-	Gate
-)
-
 type MapEdge struct {
-	A, B  int
-	Kind  EdgeKind
-	Group uint8 // nonzero for a Gate; zero for a Barrier
+	A, B          int
+	Kind          EdgeKind
+	Group         uint8 // nonzero for a Gate; zero for a Barrier
+	InitiallyOpen bool
 }
 
 // MapDefinition is a saved board design, without any active match state. Cells
@@ -90,8 +80,8 @@ func (m MapDefinition) Clone() MapDefinition {
 
 func (m MapDefinition) FloorCount() int {
 	n := 0
-	for _, c := range m.Cells {
-		if c.Terrain == Floor {
+	for i := range m.Cells {
+		if m.initialFloor(i) {
 			n++
 		}
 	}
@@ -115,13 +105,22 @@ func (m MapDefinition) ValidateStructure() error {
 		return fmt.Errorf("map has too many edges")
 	}
 	for i, c := range m.Cells {
-		if c.Terrain > BreakableWall || c.Feature > HoldSwitch {
+		if c.Terrain > BreakableWall || c.Feature > Reservoir || c.Circuit > Door {
 			return fmt.Errorf("map cell %d has unknown terrain or feature", i)
+		}
+		if c.Feature != NoFeature && c.Circuit != NoCircuit {
+			return fmt.Errorf("map cell %d cannot contain both a feature and a circuit component", i)
+		}
+		if c.InitiallyOpen && !c.Circuit.IsOutput() {
+			return fmt.Errorf("map cell %d has an initial state without an output", i)
 		}
 	}
 	for i, e := range m.Edges {
 		if e.Kind > Gate || e.A < 0 || e.A >= n || e.B < 0 || e.B >= n || !m.adjacent(e.A, e.B) {
 			return fmt.Errorf("map edge %d must join adjacent cells and use a known kind", i)
+		}
+		if e.InitiallyOpen && e.Kind != Gate {
+			return fmt.Errorf("map edge %d has an initial state without an output", i)
 		}
 	}
 	return nil
@@ -136,10 +135,14 @@ func (m MapDefinition) floor(i int) bool {
 	return i >= 0 && i < len(m.Cells) && m.Cells[i].Terrain == Floor
 }
 
+func (m MapDefinition) initialFloor(i int) bool {
+	return m.floor(i) && (m.Cells[i].Circuit != Door || m.Cells[i].InitiallyOpen)
+}
+
 // InitialConnections appends a cell's open neighbors in left/right/up/down/Link
-// order. Every Gate starts closed. Incomplete Link pairs are omitted in previews.
+// order, respecting output starting states. Incomplete Link pairs are omitted.
 func (m MapDefinition) InitialConnections(cell int, dst []int) []int {
-	if !m.floor(cell) || m.Rows <= 0 || m.Cols <= 0 {
+	if !m.initialFloor(cell) || m.Rows <= 0 || m.Cols <= 0 {
 		return dst
 	}
 	c, r := cell/m.Rows, cell%m.Rows
@@ -149,11 +152,14 @@ func (m MapDefinition) InitialConnections(cell int, dst []int) []int {
 			continue
 		}
 		j := x*m.Rows + y
-		if !m.floor(j) {
+		if !m.initialFloor(j) {
 			continue
 		}
 		blocked := false
 		for _, e := range m.Edges {
+			if e.Kind == Gate && e.InitiallyOpen {
+				continue
+			}
 			if e.A == cell && e.B == j || e.B == cell && e.A == j {
 				blocked = true
 				break
@@ -184,7 +190,7 @@ func (m MapDefinition) InitialConnections(cell int, dst []int) []int {
 
 // Capacity is the initial explosion threshold, including a Reservoir's reserve.
 func (m MapDefinition) Capacity(cell int) int {
-	if !m.floor(cell) {
+	if !m.initialFloor(cell) {
 		return 0
 	}
 	var neighbors [5]int
@@ -203,19 +209,24 @@ func (m MapDefinition) Validate() []MapIssue {
 	}
 	var issues []MapIssue
 	var links [256][]int
-	var switches, gates [256][]int
+	var switches, gates, doors [256][]int
 	for i, c := range m.Cells {
 		if c.Feature != NoFeature && c.Terrain != Floor {
 			issues = append(issues, MapIssue{Message: "Features need Floor", Cells: []int{i}})
 		}
-		switch c.Feature {
-		case Link:
+		if c.Circuit != NoCircuit && (c.Terrain != Floor || c.Feature != NoFeature) {
+			issues = append(issues, MapIssue{Message: "Circuit components need empty Floor", Cells: []int{i}})
+		}
+		switch {
+		case c.Feature == Link:
 			links[c.Group] = append(links[c.Group], i)
-		case Switch, ToggleSwitch, HoldSwitch:
+		case c.Circuit.IsSwitch():
 			switches[c.Group] = append(switches[c.Group], i)
+		case c.Circuit.IsOutput():
+			doors[c.Group] = append(doors[c.Group], i)
 		default:
 			if c.Group != 0 {
-				issues = append(issues, MapIssue{Message: "Only Links and Switches use a group", Cells: []int{i}, Group: c.Group})
+				issues = append(issues, MapIssue{Message: "Only Links and circuit components use a group", Cells: []int{i}, Group: c.Group})
 			}
 		}
 		if c.Terrain == BreakableWall {
@@ -250,28 +261,29 @@ func (m MapDefinition) Validate() []MapIssue {
 	}
 	for group := 0; group < len(links); group++ {
 		cells := links[group]
-		if group > MaxMapGroups && len(cells)+len(switches[group])+len(gates[group]) > 0 {
-			issues = append(issues, MapIssue{Message: "Choose one of the 12 group colors", Cells: append(slices.Clone(cells), switches[group]...), Edges: slices.Clone(gates[group]), Group: uint8(group)})
+		circuitCells := append(slices.Clone(switches[group]), doors[group]...)
+		if group > MaxMapGroups && len(cells)+len(circuitCells)+len(gates[group]) > 0 {
+			issues = append(issues, MapIssue{Message: "Choose one of the 12 group colors", Cells: append(slices.Clone(cells), circuitCells...), Edges: slices.Clone(gates[group]), Group: uint8(group)})
 			continue
 		}
 		if len(cells) > 0 && (group == 0 || len(cells) != 2 || m.adjacent(cells[0], cells[len(cells)-1])) {
 			issues = append(issues, MapIssue{Message: "Link group needs exactly two nonadjacent Floor endpoints and a nonzero group", Cells: slices.Clone(cells), Group: uint8(group)})
 		}
-		if len(switches[group])+len(gates[group]) > 0 && (group == 0 || len(switches[group]) != 1 || len(gates[group]) == 0) {
-			issues = append(issues, MapIssue{Message: "A circuit needs exactly one switch and at least one gate", Cells: slices.Clone(switches[group]), Edges: slices.Clone(gates[group]), Group: uint8(group)})
+		if len(circuitCells)+len(gates[group]) > 0 && (group == 0 || len(switches[group]) == 0 || len(gates[group])+len(doors[group]) == 0) {
+			issues = append(issues, MapIssue{Message: "A circuit needs at least one switch and one Gate or Door", Cells: circuitCells, Edges: slices.Clone(gates[group]), Group: uint8(group)})
 		}
 	}
 	var neighbors [5]int
 	first := -1
-	for i, c := range m.Cells {
-		if c.Terrain != Floor {
+	for i := range m.Cells {
+		if !m.initialFloor(i) {
 			continue
 		}
 		if first < 0 {
 			first = i
 		}
 		if m.Capacity(i) < 2 {
-			issues = append(issues, MapIssue{Message: "Floor needs capacity of at least two with Gates closed", Cells: []int{i}})
+			issues = append(issues, MapIssue{Message: "Floor needs initial capacity of at least two", Cells: []int{i}})
 		}
 	}
 	if first < 0 {
@@ -286,8 +298,8 @@ func (m MapDefinition) Validate() []MapIssue {
 	}
 	regions := make([]int, len(m.Cells))
 	queue := make([]int, 0, len(m.Cells))
-	for start, c := range future.Cells {
-		if c.Terrain != Floor || regions[start] != 0 {
+	for start := range future.Cells {
+		if !future.initialFloor(start) || regions[start] != 0 {
 			continue
 		}
 		queue = append(queue[:0], start)
@@ -302,31 +314,67 @@ func (m MapDefinition) Validate() []MapIssue {
 		}
 	}
 	// Merge reachable Gate regions until chains of dependent circuits stop opening.
+	merge := func(a, b int) {
+		for i, region := range regions {
+			if region == b {
+				regions[i] = a
+			}
+		}
+	}
 	for changed := true; changed; {
 		changed = false
 		for _, e := range m.Edges {
-			if e.Kind != Gate || e.Group == 0 || e.Group > MaxMapGroups || len(switches[e.Group]) != 1 {
+			if e.Kind != Gate || e.Group == 0 || e.Group > MaxMapGroups || len(switches[e.Group]) == 0 {
 				continue
 			}
-			a, b, controller := regions[e.A], regions[e.B], regions[switches[e.Group][0]]
-			if a == 0 || b == 0 || controller == 0 || a == b || controller != a && controller != b {
+			a, b := regions[e.A], regions[e.B]
+			accessible := false
+			for _, controller := range switches[e.Group] {
+				accessible = accessible || regions[controller] != 0 && (regions[controller] == a || regions[controller] == b)
+			}
+			if a == 0 || b == 0 || a == b || !accessible {
 				continue
 			}
-			for i, region := range regions {
-				if region == b {
-					regions[i] = a
+			merge(a, b)
+			changed = true
+		}
+		for i, c := range future.Cells {
+			if c.Circuit != Door || regions[i] != 0 {
+				continue
+			}
+			future.Cells[i].InitiallyOpen = true
+			ns := future.InitialConnections(i, neighbors[:0])
+			region := 0
+			for _, n := range ns {
+				for _, controller := range switches[c.Group] {
+					if regions[n] != 0 && regions[n] == regions[controller] {
+						region = regions[n]
+					}
+				}
+			}
+			if region == 0 {
+				future.Cells[i].InitiallyOpen = false
+				continue
+			}
+			regions[i] = region
+			for _, n := range ns {
+				if other := regions[n]; other != 0 && other != region {
+					merge(region, other)
 				}
 			}
 			changed = true
 		}
 	}
 	for i, e := range m.Edges {
-		if e.Kind != Gate || e.Group == 0 || e.Group > MaxMapGroups || len(switches[e.Group]) != 1 || !m.floor(e.A) || !m.floor(e.B) || !m.floor(switches[e.Group][0]) {
+		if e.Kind != Gate || e.Group == 0 || e.Group > MaxMapGroups || len(switches[e.Group]) == 0 || !m.floor(e.A) || !m.floor(e.B) {
 			continue
 		}
-		controller := switches[e.Group][0]
-		if regions[controller] != regions[e.A] && regions[controller] != regions[e.B] {
-			issues = append(issues, MapIssue{Message: "Gate must share a Floor group with its switch", Cells: []int{controller}, Edges: []int{i}, Group: e.Group})
+		accessible := e.InitiallyOpen
+		for _, controller := range switches[e.Group] {
+			accessible = accessible || regions[controller] != 0 && (regions[controller] == regions[e.A] || regions[controller] == regions[e.B])
+		}
+		if !accessible {
+			issues = append(issues, MapIssue{Message: "Gate must share a Floor group with a switch", Cells: slices.Clone(switches[e.Group]), Edges: []int{i}, Group: e.Group})
 		}
 	}
 	var disconnected []int
@@ -370,8 +418,8 @@ func StarterMaps() []MapDefinition {
 	for _, i := range []int{3*9 + 3, 5*9 + 5, 3*9 + 5, 5*9 + 3} {
 		changing.Cells[i].Terrain = BreakableWall
 	}
-	changing.Cells[2*9+4].Feature, changing.Cells[2*9+4].Group = Switch, 1
-	changing.Cells[6*9+4].Feature, changing.Cells[6*9+4].Group = ToggleSwitch, 2
+	changing.Cells[2*9+4].Circuit, changing.Cells[2*9+4].Group = Latch, 1
+	changing.Cells[6*9+4].Circuit, changing.Cells[6*9+4].Group = Toggle, 2
 	changing.Edges = []MapEdge{
 		{A: 2*9 + 4, B: 2*9 + 5, Kind: Gate, Group: 1},
 		{A: 6*9 + 3, B: 6*9 + 4, Kind: Gate, Group: 2},

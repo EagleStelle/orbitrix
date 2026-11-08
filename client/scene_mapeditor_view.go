@@ -72,7 +72,10 @@ func (e *mapEditor) layout(a *app) {
 		if compact {
 			dockHeight = 136 * u
 		}
-		dockH := min(dockHeight, body.H*.38)
+		if e.outputTool() {
+			dockHeight += 48 * u
+		}
+		dockH := min(dockHeight, body.H*.50)
 		e.dock = ui.Rect{X: v.X, Y: v.Bottom() - dockH, W: v.W, H: dockH}
 		top := body.Y
 		e.canvas = ui.Rect{X: v.X, Y: top, W: v.W, H: max(16*u, e.dock.Y-top-gap)}
@@ -105,8 +108,17 @@ func (e *mapEditor) layout(a *app) {
 	if compact {
 		infoH = 32 * u
 	}
+	if e.outputTool() && !e.portrait {
+		infoH += 26 * u
+	}
 	e.info = ui.Rect{X: e.dock.X + 8*u, Y: e.dock.Bottom() - infoH - 8*u, W: e.dock.W - 16*u, H: infoH}
 	e.channelB = ui.Rect{X: e.info.X, Y: e.info.Cy() - button/2, W: button, H: button}
+	e.initialB = ui.Rect{}
+	paletteBottom := e.info.Y - 8*u
+	if e.outputTool() {
+		e.initialB = ui.Rect{X: e.info.X, Y: e.info.Y - 48*u, W: e.info.W, H: 44 * u}
+		paletteBottom = e.initialB.Y - 8*u
+	}
 	e.palette = e.palette[:0]
 	e.paletteTools = e.paletteTools[:0]
 	if e.portrait {
@@ -138,7 +150,7 @@ func (e *mapEditor) layout(a *app) {
 			e.tabs[e.category] = ui.Rect{X: e.dock.X + 8*u, Y: top, W: e.dock.W - 16*u, H: button}
 			top += headerStep
 		}
-		viewport := ui.Rect{X: e.dock.X + 8*u, Y: top, W: e.dock.W - 16*u, H: max(1, e.info.Y-top-8*u)}
+		viewport := ui.Rect{X: e.dock.X + 8*u, Y: top, W: e.dock.W - 16*u, H: max(1, paletteBottom-top)}
 		total := 0.0
 		for g, c := range editorGroups {
 			if !e.wide && g != e.category {
@@ -319,7 +331,9 @@ func (e *mapEditor) renderMap(a *app) {
 		e.mapImage.Clear()
 	}
 	state := boardview.MapState{Map: &e.m}
+	capacityDesign := e.m
 	if e.preview {
+		capacityDesign = e.m.Clone()
 		if cap(e.previewState) < len(e.m.Cells) {
 			e.previewState = make([]uint8, len(e.m.Cells))
 		} else {
@@ -327,9 +341,21 @@ func (e *mapEditor) renderMap(a *app) {
 			clear(e.previewState)
 		}
 		for i, c := range e.m.Cells {
-			if c.Feature.IsSwitch() {
+			if c.Circuit != core.NoCircuit {
+				state.CircuitOn[c.Group] = true
+			}
+			if c.Circuit.IsOutput() {
+				capacityDesign.Cells[i].InitiallyOpen = !c.InitiallyOpen
+			}
+			if c.Circuit.IsSwitch() {
 				e.previewState[i] = 1
-				state.OpenGates[c.Group] = true
+				state.CircuitOn[c.Group] = true
+			}
+		}
+		for i, edge := range e.m.Edges {
+			if edge.Kind == core.Gate {
+				capacityDesign.Edges[i].InitiallyOpen = !edge.InitiallyOpen
+				state.CircuitOn[edge.Group] = true
 			}
 		}
 		state.Pressed = e.previewState
@@ -337,22 +363,16 @@ func (e *mapEditor) renderMap(a *app) {
 	tr := boardview.MapTransform{Cell: cell}
 	boardview.DrawMapArt(e.mapImage, a.sc, state, tr, true, a.set.Marks)
 	face := ui.NewFace(ui.SrcUI, cell*.24, 700)
-	var opened [core.MaxSize * core.MaxSize]uint8
-	if e.capacities && e.preview {
-		for _, edge := range e.m.Edges {
-			if edge.Kind == core.Gate && state.OpenGates[edge.Group] {
-				opened[edge.A]++
-				opened[edge.B]++
-			}
-		}
-	}
 	for i, c := range e.m.Cells {
 		x, y := float64(i/e.m.Rows)*cell, float64(i%e.m.Rows)*cell
 		r := ui.Rect{X: x + 1, Y: y + 1, W: cell - 2, H: cell - 2}
 		if e.capacities && c.Terrain == core.Floor {
-			cap := int(e.capacity[i]) + int(opened[i])
+			cap := int(e.capacity[i])
+			if e.preview {
+				cap = capacityDesign.Capacity(i)
+			}
 			cap = min(255, cap)
-			if c.Feature == core.NoFeature {
+			if c.Feature == core.NoFeature && c.Circuit == core.NoCircuit {
 				ui.DrawText(e.mapImage, ui.Numbers[cap], face, x+cell*.5, y+cell*.5, text.AlignCenter, a.sc.Ink)
 			} else {
 				badge := ui.Rect{X: x + cell*.72, Y: y + cell*.04, W: cell * .24, H: cell * .25}
@@ -374,7 +394,7 @@ func (e *mapEditor) renderMap(a *app) {
 }
 
 func (e *mapEditor) renderIcons(a *app) {
-	if e.icons != nil && e.iconTheme == a.sc && e.iconMarks == a.set.Marks && e.iconGroup == e.group && e.iconPreview == e.preview {
+	if e.icons != nil && e.iconTheme == a.sc && e.iconMarks == a.set.Marks && e.iconGroup == e.group && e.iconPreview == e.preview && e.iconInitial == e.initiallyOpen {
 		return
 	}
 	if e.icons == nil {
@@ -389,13 +409,18 @@ func (e *mapEditor) renderIcons(a *app) {
 		if i == brushErase || i == brushPan {
 			continue
 		}
-		boardview.DrawMapBrush(e.icons, a.sc, b, ui.Rect{X: float64(i)*64 + 4, Y: 4, W: 56, H: 56}, e.group, e.preview, a.set.Marks)
+		pressed := e.preview
+		if b.Circuit.IsOutput() || b.Edge == int(core.Gate) {
+			pressed = core.CircuitOpen(e.initiallyOpen, e.preview)
+		}
+		boardview.DrawMapBrush(e.icons, a.sc, b, ui.Rect{X: float64(i)*64 + 4, Y: 4, W: 56, H: 56}, e.group, pressed, a.set.Marks)
 	}
 	// A circuit swatch is a relationship control, separate from component art.
 	cx := float64(brushErase*64 + 32)
 	ui.FillRound(e.icons, ui.Rect{X: cx - 15, Y: 17, W: 30, H: 30}, 5, boardview.PartnerColor(a.sc, e.group))
 
 	e.iconTheme, e.iconMarks, e.iconGroup, e.iconPreview = a.sc, a.set.Marks, e.group, e.preview
+	e.iconInitial = e.initiallyOpen
 }
 func (e *mapEditor) brushIcon(dst *ebiten.Image, tool int, r ui.Rect, alpha float32) {
 	op := ebiten.DrawImageOptions{Filter: ebiten.FilterLinear, DisableMipmaps: true}
@@ -498,7 +523,7 @@ func (e *mapEditor) draw(dst *ebiten.Image, a *app) {
 		if edge, ok := e.hoverEdge(i, a.in.x, a.in.y); ok {
 			e.drawEdgeHighlight(clip, edge, boardview.MapTransform{X: ox, Y: oy, Cell: k}, u, sc.Ink)
 		} else if e.tool != brushPan && editorBrushes[e.tool].Edge < 0 &&
-			(e.tool != brushErase || e.m.Cells[i].Terrain != core.Floor || e.m.Cells[i].Feature != core.NoFeature) {
+			(e.tool != brushErase || e.m.Cells[i].Terrain != core.Floor || e.m.Cells[i].Feature != core.NoFeature || e.m.Cells[i].Circuit != core.NoCircuit) {
 			if !e.stroke && e.tool != brushErase {
 				e.brushIcon(clip, e.tool, r, .45)
 			}
@@ -574,6 +599,13 @@ func (e *mapEditor) drawDock(dst *ebiten.Image, a *app) {
 		}
 	}
 	e.dockScroll.DrawScrollbar(dst, a.ui())
+	if e.outputTool() {
+		label := "Starts closed"
+		if e.initiallyOpen {
+			label = "Starts open"
+		}
+		editorControl(dst, a, e.initialB, label, e.initiallyOpen, true, false)
+	}
 	ui.FillRound(dst, e.info, 8*u, sc.Tile)
 	x := e.info.X + 4*u
 	if e.channelTool() {
@@ -589,6 +621,9 @@ func (e *mapEditor) drawDock(dst *ebiten.Image, a *app) {
 	maxLines := 2
 	if !e.portrait {
 		maxLines = 3
+		if e.outputTool() {
+			maxLines = 4
+		}
 	}
 	for i, l := range e.helpLines {
 		if i >= maxLines {
@@ -597,7 +632,7 @@ func (e *mapEditor) drawDock(dst *ebiten.Image, a *app) {
 		ui.DrawText(dst, l, a.f.Small, x, e.info.Cy()+(float64(i)-float64(min(maxLines, len(e.helpLines))-1)/2)*13*u, text.AlignStart, sc.Dim)
 	}
 	if e.tools && !e.portrait {
-		ui.FillRound(dst, ui.Rect{X: e.dock.X, Y: e.dock.Y, W: e.dock.W, H: 156 * u}, 10*u, sc.Ground)
+		ui.FillRound(dst, ui.Rect{X: e.dock.X, Y: e.dock.Y, W: e.dock.W, H: 8*u + 48*u*float64(len(e.tabs))}, 10*u, sc.Ground)
 		for i, r := range e.tabs {
 			editorControl(dst, a, r, editorGroups[i].name, i == e.category, true, false)
 		}

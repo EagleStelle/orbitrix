@@ -19,7 +19,7 @@ var mapPath vector.Path
 type MapState struct {
 	Map                 *core.MapDefinition
 	Durability, Pressed []uint8
-	OpenGates           [256]bool
+	CircuitOn           [256]bool
 	Owner               []int8
 	Count               []uint8
 }
@@ -32,6 +32,7 @@ type MapTransform struct {
 type Brush struct {
 	Terrain core.Terrain
 	Feature core.Feature
+	Circuit core.CircuitKind
 	Edge    int // -1: cell, 0: Barrier, 1: Gate
 }
 
@@ -259,10 +260,9 @@ func mapArtWallVertex(state *MapState, gx, gy int) (terrain [4]core.Terrain, cou
 	return
 }
 
-func drawMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, r ui.Rect, pressed, _ bool) {
+func drawMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, r ui.Rect) {
 	x, y := r.Cx(), r.Cy()
-	c := PartnerColor(sc, group)
-	body, inner, radius, innerRadius, width := mapDeviceGeometry(r)
+	body, _, radius, _, width := mapDeviceGeometry(r)
 	switch feature {
 	case core.Link:
 		drawPartnerMark(dst, sc, group, x, y, body.W/.72, false)
@@ -276,14 +276,42 @@ func drawMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, gro
 			ui.Line(dst, x+d[0]*pocket.W/2, y+d[1]*pocket.H/2,
 				x+d[0]*(body.W/2-2*width), y+d[1]*(body.H/2-2*width), width, sc.Dim)
 		}
-	case core.Switch:
+	}
+}
+
+func drawMapCircuit(dst *ebiten.Image, sc *ui.Palette, component core.CircuitKind, group uint8, r ui.Rect, pressed bool) {
+	c := PartnerColor(sc, group)
+	body, inner, radius, innerRadius, width := mapDeviceGeometry(r)
+	switch component {
+	case core.Door:
+		ink := sc.Dim
+		if !pressed {
+			ui.FillRound(dst, body, radius, c)
+			ink = ui.InkOn(c)
+		}
+		x, y, k := body.Cx(), body.Cy(), body.W
+		ui.StrokeRound(dst, ui.Rect{X: x - .20*k, Y: y - .02*k, W: .40 * k, H: .32 * k}, min(innerRadius, width), width, ink)
+		// Opening lifts the free end of the shackle; the colored obstruction vanishes.
+		offset, end := 0.0, -.02
+		if pressed {
+			offset, end = .16, -.10
+		}
+		p := &mapPath
+		p.Reset()
+		p.MoveTo(float32(x+(-.13+offset)*k), float32(y-.02*k))
+		p.LineTo(float32(x+(-.13+offset)*k), float32(y-.18*k))
+		p.QuadTo(float32(x+(-.13+offset)*k), float32(y-.31*k), float32(x+offset*k), float32(y-.31*k))
+		p.QuadTo(float32(x+(.13+offset)*k), float32(y-.31*k), float32(x+(.13+offset)*k), float32(y-.18*k))
+		p.LineTo(float32(x+(.13+offset)*k), float32(y+end*k))
+		ui.StrokePath(dst, p, width, ink)
+	case core.Latch:
 		ui.StrokeRound(dst, body, radius, width, sc.Dim)
 		if pressed {
 			ui.FillRound(dst, inner, innerRadius, c)
 		} else {
 			ui.StrokeRound(dst, inner, innerRadius, width, c)
 		}
-	case core.ToggleSwitch:
+	case core.Toggle:
 		ui.StrokeRound(dst, body, radius, width, sc.Dim)
 		filled := inner
 		filled.W /= 2
@@ -294,7 +322,7 @@ func drawMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, gro
 		ui.FillRound(dst.SubImage(clip).(*ebiten.Image), inner, innerRadius, c)
 		ui.StrokeRound(dst, inner, innerRadius, width, c)
 		ui.Line(dst, inner.Cx(), inner.Y+width/2, inner.Cx(), inner.Bottom()-width/2, width, c)
-	case core.HoldSwitch:
+	case core.Hold:
 		// Four corner brackets surround the occupancy plate in plan view.
 		drawMapHoldFrame(dst, body, radius, width, sc.Dim)
 		if pressed {
@@ -354,7 +382,7 @@ func mapArtGateContinuesAt(m *core.MapDefinition, edges []core.MapEdge, index in
 	}
 	e := edges[index]
 	for j, other := range edges {
-		if j == index || other.Kind != core.Gate || other.Group != e.Group {
+		if j == index || other.Kind != core.Gate || other.Group != e.Group || other.InitiallyOpen != e.InitiallyOpen {
 			continue
 		}
 		ox0, oy0, ox1, oy1, ok := MapArtEdge(m, other)
@@ -423,7 +451,11 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		if cfg.Feature == core.Reservoir {
 			featureScheme.Dim = mapReservoirColor(sc, state, i)
 		}
-		drawMapFeature(dst, &featureScheme, cfg.Feature, cfg.Group, r, pressed, marks)
+		drawMapFeature(dst, &featureScheme, cfg.Feature, cfg.Group, r)
+		if cfg.Circuit.IsOutput() {
+			pressed = core.CircuitOpen(cfg.InitiallyOpen, state.CircuitOn[cfg.Group])
+		}
+		drawMapCircuit(dst, sc, cfg.Circuit, cfg.Group, r, pressed)
 	}
 	drawMapWallCorners(dst, sc, &state, tr)
 	for edgeIndex, e := range m.Edges {
@@ -435,7 +467,7 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		drawMapWallJoins(dst, sc, &state, tr, gx1, gy1)
 		x0, y0 := tr.Point(m.Rows, gx0, gy0)
 		x1, y1 := tr.Point(m.Rows, gx1, gy1)
-		open := state.OpenGates[e.Group]
+		open := e.Kind == core.Gate && core.CircuitOpen(e.InitiallyOpen, state.CircuitOn[e.Group])
 		openStart, openEnd := true, true
 		if open {
 			openStart = !mapArtGateContinuesAt(m, m.Edges, edgeIndex, gx0, gy0)
@@ -465,5 +497,6 @@ func DrawMapBrush(dst *ebiten.Image, sc *ui.Palette, brush Brush, r ui.Rect, gro
 	}
 	body, radius := mapTileGeometry(r)
 	ui.FillRound(dst, body, radius, sc.Tile)
-	drawMapFeature(dst, sc, brush.Feature, group, r, pressed, marks)
+	drawMapFeature(dst, sc, brush.Feature, group, r)
+	drawMapCircuit(dst, sc, brush.Circuit, group, r, pressed)
 }
