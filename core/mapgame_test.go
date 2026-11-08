@@ -12,21 +12,44 @@ func seedMapCell(g *Game, i int, p int8, n uint8) {
 }
 
 func TestReservoirConserves(t *testing.T) {
-	m := NewMap(5, 5)
-	m.Cells[12].Feature = Reservoir
-	g, err := NewGameWithMap(m, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	seedMapCell(g, 12, 0, 4)
-	seedMapCell(g, 24, 1, 1)
-	g.Played = 3
-	w, err := g.Apply(12)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(w) != 1 || g.Count[12] != 1 || g.Orbs[0]+g.Orbs[1] != 6 {
-		t.Fatalf("waves=%v count=%d totals=%v", w, g.Count[12], g.Orbs)
+	for _, connections := range []int{1, 4} {
+		t.Run(fmt.Sprintf("connections=%d", connections), func(t *testing.T) {
+			m := NewMap(5, 5)
+			m.Cells[12].Feature = Reservoir
+			for _, neighbor := range []int{7, 17, 11, 13}[connections:] {
+				m.Edges = append(m.Edges, MapEdge{A: 12, B: neighbor, Kind: Barrier})
+			}
+			g, err := NewGameWithMap(m, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			seedMapCell(g, 12, 0, uint8(connections))
+			seedMapCell(g, 24, 1, 1)
+			g.Played = 3
+			simulated := g.Clone()
+			w, err := g.Apply(12)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(w) != 1 || g.Count[12] != 1 || g.Orbs[0]+g.Orbs[1] != int32(connections+2) {
+				t.Fatalf("waves=%v count=%d totals=%v", w, g.Count[12], g.Orbs)
+			}
+			for _, neighbor := range g.Geo.Neighbours(12) {
+				if g.Count[neighbor] != 1 || g.Owner[neighbor] != 0 {
+					t.Fatal("explosion must send one orb per connection")
+				}
+			}
+			if err := simulated.Simulate(12); err != nil || simulated.Hash() != g.Hash() {
+				t.Fatalf("simulation differs: %v", err)
+			}
+			restored, err := Restore(g.Snapshot())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if restored.Hash() != g.Hash() {
+				t.Fatal("snapshot round trip differs")
+			}
+		})
 	}
 }
 

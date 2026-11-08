@@ -497,7 +497,7 @@ func (e *mapEditor) draw(dst *ebiten.Image, a *app) {
 		r := ui.Rect{X: x, Y: y, W: k, H: k}
 		if edge, ok := e.hoverEdge(i, a.in.x, a.in.y); ok {
 			e.drawEdgeHighlight(clip, edge, boardview.MapTransform{X: ox, Y: oy, Cell: k}, u, sc.Ink)
-		} else if e.tool != brushPan && e.tool != brushBarrier && e.tool != brushGate &&
+		} else if e.tool != brushPan && editorBrushes[e.tool].Edge < 0 &&
 			(e.tool != brushErase || e.m.Cells[i].Terrain != core.Floor || e.m.Cells[i].Feature != core.NoFeature) {
 			if !e.stroke && e.tool != brushErase {
 				e.brushIcon(clip, e.tool, r, .45)
@@ -644,22 +644,24 @@ func editorActionSave(dst *ebiten.Image, a *app, r ui.Rect) {
 }
 
 func (e *mapEditor) hoverEdge(i int, x, y float64) (core.MapEdge, bool) {
-	switch e.tool {
-	case brushErase:
+	if e.tool == brushErase {
 		index := e.eraseEdgeAt(i, x, y)
 		if index < 0 {
 			return core.MapEdge{}, false
 		}
 		return e.m.Edges[index], true
-	case brushBarrier, brushGate:
+	}
+	if editorBrushes[e.tool].Edge >= 0 {
 		aa, bb := e.edgeAt(i, x, y)
+		if e.stroke {
+			aa, bb = e.edgeA, e.edgeB
+		}
 		if aa < 0 {
 			return core.MapEdge{}, false
 		}
 		return core.MapEdge{A: aa, B: bb}, true
-	default:
-		return core.MapEdge{}, false
 	}
+	return core.MapEdge{}, false
 }
 
 // Issues, placement and erase share the same boundary geometry and outline.

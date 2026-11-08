@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -77,7 +78,7 @@ func TestMapDraftValidation(t *testing.T) {
 			m.Cells[12].Terrain = Wall
 			m.Edges = []MapEdge{{A: 12, B: 13}}
 		}, "need Floor on both sides"},
-		{"corner dead end", func(m *MapDefinition) { m.Cells[1].Terrain = Wall }, "at least two connections"},
+		{"corner dead end", func(m *MapDefinition) { m.Cells[1].Terrain = Wall }, "capacity of at least two"},
 		{"isolated Floor", func(m *MapDefinition) {
 			for _, i := range []int{7, 11, 13, 17} {
 				m.Cells[i].Terrain = Wall
@@ -137,6 +138,55 @@ func TestMapStructureRejectsMalformedData(t *testing.T) {
 				t.Fatal("accepted malformed map")
 			}
 		})
+	}
+}
+
+func TestMapReservoirDeadEnds(t *testing.T) {
+	for _, obstruction := range []struct {
+		name    string
+		terrain Terrain
+		edge    bool
+		kind    EdgeKind
+	}{
+		{name: "Wall", terrain: Wall},
+		{name: "Void", terrain: Void},
+		{name: "Breakable Wall", terrain: BreakableWall},
+		{name: "Barrier", edge: true, kind: Barrier},
+		{name: "Gate", edge: true, kind: Gate},
+	} {
+		for _, connections := range []int{0, 1, 2} {
+			for _, feature := range []Feature{NoFeature, Reservoir} {
+				t.Run(fmt.Sprintf("%s/connections=%d/feature=%d", obstruction.name, connections, feature), func(t *testing.T) {
+					m := NewMap(7, 7)
+					const cell = 24
+					m.Cells[cell].Feature = feature
+					for _, neighbor := range []int{17, 31, 23, 25}[connections:] {
+						if obstruction.edge {
+							e := MapEdge{A: cell, B: neighbor, Kind: obstruction.kind}
+							if e.Kind == Gate {
+								e.Group = 1
+								m.Cells[8] = MapCell{Feature: Switch, Group: 1}
+							}
+							m.Edges = append(m.Edges, e)
+						} else {
+							m.Cells[neighbor].Terrain = obstruction.terrain
+						}
+					}
+					valid := connections == 2 || connections == 1 && feature == Reservoir
+					issues := m.Validate()
+					if valid {
+						if len(issues) != 0 {
+							t.Fatalf("playable Floor rejected: %v", issues)
+						}
+					} else if !slices.ContainsFunc(issues, func(issue MapIssue) bool { return slices.Contains(issue.Cells, cell) }) {
+						t.Fatalf("invalid Floor must be highlighted: %v", issues)
+					}
+					if _, err := NewGameWithMap(m, 2); (err == nil) != valid {
+						t.Fatalf("game acceptance must match Floor validity %v: %v", valid, err)
+					}
+				})
+			}
+		}
 	}
 }
 
@@ -205,5 +255,121 @@ func TestLinksCanConnectSeparateRegions(t *testing.T) {
 	m.Cells[3*5+2] = MapCell{Feature: Link, Group: 1}
 	if issues := m.Validate(); len(issues) != 0 {
 		t.Fatalf("Link should connect both Floor regions: %v", issues)
+	}
+}
+
+func TestMapEnclosedFloorConnectivity(t *testing.T) {
+	for _, terrain := range []Terrain{BreakableWall, Wall, Void} {
+		t.Run([]string{"Floor", "Wall", "Void", "Breakable Wall"}[terrain], func(t *testing.T) {
+			m := NewMap(9, 9)
+			for c := 2; c <= 6; c++ {
+				for r := 2; r <= 6; r++ {
+					if c == 2 || c == 6 || r == 2 || r == 6 {
+						m.Cells[c*m.Rows+r].Terrain = terrain
+					}
+				}
+			}
+			m.Cells[4*m.Rows+4] = MapCell{Feature: Switch, Group: 1}
+			m.Edges = []MapEdge{{A: m.Rows + 4, B: m.Rows + 5, Kind: Gate, Group: 1}}
+			issues := m.Validate()
+			if terrain == BreakableWall {
+				if len(issues) != 0 {
+					t.Fatalf("breakable enclosure must be playable: %v", issues)
+				}
+				g, err := NewGameWithMap(m, 2)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if g.TerrainAt(2*m.Rows+4) != BreakableWall || g.Geo.Cap[3*m.Rows+3] != 2 {
+					t.Fatal("connectivity validation changed the starting terrain or capacity")
+				}
+			} else if !slices.ContainsFunc(issues, func(issue MapIssue) bool { return strings.Contains(issue.Message, "All Floor must connect") }) {
+				t.Fatalf("permanent enclosure must remain invalid: %v", issues)
+			}
+			if m.Cells[2*m.Rows+4].Terrain != terrain {
+				t.Fatal("validation changed the saved terrain")
+			}
+		})
+	}
+}
+
+func TestMapGateFloorGroups(t *testing.T) {
+	for _, feature := range []Feature{Switch, ToggleSwitch, HoldSwitch} {
+		for _, tt := range []struct {
+			name        string
+			controllers []int
+			groups      []uint8
+			link        bool
+			valid       bool
+			badEdges    []int
+		}{
+			{name: "switch on first side", controllers: []int{10}, groups: []uint8{1, 1}, valid: true},
+			{name: "switch on last side", controllers: []int{45}, groups: []uint8{1, 1}, valid: true},
+			{name: "successive circuits", controllers: []int{10, 31}, groups: []uint8{1, 2}, valid: true},
+			{name: "circular dependency", controllers: []int{45, 10}, groups: []uint8{1, 2}, badEdges: []int{3, 10}},
+			{name: "unrelated switch", controllers: []int{45}, groups: []uint8{1, 0}, badEdges: []int{3}},
+			{name: "Link reaches switch", controllers: []int{45}, groups: []uint8{1, 0}, link: true, valid: true},
+			{name: "permanent Barriers", groups: []uint8{0, 0}},
+		} {
+			t.Run(fmt.Sprintf("%d/%s", feature, tt.name), func(t *testing.T) {
+				m := NewMap(9, 7)
+				for _, c := range []int{2, 5} {
+					for r := 0; r < m.Rows; r++ {
+						m.Edges = append(m.Edges, MapEdge{A: c*m.Rows + r, B: (c+1)*m.Rows + r, Kind: Barrier})
+					}
+				}
+				for i, group := range tt.groups {
+					if group != 0 {
+						m.Edges[i*m.Rows+3].Kind, m.Edges[i*m.Rows+3].Group = Gate, group
+					}
+				}
+				for i, cell := range tt.controllers {
+					m.Cells[cell] = MapCell{Feature: feature, Group: uint8(i + 1)}
+				}
+				if tt.link {
+					m.Cells[11], m.Cells[46] = MapCell{Feature: Link, Group: 1}, MapCell{Feature: Link, Group: 1}
+				}
+				issues := m.Validate()
+				if tt.valid {
+					if len(issues) != 0 {
+						t.Fatalf("reachable circuit must be playable: %v", issues)
+					}
+					g, err := NewGameWithMap(m, 2)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if g.OpenGates[1] || g.OpenGates[2] || slices.Contains(g.Geo.Neighbours(17), int16(24)) {
+						t.Fatal("connectivity validation opened a starting Gate")
+					}
+					if _, err := g.Apply(tt.controllers[0]); err != nil {
+						t.Fatal(err)
+					}
+					if !g.OpenGates[1] || !slices.Contains(g.Geo.Neighbours(17), int16(24)) {
+						t.Fatal("pressing the switch did not connect the Gate's Floor regions")
+					}
+				} else {
+					if len(issues) == 0 {
+						t.Fatal("permanently separated Floor was accepted")
+					}
+					var badEdges []int
+					for _, issue := range issues {
+						if strings.Contains(issue.Message, "Floor group") {
+							badEdges = append(badEdges, issue.Edges...)
+							if len(issue.Cells) != 1 || !m.Cells[issue.Cells[0]].Feature.IsSwitch() {
+								t.Fatalf("Gate issue must identify its switch: %+v", issue)
+							}
+						}
+					}
+					if !slices.Equal(badEdges, tt.badEdges) {
+						t.Fatalf("unreachable Gates = %v, want %v; issues: %v", badEdges, tt.badEdges, issues)
+					}
+				}
+				// Reversing edge order must not change whether a Gate chain is reachable.
+				slices.Reverse(m.Edges)
+				if valid := len(m.Validate()) == 0; valid != tt.valid {
+					t.Fatalf("reversed Gate order changed validity to %v", valid)
+				}
+			})
+		}
 	}
 }

@@ -25,8 +25,11 @@ Decisions that future changes have to respect, and why. How things work is in [a
   damage and switch effects after transfers and updates capacity before the next wave is selected. Search copies
   install their own replacement topology, and presentation replays explicit pressed/released and open/closed events
   at the same boundary. This prevents iteration order or animation timing from changing the rules.
-- Closed-Gate topology must connect every initial Floor with minimum degree two. Breakable Walls require two
-  initial Floor neighbors. This keeps first placements non-explosive and prevents unreachable opponents.
+- Closed-Gate topology gives every initial Floor capacity of at least two, including a Reservoir's reserve, and
+  Breakable Walls require two initial Floor neighbors, keeping first placements non-explosive. Connectivity counts
+  destroyed Breakable Walls and Gates whose controller shares a Floor group with either endpoint. Reachable Gates
+  merge groups until no more circuits can connect them; permanently isolated Floor and circular Gate dependencies
+  remain invalid.
 - Map files carry a bounded, versioned binary payload and checksum. QR links embed it in a URL fragment; there is
   no map lookup service. Invalid gameplay drafts remain portable, but malformed data is rejected.
 - Portable exports use format 2 and `orbitrix-map2.` codes; format-1 files/codes remain importable. Legacy designs

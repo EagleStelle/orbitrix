@@ -24,7 +24,7 @@ A **map** is the saved design. A **board** is that design in a match. A **cell**
 
 The palette groups **Terrain** (Floor, Wall, Void, Barrier), **Structures** (Breakable wall, Gate), and **Devices** (Link, Reservoir, Latch, Toggle, Hold). Terrain stays unchanged during play; Structures can change through damage or switch control. Desktop shows a compact icon-and-label list. Short landscape uses a category picker and one list; portrait uses category tabs and a compact icon-and-label shelf. The selected tool stays outlined. Its inspector shows only a short functional description, plus a relationship swatch when relevant; it does not repeat the tool's name or icon.
 
-Edit the map name in the header, beside **Test**, **Save**, and **More** (the three-dot button). Undo, Redo, Erase, Pan, zoom out, Fit, and zoom in remain beside the canvas. Drag to paint one undoable stroke. Erase removes an edge obstruction when it hits one; otherwise it restores Floor. Pan and zoom make large maps reachable; Fit resets both.
+Edit the map name in the header, beside **Test**, **Save**, and **More** (the three-dot button). Undo, Redo, Erase, Pan, zoom out, Fit, and zoom in remain beside the canvas. Drag to paint one undoable stroke. Edge tools trace the drag between grid corners: horizontal and vertical passes stay on that line, and a held drag can turn corners without wrapping each Floor cell. A tap places one edge. Erase removes an edge obstruction when it hits one; otherwise it restores Floor. Pan and zoom make large maps reachable; Fit resets both.
 
 Link placement takes two distant Floor endpoints. The inspector's **Pair color** or **Circuit color** swatch opens a single page of twelve group colors, taken directly from the orb palette in the same order. Link pairs and switch circuits use separate identity sets within those twelve colors. Map art and relationship swatches stay identical with Colorblind enabled or disabled. Neither state adds black/white stamps, notches, or identity patterns; player and orb marks elsewhere stay unchanged. A contextual line helps find a Link's partner during placement or hover.
 
@@ -34,7 +34,9 @@ Save commits the draft to the library. Unsaved work is recovered separately afte
 
 ## Valid maps
 
-Dimensions are 3–40 cells per side. With every Gate closed and Links included, all initial Floor must connect, and each Floor must have at least two connections. Every Breakable Wall must border at least two initial Floor cells. These checks preserve the opening round and prevent isolated or unreachable players.
+Dimensions are 3–40 cells per side. With every Gate closed and Links included, each initial Floor must have capacity of at least two. A Reservoir makes Floor with one open connection valid by raising its capacity to two; Floor with no open connections remains invalid even with a Reservoir. Every Breakable Wall must border at least two initial Floor cells. These checks preserve the opening round.
+
+All initial Floor must eventually connect, counting Breakable Walls as future Floor. Gates may separate Floor groups when their matching switch is reachable from at least one side without opening that Gate first. Reachable Gates can connect further switches and Gates; circular dependencies are invalid. Links also connect Floor groups. Wall, Void, and Barriers remain permanent obstructions, so regions enclosed only by them are invalid.
 
 Links need exactly two distinct, nonadjacent Floor endpoints. Features require Floor. Barriers and Gates require an orthogonal Floor edge, with only one element on that edge. Each circuit needs exactly one controller (Latch, Toggle, or Hold) and at least one Gate. The editor refuses a second controller in a circuit. Player count cannot exceed initial Floor count.
 

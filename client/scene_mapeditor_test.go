@@ -461,6 +461,68 @@ func TestEditorIssueHighlightsTargetElements(t *testing.T) {
 	}
 }
 
+func TestEditorAllowsBreakableEnclosureAndHighlightsUnreachableGate(t *testing.T) {
+	m := core.NewMap(9, 9)
+	for c := 2; c <= 6; c++ {
+		for r := 2; r <= 6; r++ {
+			if c == 2 || c == 6 || r == 2 || r == 6 {
+				m.Cells[c*m.Rows+r].Terrain = core.BreakableWall
+			}
+		}
+	}
+	controller := 4*m.Rows + 4
+	m.Cells[controller] = core.MapCell{Feature: core.Switch, Group: 1}
+	m.Edges = []core.MapEdge{{A: m.Rows + 4, B: m.Rows + 5, Kind: core.Gate, Group: 1}}
+	e := newMapEditor(nil, nil, m, nil)
+	s := settings{Map: &e.m, Players: 2}
+	if len(e.issues) != 0 || !mapCanStart(&s) || e.capacity[3*m.Rows+3] != 2 {
+		t.Fatal("breakable enclosure should allow Test and retain starting capacities")
+	}
+	for i, c := range e.m.Cells {
+		if c.Terrain == core.BreakableWall {
+			e.m.Cells[i].Terrain = core.Wall
+		}
+	}
+	e.changed()
+	s.mapChecked = nil
+	if len(e.issues) == 0 || mapCanStart(&s) || !e.bad[controller] || !e.badEdges[0] {
+		t.Fatal("permanent enclosure must block play and highlight the unreachable switch and Gate")
+	}
+}
+
+func TestEditorReservoirRescuesDeadEnd(t *testing.T) {
+	m := core.NewMap(5, 5)
+	for _, neighbor := range []int{17, 11, 13} {
+		m.Edges = append(m.Edges, core.MapEdge{A: 12, B: neighbor, Kind: core.Barrier})
+	}
+	e := newMapEditor(nil, nil, m, nil)
+	if e.capacity[12] != 1 || !e.bad[12] || mapCanStart(&settings{Map: &e.m, Players: 2}) {
+		t.Fatal("one-connection Floor must start invalid")
+	}
+	e.checkpoint()
+	e.selectTool(brushReservoir)
+	if !e.paint(12, 0, 0) {
+		t.Fatal("could not place Reservoir on invalid Floor")
+	}
+	e.changed()
+	if e.capacity[12] != 2 || e.bad[12] || len(e.issues) != 0 || !mapCanStart(&settings{Map: &e.m, Players: 2}) {
+		t.Fatal("Reservoir must clear the Floor error and allow Test")
+	}
+	e.history(false)
+	if e.capacity[12] != 1 || !e.bad[12] || mapCanStart(&settings{Map: &e.m, Players: 2}) {
+		t.Fatal("undoing Reservoir placement must restore the Floor error")
+	}
+	e.history(true)
+	if e.capacity[12] != 2 || e.bad[12] || !mapCanStart(&settings{Map: &e.m, Players: 2}) {
+		t.Fatal("redoing Reservoir placement must allow Test again")
+	}
+	e.m.Edges = append(e.m.Edges, core.MapEdge{A: 12, B: 7, Kind: core.Barrier})
+	e.changed()
+	if e.capacity[12] != 1 || !e.bad[12] || mapCanStart(&settings{Map: &e.m, Players: 2}) {
+		t.Fatal("Reservoir cannot rescue Floor with no open connections")
+	}
+}
+
 func TestEditorToolbarAcrossPlatforms(t *testing.T) {
 	for _, size := range [][2]float64{{320, 640}, {390, 844}, {568, 320}, {640, 360}, {760, 640}, {1040, 640}} {
 		for _, scale := range []float64{1, 2.625} {

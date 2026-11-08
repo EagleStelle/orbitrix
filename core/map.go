@@ -270,32 +270,73 @@ func (m MapDefinition) Validate() []MapIssue {
 		if first < 0 {
 			first = i
 		}
-		if len(m.InitialConnections(i, neighbors[:0])) < 2 {
-			issues = append(issues, MapIssue{Message: "Floor needs at least two connections with Gates closed", Cells: []int{i}})
+		if m.Capacity(i) < 2 {
+			issues = append(issues, MapIssue{Message: "Floor needs capacity of at least two with Gates closed", Cells: []int{i}})
 		}
 	}
 	if first < 0 {
 		return append(issues, MapIssue{Message: "Map needs playable Floor"})
 	}
-	visited := make([]bool, len(m.Cells))
-	queue := make([]int, 1, len(m.Cells))
-	queue[0], visited[first] = first, true
-	for head := 0; head < len(queue); head++ {
-		for _, n := range m.InitialConnections(queue[head], neighbors[:0]) {
-			if !visited[n] {
-				visited[n] = true
-				queue = append(queue, n)
+	// Destructible terrain can join regions later without changing starting capacities.
+	future := m.Clone()
+	for i, c := range future.Cells {
+		if c.Terrain == BreakableWall {
+			future.Cells[i].Terrain = Floor
+		}
+	}
+	regions := make([]int, len(m.Cells))
+	queue := make([]int, 0, len(m.Cells))
+	for start, c := range future.Cells {
+		if c.Terrain != Floor || regions[start] != 0 {
+			continue
+		}
+		queue = append(queue[:0], start)
+		regions[start] = start + 1
+		for head := 0; head < len(queue); head++ {
+			for _, n := range future.InitialConnections(queue[head], neighbors[:0]) {
+				if regions[n] == 0 {
+					regions[n] = start + 1
+					queue = append(queue, n)
+				}
 			}
+		}
+	}
+	// Merge reachable Gate regions until chains of dependent circuits stop opening.
+	for changed := true; changed; {
+		changed = false
+		for _, e := range m.Edges {
+			if e.Kind != Gate || e.Group == 0 || e.Group > MaxMapGroups || len(switches[e.Group]) != 1 {
+				continue
+			}
+			a, b, controller := regions[e.A], regions[e.B], regions[switches[e.Group][0]]
+			if a == 0 || b == 0 || controller == 0 || a == b || controller != a && controller != b {
+				continue
+			}
+			for i, region := range regions {
+				if region == b {
+					regions[i] = a
+				}
+			}
+			changed = true
+		}
+	}
+	for i, e := range m.Edges {
+		if e.Kind != Gate || e.Group == 0 || e.Group > MaxMapGroups || len(switches[e.Group]) != 1 || !m.floor(e.A) || !m.floor(e.B) || !m.floor(switches[e.Group][0]) {
+			continue
+		}
+		controller := switches[e.Group][0]
+		if regions[controller] != regions[e.A] && regions[controller] != regions[e.B] {
+			issues = append(issues, MapIssue{Message: "Gate must share a Floor group with its switch", Cells: []int{controller}, Edges: []int{i}, Group: e.Group})
 		}
 	}
 	var disconnected []int
 	for i, c := range m.Cells {
-		if c.Terrain == Floor && !visited[i] {
+		if c.Terrain == Floor && regions[i] != regions[first] {
 			disconnected = append(disconnected, i)
 		}
 	}
 	if len(disconnected) > 0 {
-		issues = append(issues, MapIssue{Message: "All Floor must connect with Gates closed", Cells: disconnected})
+		issues = append(issues, MapIssue{Message: "All Floor must connect through breakable walls or reachable Gates", Cells: disconnected})
 	}
 	return issues
 }

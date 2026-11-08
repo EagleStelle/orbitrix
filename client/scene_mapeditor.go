@@ -67,7 +67,9 @@ type mapEditor struct {
 	group                          uint8
 	pair, last, hover              int
 	dirty, stroke, strokeChanged   bool
+	edgeDrag                       bool
 	prevX, prevY, zoom, panX, panY float64
+	edgeX, edgeY, edgeA, edgeB     int
 	nameEdits, autosave            int
 	ask                            *askDialog
 	issues                         []core.MapIssue
@@ -232,6 +234,88 @@ func (e *mapEditor) edgeAt(i int, x, y float64) (int, int) {
 	return min(i, j), max(i, j)
 }
 
+func (e *mapEditor) edgeVertexAt(x, y float64) (int, int) {
+	k, ox, oy := e.grid()
+	return max(0, min(e.m.Cols, int(math.Round((x-ox)/k)))), max(0, min(e.m.Rows, int(math.Round((y-oy)/k))))
+}
+
+// Trace between snapped corners, rather than picking every tile side the pointer passes.
+func (e *mapEditor) paintEdgeStroke(x, y float64) bool {
+	c, r := e.edgeVertexAt(x, y)
+	dx, dy := ui.AbsInt(c-e.edgeX), ui.AbsInt(r-e.edgeY)
+	if dx == 0 && dy == 0 {
+		return e.paintEdge(e.edgeA, e.edgeB)
+	}
+	if !e.edgeDrag {
+		e.edgeDrag = true
+		// A tap near a corner can pick the other side before the drag reveals its direction.
+		if e.strokeChanged && (e.edgeB-e.edgeA == 1) != (dx > dy) {
+			e.m.Edges = append(e.m.Edges[:0], e.undo[len(e.undo)-1].Edges...)
+			e.strokeChanged = false
+			e.revision++
+		}
+	}
+	sx, sy := 1, 1
+	if c < e.edgeX {
+		sx = -1
+	}
+	if r < e.edgeY {
+		sy = -1
+	}
+	changed := false
+	for ix, iy := 0, 0; ix < dx || iy < dy; {
+		a, b := -1, -1
+		if (2*ix+1)*dy < (2*iy+1)*dx {
+			nc := e.edgeX + sx
+			if e.edgeY > 0 && e.edgeY < e.m.Rows {
+				a = min(e.edgeX, nc)*e.m.Rows + e.edgeY - 1
+				b = a + 1
+			}
+			e.edgeX = nc
+			ix++
+		} else {
+			nr := e.edgeY + sy
+			if e.edgeX > 0 && e.edgeX < e.m.Cols {
+				a = (e.edgeX-1)*e.m.Rows + min(e.edgeY, nr)
+				b = a + e.m.Rows
+			}
+			e.edgeY = nr
+			iy++
+		}
+		changed = e.paintEdge(a, b) || changed
+	}
+	return changed
+}
+
+func (e *mapEditor) paintEdge(a, b int) bool {
+	e.edgeA, e.edgeB = a, b
+	if a < 0 {
+		return false
+	}
+	next := core.MapEdge{A: a, B: b, Kind: core.EdgeKind(editorBrushes[e.tool].Edge)}
+	if e.channelTool() {
+		next.Group = e.group
+	}
+	for j, edge := range e.m.Edges {
+		if min(edge.A, edge.B) != a || max(edge.A, edge.B) != b {
+			continue
+		}
+		if edge == next {
+			return false
+		}
+		e.m.Edges[j] = next
+		e.revision++
+		return true
+	}
+	if e.m.Cells[a].Terrain != core.Floor || e.m.Cells[b].Terrain != core.Floor {
+		e.notify("Place edges between two floor cells.")
+		return false
+	}
+	e.m.Edges = append(e.m.Edges, next)
+	e.revision++
+	return true
+}
+
 // eraseEdgeAt is shared by the hover preview and paint, so the highlight matches what a tap removes.
 func (e *mapEditor) eraseEdgeAt(i int, x, y float64) int {
 	if i < 0 {
@@ -264,49 +348,14 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 	if e.pair == i && e.tool != brushLink {
 		e.pair = -1
 	}
-	if e.tool == brushBarrier || e.tool == brushGate || e.tool == brushErase {
-		a, b := e.edgeAt(i, x, y)
-		if e.tool == brushErase {
-			if edge := e.eraseEdgeAt(i, x, y); edge >= 0 {
-				e.m.Edges = append(e.m.Edges[:edge], e.m.Edges[edge+1:]...)
-				e.revision++
-				return true
-			}
-			a, b = -1, -1
-		}
-		if a >= 0 {
-			for j, edge := range e.m.Edges {
-				if min(edge.A, edge.B) != a || max(edge.A, edge.B) != b {
-					continue
-				}
-				kind, g := core.Barrier, uint8(0)
-				if e.tool == brushGate {
-					kind, g = core.Gate, e.group
-				}
-				next := core.MapEdge{A: a, B: b, Kind: kind, Group: g}
-				if edge == next {
-					return false
-				}
-				e.m.Edges[j] = next
-				e.revision++
-				return true
-			}
-			if e.tool != brushErase {
-				if e.m.Cells[a].Terrain != core.Floor || e.m.Cells[b].Terrain != core.Floor {
-					e.notify("Place edges between two floor cells.")
-					return false
-				}
-				kind, g := core.Barrier, uint8(0)
-				if e.tool == brushGate {
-					kind, g = core.Gate, e.group
-				}
-				e.m.Edges = append(e.m.Edges, core.MapEdge{A: a, B: b, Kind: kind, Group: g})
-				e.revision++
-				return true
-			}
-		}
-		if e.tool != brushErase {
-			return false
+	if editorBrushes[e.tool].Edge >= 0 {
+		return e.paintEdge(e.edgeAt(i, x, y))
+	}
+	if e.tool == brushErase {
+		if edge := e.eraseEdgeAt(i, x, y); edge >= 0 {
+			e.m.Edges = append(e.m.Edges[:edge], e.m.Edges[edge+1:]...)
+			e.revision++
+			return true
 		}
 	}
 	var next core.MapCell
@@ -408,7 +457,8 @@ func (e *mapEditor) selectTool(tool int) {
 	}
 }
 func (e *mapEditor) channelTool() bool {
-	return e.tool == brushLink || e.tool == brushGate || editorBrushes[e.tool].Feature.IsSwitch()
+	brush := editorBrushes[e.tool]
+	return brush.Feature == core.Link || brush.Edge == int(core.Gate) || brush.Feature.IsSwitch()
 }
 
 func (e *mapEditor) finishStroke() {
@@ -691,6 +741,9 @@ func (e *mapEditor) updateCanvas(a *app, pressed, down bool) {
 			e.stroke = true
 			e.strokeChanged = false
 			e.last = -1
+			e.edgeX, e.edgeY = e.edgeVertexAt(a.in.x, a.in.y)
+			e.edgeA, e.edgeB = -1, -1
+			e.edgeDrag = false
 			e.strokeChanged = e.paint(i, a.in.x, a.in.y)
 			e.last = i
 		}
@@ -701,8 +754,10 @@ func (e *mapEditor) updateCanvas(a *app, pressed, down bool) {
 				e.panX += a.in.x - e.prevX
 				e.panY += a.in.y - e.prevY
 			}
-		} else if e.stroke && (i != e.last || e.tool >= brushBarrier && e.tool <= brushErase && (a.in.x != e.prevX || a.in.y != e.prevY)) {
-			if e.tool == brushLink || editorBrushes[e.tool].Feature.IsSwitch() {
+		} else if e.stroke && (i != e.last || (editorBrushes[e.tool].Edge >= 0 || e.tool == brushErase) && (a.in.x != e.prevX || a.in.y != e.prevY)) {
+			if editorBrushes[e.tool].Edge >= 0 {
+				e.strokeChanged = e.paintEdgeStroke(a.in.x, a.in.y) || e.strokeChanged
+			} else if e.tool == brushLink || editorBrushes[e.tool].Feature.IsSwitch() {
 				e.strokeChanged = e.paint(i, a.in.x, a.in.y) || e.strokeChanged
 			} else {
 				k, _, _ := e.grid()
