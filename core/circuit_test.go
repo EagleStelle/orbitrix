@@ -178,6 +178,8 @@ func TestCircuitStateValidationAndHash(t *testing.T) {
 		func(m *MapDefinition) { m.Cells[20].Circuit = 255 },
 		func(m *MapDefinition) { m.Cells[20].Feature = Link },
 		func(m *MapDefinition) { m.Edges[0].Kind = Barrier; m.Edges[0].InitiallyOpen = true },
+		func(m *MapDefinition) { m.Edges[0].Kind = BreakableBarrier; m.Edges[0].InitiallyOpen = true },
+		func(m *MapDefinition) { m.Edges[0].Kind = BreakableBarrier + 1 },
 	} {
 		bad := m.Clone()
 		edit(&bad)

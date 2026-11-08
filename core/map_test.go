@@ -66,6 +66,11 @@ func TestMapDraftValidation(t *testing.T) {
 		{"feature on Wall", func(m *MapDefinition) { m.Cells[12] = MapCell{Terrain: Wall, Feature: Reservoir} }, "Features need Floor"},
 		{"unused group", func(m *MapDefinition) { m.Cells[12].Group = 1 }, "Only Links and circuit"},
 		{"Barrier group", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 12, B: 13, Group: 1}} }, "Barriers do not use"},
+		{"Breakable Barrier group", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 12, B: 13, Kind: BreakableBarrier, Group: 1}} }, "Barriers do not use"},
+		{"Breakable Barrier on Wall", func(m *MapDefinition) {
+			m.Cells[12].Terrain = Wall
+			m.Edges = []MapEdge{{A: 12, B: 13, Kind: BreakableBarrier}}
+		}, "need Floor on both sides"},
 		{"duplicate edge", func(m *MapDefinition) {
 			m.Edges = []MapEdge{{A: 12, B: 13}, {A: 13, B: 12}}
 		}, "Only one Barrier or Gate"},

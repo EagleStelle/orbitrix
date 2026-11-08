@@ -73,7 +73,7 @@ Binary, on every transport: `ws` on the LAN, a WebRTC data channel online and `l
 | `Welcome` | host to player | `Seat`, `Token` for rejoining |
 | `Lobby` | host to player | `Cols`, `Rows`, `TurnTimer`, `Playing`, `Seats[]` (`State`, `AI`, `Ready`, `Name`), optional map definition |
 | `MoveApplied` | host to player | `Seq`, `Player`, `C`, `R` (255, 255 for a pass), `Hash` after the move |
-| `Snapshot` | host to player | `Seq` and the whole game, including optional map definition, `Durability`, `CircuitOn`, and per-cell `Pressed`; `Seq` 0 starts a game |
+| `Snapshot` | host to player | `Seq` and the whole game, including optional map definition, `Durability`, `CircuitOn`, per-cell `Pressed`, and per-edge `EdgeDurability`; `Seq` 0 starts a game |
 | `Bye` | host to player | the reason the host closed the connection |
 
 Seat states are AI, Open, Here, Away (dropped, inside the 60 s grace), Gone (left mid-game) and Skipped. Close reasons are Closed, Version, BadCode, Full, Kicked, Replaced and Timeout.

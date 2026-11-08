@@ -16,21 +16,22 @@ type Wave []int16
 // Game is the full rules state. Count, Owner, Orbs and the scalar fields are exported for fast reads by the AI
 // and the client; change them only through methods, or the per-player tallies stop matching the board.
 type Game struct {
-	Geo           *Geometry
-	Count         []uint8 // orbs in each cell
-	Owner         []int8  // owner of each cell, NoOwner when empty
-	Players       int
-	Turn          int               // player to move
-	Played        uint16            // bit p is set once player p has had a turn
-	Moves         int               // moves applied so far
-	Winner        int8              // NoOwner until someone wins
-	Orbs          [MaxPlayers]int32 // orbs on the board per player
-	Map           *MapDefinition    // immutable design; nil is a classic rectangle
-	Durability    []uint8
-	CircuitOn     [256]bool // polarity: outputs reverse their individual starting states
-	Pressed       []uint8
-	TerrainEvents []TerrainEvent // events in the last recorded move
-	topology      *mapTopology   // immutable designs and bounded, shared connection tables
+	Geo            *Geometry
+	Count          []uint8 // orbs in each cell
+	Owner          []int8  // owner of each cell, NoOwner when empty
+	Players        int
+	Turn           int               // player to move
+	Played         uint16            // bit p is set once player p has had a turn
+	Moves          int               // moves applied so far
+	Winner         int8              // NoOwner until someone wins
+	Orbs           [MaxPlayers]int32 // orbs on the board per player
+	Map            *MapDefinition    // immutable design; nil is a classic rectangle
+	Durability     []uint8
+	EdgeDurability []uint8   // indexed by Map.Edges; only BreakableBarrier uses durability
+	CircuitOn      [256]bool // polarity: outputs reverse their individual starting states
+	Pressed        []uint8
+	TerrainEvents  []TerrainEvent // events in the last recorded move
+	topology       *mapTopology   // immutable designs and bounded, shared connection tables
 
 	// Exploded counts the cell explosions in the last move: a deterministic measure of its cost, which the AI's
 	// budget charges for. It isn't part of the game state (not hashed or snapshotted).
@@ -93,6 +94,7 @@ func (g *Game) CopyFrom(src *Game) {
 	g.Map, g.CircuitOn = src.Map, src.CircuitOn
 	g.topology = src.topology
 	g.Durability = append(g.Durability[:0], src.Durability...)
+	g.EdgeDurability = append(g.EdgeDurability[:0], src.EdgeDurability...)
 	g.Pressed = append(g.Pressed[:0], src.Pressed...)
 	g.TerrainEvents = g.TerrainEvents[:0]
 }

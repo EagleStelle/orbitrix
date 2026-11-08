@@ -20,6 +20,7 @@ type EdgeKind uint8
 const (
 	Barrier EdgeKind = iota
 	Gate
+	BreakableBarrier
 )
 
 // CircuitOpen applies circuit polarity to an output's individual starting state.

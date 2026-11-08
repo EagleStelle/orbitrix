@@ -119,7 +119,7 @@ func TestEditorPaintStrokeKeepsValidationCurrent(t *testing.T) {
 			e.selectTool(tool)
 			k, ox, oy := e.grid()
 			a.in = input{x: ox + 4.5*k, y: oy + 4.5*k, pressed: true, down: true}
-			if tool == brushBarrier || tool == brushGate {
+			if editorBrushes[tool].Edge >= 0 {
 				a.in.y = oy + 5*k
 			}
 			step := func() {
@@ -140,7 +140,7 @@ func TestEditorPaintStrokeKeepsValidationCurrent(t *testing.T) {
 			if e.revision != revision || e.note != "Keep this notification" {
 				t.Fatal("unchanged held input must not invalidate the map or clear notifications")
 			}
-			if tool == brushBarrier || tool == brushGate {
+			if editorBrushes[tool].Edge >= 0 {
 				if tool == brushBarrier {
 					e.selectTool(brushGate)
 				} else {
@@ -154,7 +154,7 @@ func TestEditorPaintStrokeKeepsValidationCurrent(t *testing.T) {
 			if tool == brushLink && (e.pair != -1 || len(e.issues) != 0) {
 				t.Fatal("completing a Link pair must clear its issue during the stroke")
 			}
-			if (tool == brushBarrier || tool == brushGate) && e.m.Edges[0].Kind == core.EdgeKind(editorBrushes[tool].Edge) {
+			if editorBrushes[tool].Edge >= 0 && e.m.Edges[0].Kind == core.EdgeKind(editorBrushes[tool].Edge) {
 				t.Fatal("replacing an edge must update its validation even when the edge count is unchanged")
 			}
 			a.in = input{x: offScreen, y: offScreen}
@@ -581,7 +581,7 @@ func TestEditorToolbarAcrossPlatforms(t *testing.T) {
 }
 
 func TestEditorEraseHighlightMatchesRemoval(t *testing.T) {
-	for _, kind := range []core.EdgeKind{core.Barrier, core.Gate} {
+	for _, kind := range []core.EdgeKind{core.Barrier, core.Gate, core.BreakableBarrier} {
 		for _, vertical := range []bool{false, true} {
 			a := setupTestApp(1040, 640, 1, 2)
 			m := core.NewMap(9, 9)

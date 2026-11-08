@@ -30,19 +30,21 @@ const (
 	brushToggle
 	brushHold
 	brushDoor
+	brushBreakBarrier
 )
 
-var editorTools = [...]string{"Floor", "Wall", "Void", "Breakable wall", "Link", "Reservoir", "Latch", "Barrier", "Gate", "Erase", "Pan", "Toggle", "Hold", "Door"}
+var editorTools = [...]string{"Floor", "Wall", "Void", "Breakable Wall", "Link", "Reservoir", "Latch", "Barrier", "Gate", "Erase", "Pan", "Toggle", "Hold", "Door", "Breakable Barrier"}
 var editorHelp = [...]string{
 	"Playable surface. Open routes set its capacity.", "Blocks explosions permanently.", "Empty space outside the playable board.", "Two nearby blasts turn it into floor.",
 	"Pair two distant cells to route explosions.", "Stores one extra orb before exploding.", "Reverses once; another switch rearms it.", "Blocks a route between two floor cells.",
 	"Reverses with its circuit. Repaint to set its start.", "Remove an edge or restore a cell to floor.", "Drag the map to move around.", "Reverses on empty placement or orbs popping in or out.", "Reverses on press and release.", "A wall. Repaint to set its start.",
+	"Blocks a route. Two blasts from its two bordering cells break it.",
 }
 var editorGroups = [...]struct {
 	name  string
 	tools []int
 }{
-	{"Terrain", []int{brushFloor, brushWall, brushVoid, brushBarrier, brushBreak}},
+	{"Terrain", []int{brushFloor, brushVoid, brushWall, brushBarrier, brushBreak, brushBreakBarrier}},
 	{"Devices", []int{brushLink, brushReservoir}},
 	{"Circuit", []int{brushLatch, brushToggle, brushHold, brushGate, brushDoor}},
 }
@@ -51,6 +53,7 @@ var editorBrushes = [...]boardview.Brush{
 	{Feature: core.Link, Edge: -1}, {Feature: core.Reservoir, Edge: -1}, {Circuit: core.Latch, Edge: -1}, {Edge: int(core.Barrier)}, {Edge: int(core.Gate)},
 	{Edge: -1}, {Edge: -1}, {Circuit: core.Toggle, Edge: -1}, {Circuit: core.Hold, Edge: -1},
 	{Circuit: core.Door, Edge: -1},
+	{Edge: int(core.BreakableBarrier)},
 }
 
 type mapEditor struct {

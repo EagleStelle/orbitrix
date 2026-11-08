@@ -19,6 +19,7 @@ var mapPath vector.Path
 type MapState struct {
 	Map                 *core.MapDefinition
 	Durability, Pressed []uint8
+	EdgeDurability      []uint8
 	CircuitOn           [256]bool
 	Owner               []int8
 	Count               []uint8
@@ -33,7 +34,7 @@ type Brush struct {
 	Terrain core.Terrain
 	Feature core.Feature
 	Circuit core.CircuitKind
-	Edge    int // -1: cell, 0: Barrier, 1: Gate
+	Edge    int // -1: cell; otherwise core.EdgeKind
 }
 
 func PartnerColor(sc *ui.Palette, group uint8) color.RGBA {
@@ -422,11 +423,28 @@ func mapArtGateContinuesAt(m *core.MapDefinition, edges []core.MapEdge, index in
 	return false
 }
 
-func drawMapEdgePieceWithEnds(dst *ebiten.Image, sc *ui.Palette, kind core.EdgeKind, group uint8, open, openStart, openEnd bool, x0, y0, x1, y1, k float64, _ bool) {
+func drawMapEdgePieceWithEnds(dst *ebiten.Image, sc *ui.Palette, kind core.EdgeKind, group, durability uint8, open, openStart, openEnd bool, x0, y0, x1, y1, k float64, _ bool) {
 	dx, dy := x1-x0, y1-y0
 	w := max(1.2, k*0.13)
-	if kind == core.Barrier {
-		ui.Line(dst, x0, y0, x1, y1, w, sc.Dim)
+	if kind == core.Barrier || kind == core.BreakableBarrier {
+		ink := sc.Dim
+		if kind == core.BreakableBarrier {
+			ink = mapArtWallColor(sc, core.BreakableWall)
+		}
+		ui.Line(dst, x0, y0, x1, y1, w, ink)
+		if kind == core.BreakableBarrier {
+			spread := 1.0
+			if durability == 1 {
+				spread = 1.5
+			}
+			// A transverse fracture follows the edge's orientation and widens after a hit.
+			points := [4][2]float64{{-.035, -.075}, {.025, -.02}, {-.025, .025}, {.035, .075}}
+			for i := 1; i < len(points); i++ {
+				a, b := points[i-1], points[i]
+				ui.Line(dst, (x0+x1)/2+dx*a[0]*spread-dy*a[1], (y0+y1)/2+dy*a[0]*spread+dx*a[1],
+					(x0+x1)/2+dx*b[0]*spread-dy*b[1], (y0+y1)/2+dy*b[0]*spread+dx*b[1], max(.8, k*.025)*spread, sc.Ground)
+			}
+		}
 		return
 	}
 	c := PartnerColor(sc, group)
@@ -444,7 +462,7 @@ func drawMapEdgePieceWithEnds(dst *ebiten.Image, sc *ui.Palette, kind core.EdgeK
 }
 
 func DrawMapEdgePiece(dst *ebiten.Image, sc *ui.Palette, kind core.EdgeKind, group uint8, open bool, x0, y0, x1, y1, k float64, marks bool) {
-	drawMapEdgePieceWithEnds(dst, sc, kind, group, open, true, true, x0, y0, x1, y1, k, marks)
+	drawMapEdgePieceWithEnds(dst, sc, kind, group, 2, open, true, true, x0, y0, x1, y1, k, marks)
 }
 
 func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransform, drawFloor, marks bool) {
@@ -489,6 +507,13 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 	drawMapWallCorners(dst, sc, &state, tr)
 	shared := mapGateVertices(m)
 	for edgeIndex, e := range m.Edges {
+		durability := uint8(2)
+		if e.Kind == core.BreakableBarrier && edgeIndex < len(state.EdgeDurability) {
+			durability = state.EdgeDurability[edgeIndex]
+			if durability == 0 {
+				continue
+			}
+		}
 		gx0, gy0, gx1, gy1, ok := MapArtEdge(m, e)
 		if !ok {
 			continue
@@ -509,7 +534,7 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 				openEnd = !mapArtGateContinuesAt(m, m.Edges, edgeIndex, gx1, gy1)
 			}
 		}
-		drawMapEdgePieceWithEnds(dst, sc, e.Kind, e.Group, open, openStart, openEnd, x0, y0, x1, y1, tr.Cell, marks)
+		drawMapEdgePieceWithEnds(dst, sc, e.Kind, e.Group, durability, open, openStart, openEnd, x0, y0, x1, y1, tr.Cell, marks)
 	}
 }
 

@@ -3,10 +3,12 @@ package core
 import "fmt"
 
 // TerrainEvent is applied after a wave's orb transfers, before the following wave.
-// Cell -1 records circuit polarity in Open; otherwise it changes durability or switch state.
+// Cell -1 records circuit polarity in Open. Edge marks Cell as an edge index;
+// otherwise Cell indexes a cell's durability or switch state.
 type TerrainEvent struct {
 	Wave       int
 	Cell       int
+	Edge       bool
 	Durability uint8
 	Group      uint8
 	Switch     bool
@@ -36,6 +38,12 @@ func NewGameWithMap(m MapDefinition, players int) (*Game, error) {
 	for i, c := range m.Cells {
 		if c.Terrain == BreakableWall {
 			g.Durability[i] = 2
+		}
+	}
+	g.EdgeDurability = make([]uint8, len(m.Edges))
+	for i, e := range m.Edges {
+		if e.Kind == BreakableBarrier {
+			g.EdgeDurability[i] = 2
 		}
 	}
 	g.Geo = g.mapGeometry()
@@ -73,8 +81,8 @@ func (g *Game) mapGeometry() *Geometry {
 	m, n := g.Map, len(g.Map.Cells)
 	geo := &Geometry{Cols: m.Cols, Rows: m.Rows, Cap: make([]uint8, n), Degree: make([]uint8, n), Nbr: make([]int16, n*MaxConnections)}
 	var blocked [MaxSize * MaxSize * 4]uint8
-	for _, e := range m.Edges {
-		if e.Kind == Gate && CircuitOpen(e.InitiallyOpen, g.CircuitOn[e.Group]) {
+	for i, e := range m.Edges {
+		if e.Kind == Gate && CircuitOpen(e.InitiallyOpen, g.CircuitOn[e.Group]) || e.Kind == BreakableBarrier && g.EdgeDurability[i] == 0 {
 			continue
 		}
 		d := 0
@@ -152,6 +160,32 @@ func (g *Game) terrainWave(wave int, record bool) {
 			}
 		}
 	}
+	if len(g.topology.barriers) != 0 {
+		var exploding [MaxSize * MaxSize]bool
+		for _, i := range g.cur {
+			exploding[i] = true
+		}
+		for _, i := range g.topology.barriers {
+			if g.EdgeDurability[i] == 0 {
+				continue
+			}
+			e := g.Map.Edges[i]
+			d := uint8(0)
+			for _, endpoint := range [2]int{e.A, e.B} {
+				if exploding[endpoint] {
+					d++
+				}
+			}
+			if d == 0 {
+				continue
+			}
+			g.EdgeDurability[i] -= min(d, g.EdgeDurability[i])
+			changed = changed || g.EdgeDurability[i] == 0
+			if record {
+				g.TerrainEvents = append(g.TerrainEvents, TerrainEvent{Wave: wave, Cell: int(i), Edge: true, Durability: g.EdgeDurability[i]})
+			}
+		}
+	}
 	circuitsChanged := g.circuitInputs(wave, record)
 	if changed || circuitsChanged {
 		g.Geo = g.mapGeometry()
@@ -172,6 +206,9 @@ func (g *Game) ReplayTerrain(events []TerrainEvent) {
 	changed := false
 	for _, e := range events {
 		switch {
+		case e.Edge:
+			changed = changed || g.EdgeDurability[e.Cell] != 0 && e.Durability == 0
+			g.EdgeDurability[e.Cell] = e.Durability
 		case e.Cell < 0:
 			changed = changed || g.CircuitOn[e.Group] != e.Open
 			g.CircuitOn[e.Group] = e.Open

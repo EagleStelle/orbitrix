@@ -419,7 +419,7 @@ func (b *Board) drawMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 
 func (b *Board) renderMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 	g := b.State.Replay
-	DrawMapArt(dst, sc, MapState{Map: g.Map, Durability: g.Durability, Pressed: g.Pressed, CircuitOn: g.CircuitOn, Owner: b.State.Owner, Count: b.State.Count},
+	DrawMapArt(dst, sc, MapState{Map: g.Map, Durability: g.Durability, EdgeDurability: g.EdgeDurability, Pressed: g.Pressed, CircuitOn: g.CircuitOn, Owner: b.State.Owner, Count: b.State.Count},
 		MapTransform{Cell: b.base * b.k, Turned: b.Turned}, false, b.marks)
 }
 

@@ -12,6 +12,7 @@ type Snapshot struct {
 	Owner               []int8
 	Map                 *MapDefinition
 	Durability          []uint8
+	EdgeDurability      []uint8
 	CircuitOn           []uint8
 	Pressed             []uint8
 }
@@ -27,6 +28,7 @@ func (g *Game) Snapshot() Snapshot {
 		m := g.Map.Clone()
 		s.Map = &m
 		s.Durability = append([]uint8(nil), g.Durability...)
+		s.EdgeDurability = append([]uint8(nil), g.EdgeDurability...)
 		s.Pressed = append([]uint8(nil), g.Pressed...)
 		for i, on := range g.CircuitOn {
 			if on {
@@ -54,11 +56,14 @@ func Restore(s Snapshot) (*Game, error) {
 		return nil, fmt.Errorf("restore: invalid orb state lengths")
 	}
 	if g.Map != nil {
-		if len(s.Durability) != n || len(s.Pressed) != n {
+		if len(s.Durability) != n || len(s.Pressed) != n || len(s.EdgeDurability) != len(g.Map.Edges) {
 			return nil, fmt.Errorf("restore: invalid terrain state lengths")
 		}
 		var circuitGroups [256]bool
-		for _, e := range g.Map.Edges {
+		for i, e := range g.Map.Edges {
+			if s.EdgeDurability[i] > 2 || e.Kind != BreakableBarrier && s.EdgeDurability[i] != 0 {
+				return nil, fmt.Errorf("restore: invalid terrain state at edge %d", i)
+			}
 			if e.Kind == Gate {
 				circuitGroups[e.Group] = true
 			}
@@ -81,9 +86,10 @@ func Restore(s Snapshot) (*Game, error) {
 			g.CircuitOn[group] = true
 		}
 		copy(g.Durability, s.Durability)
+		copy(g.EdgeDurability, s.EdgeDurability)
 		copy(g.Pressed, s.Pressed)
 		g.Geo = g.mapGeometry()
-	} else if len(s.Durability)+len(s.Pressed)+len(s.CircuitOn) != 0 {
+	} else if len(s.Durability)+len(s.EdgeDurability)+len(s.Pressed)+len(s.CircuitOn) != 0 {
 		return nil, fmt.Errorf("restore: terrain state without map")
 	}
 	switch {
@@ -151,12 +157,13 @@ func (g *Game) Hash() uint64 {
 		}
 		// Edge order and endpoint direction do not change a map's gameplay.
 		var edges uint64
-		for _, e := range g.Map.Edges {
+		for i, e := range g.Map.Edges {
 			a, b := min(e.A, e.B), max(e.A, e.B)
 			v := uint64(a) | uint64(b)<<16 | uint64(e.Kind)<<32 | uint64(e.Group)<<40
 			if e.InitiallyOpen {
 				v |= 1 << 48
 			}
+			v |= uint64(g.EdgeDurability[i]) << 49
 			edges ^= (v ^ 0x9e3779b97f4a7c15) * prime
 		}
 		h = (h ^ edges) * prime

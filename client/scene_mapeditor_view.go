@@ -588,9 +588,13 @@ func (e *mapEditor) drawDock(dst *ebiten.Image, a *app) {
 			if editorCompact(a) {
 				labelY, lineY = 34*u, 30*u
 			}
-			if tool == brushBreak {
+			if tool == brushBreak || tool == brushBreakBarrier {
 				ui.DrawText(body, "Breakable", a.f.Small, r.Cx(), r.Y+lineY, text.AlignCenter, sc.Ink)
-				ui.DrawText(body, "wall", a.f.Small, r.Cx(), r.Y+lineY+11*u, text.AlignCenter, sc.Ink)
+				label := "Wall"
+				if tool == brushBreakBarrier {
+					label = "Barrier"
+				}
+				ui.DrawText(body, label, a.f.Small, r.Cx(), r.Y+lineY+11*u, text.AlignCenter, sc.Ink)
 			} else {
 				ui.DrawText(body, editorTools[tool], a.f.Small, r.Cx(), r.Y+labelY, text.AlignCenter, sc.Ink)
 			}

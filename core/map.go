@@ -40,7 +40,7 @@ type MapCell struct {
 type MapEdge struct {
 	A, B          int
 	Kind          EdgeKind
-	Group         uint8 // nonzero for a Gate; zero for a Barrier
+	Group         uint8 // nonzero for a Gate; zero for either Barrier kind
 	InitiallyOpen bool
 }
 
@@ -116,7 +116,7 @@ func (m MapDefinition) ValidateStructure() error {
 		}
 	}
 	for i, e := range m.Edges {
-		if e.Kind > Gate || e.A < 0 || e.A >= n || e.B < 0 || e.B >= n || !m.adjacent(e.A, e.B) {
+		if e.Kind > BreakableBarrier || e.A < 0 || e.A >= n || e.B < 0 || e.B >= n || !m.adjacent(e.A, e.B) {
 			return fmt.Errorf("map edge %d must join adjacent cells and use a known kind", i)
 		}
 		if e.InitiallyOpen && e.Kind != Gate {
@@ -296,6 +296,7 @@ func (m MapDefinition) Validate() []MapIssue {
 			future.Cells[i].Terrain = Floor
 		}
 	}
+	future.Edges = slices.DeleteFunc(future.Edges, func(e MapEdge) bool { return e.Kind == BreakableBarrier })
 	regions := make([]int, len(m.Cells))
 	queue := make([]int, 0, len(m.Cells))
 	for start := range future.Cells {
@@ -384,7 +385,7 @@ func (m MapDefinition) Validate() []MapIssue {
 		}
 	}
 	if len(disconnected) > 0 {
-		issues = append(issues, MapIssue{Message: "All Floor must connect through breakable walls or reachable Gates", Cells: disconnected})
+		issues = append(issues, MapIssue{Message: "All Floor must connect through breakable walls, breakable barriers or reachable Gates", Cells: disconnected})
 	}
 	return issues
 }

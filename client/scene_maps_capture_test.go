@@ -32,6 +32,12 @@ type mapCaptureCase struct {
 }
 
 var mapCaptureCases = []mapCaptureCase{
+	{"breakable-barrier-desktop", 1040, 640, false, false, false, "", brushBreakBarrier},
+	{"breakable-barrier-mobile", 390, 844, true, false, false, "", brushBreakBarrier},
+	{"breakable-barrier-small", 320, 640, false, false, false, "", brushBreakBarrier},
+	{"breakable-barrier-states", 1100, 500, false, false, false, "barriers", brushBreakBarrier},
+	{"breakable-barrier-states-dark", 1100, 500, true, false, false, "barriers", brushBreakBarrier},
+	{"breakable-barrier-states-turned", 1100, 500, false, true, true, "barriers", brushBreakBarrier},
 	{"door-orbs-light", 1040, 640, false, false, false, "door-orbs", brushDoor},
 	{"door-orbs-dark", 1040, 640, true, false, false, "door-orbs", brushDoor},
 	{"door-orbs-dark-marks", 1040, 640, true, true, false, "door-orbs", brushDoor},
@@ -135,6 +141,7 @@ func editorShowcaseMap() core.MapDefinition {
 		{A: 4*m.Rows + 8, B: 5*m.Rows + 8, Kind: core.Gate, Group: 3},
 		{A: 5*m.Rows + 8, B: 5*m.Rows + 9, Kind: core.Gate, Group: 3},
 		{A: 4*m.Rows + 9, B: 5*m.Rows + 9, Kind: core.Barrier},
+		{A: 8*m.Rows + 8, B: 8*m.Rows + 9, Kind: core.BreakableBarrier},
 	}
 	return m
 }
@@ -165,7 +172,7 @@ func drawArtStates(dst *ebiten.Image, a *app) {
 	for i := 0; i < core.MaxMapGroups; i++ {
 		boardview.DrawMapBrush(dst, sc, boardview.Brush{Feature: core.Link, Edge: -1}, ui.Rect{X: 30 + float64(i)*87, Y: 352, W: 76, H: 76}, uint8(i+1), false, a.set.Marks)
 	}
-	for i, label := range []string{"Wall", "Breakable wall", "Damaged", "Reservoir"} {
+	for i, label := range []string{"Wall", "Breakable Wall", "Damaged", "Reservoir"} {
 		x := 32 + float64(i)*200
 		ui.DrawText(dst, label, a.f.LabelBold, x+64, 474, text.AlignCenter, sc.Ink)
 		r := ui.Rect{X: x, Y: 500, W: 128, H: 128}
@@ -350,7 +357,7 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		lib := &mapsScene{back: newHome(), selected: 1, store: store}
 		lib.refresh()
 		s = lib
-	case "art", "wall-corners", "door-orbs":
+	case "art", "wall-corners", "door-orbs", "barriers":
 	default:
 		if c.mode == "large" {
 			m = resizeMap(m, 40, 40)
@@ -429,7 +436,16 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 	out := ebiten.NewImage(int(c.w), int(c.h))
 	defer out.Deallocate()
 	out.Fill(a.sc.Ground)
-	if c.mode == "wall-corners" {
+	if c.mode == "barriers" {
+		ui.DrawText(out, "Breakable Barriers", a.f.Title, 30, 36, text.AlignStart, a.sc.Ink)
+		for i, durability := range []uint8{2, 1, 0} {
+			m := core.NewMap(3, 3)
+			m.Edges = []core.MapEdge{{A: 4, B: 5, Kind: core.BreakableBarrier}, {A: 4, B: 7, Kind: core.BreakableBarrier}}
+			state := boardview.MapState{Map: &m, EdgeDurability: []uint8{durability, durability}}
+			boardview.DrawMapArt(out, a.sc, state, boardview.MapTransform{X: 30 + float64(i)*350, Y: 100, Cell: 100, Turned: c.preview}, true, c.marks)
+			ui.DrawText(out, []string{"Intact", "Damaged", "Destroyed"}[i], a.f.LabelBold, 180+float64(i)*350, 446, text.AlignCenter, a.sc.Ink)
+		}
+	} else if c.mode == "wall-corners" {
 		for missing := range 5 {
 			for variant := range 2 {
 				m := core.NewMap(3, 3)

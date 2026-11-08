@@ -7,8 +7,9 @@ import "sync"
 const topologyCacheSize = 64 // about 1.2 MiB of tables at 40×40, shared by all search copies
 
 type topologyKey struct {
-	circuit uint16
-	broken  [(MaxSize*MaxSize + 63) / 64]uint64
+	circuit     uint16
+	broken      [(MaxSize*MaxSize + 63) / 64]uint64
+	brokenEdges [(2*MaxSize*(MaxSize-1) + 63) / 64]uint64
 }
 
 type topologyEntry struct {
@@ -18,6 +19,7 @@ type topologyEntry struct {
 
 type mapTopology struct {
 	switches, walls []int16
+	barriers        []int16
 	links           []int16
 	mu              sync.Mutex
 	cache           [topologyCacheSize]topologyEntry
@@ -46,6 +48,11 @@ func newMapTopology(m *MapDefinition) *mapTopology {
 			}
 		}
 	}
+	for i, e := range m.Edges {
+		if e.Kind == BreakableBarrier {
+			t.barriers = append(t.barriers, int16(i))
+		}
+	}
 	return t
 }
 
@@ -53,6 +60,11 @@ func (g *Game) topologyKey() (key topologyKey) {
 	for _, i := range g.topology.walls {
 		if g.Durability[i] == 0 {
 			key.broken[i/64] |= 1 << (i % 64)
+		}
+	}
+	for _, i := range g.topology.barriers {
+		if g.EdgeDurability[i] == 0 {
+			key.brokenEdges[i/64] |= 1 << (i % 64)
 		}
 	}
 	for group := 1; group <= MaxMapGroups; group++ {

@@ -12,7 +12,7 @@ func TestMapMessagesRoundTrip(t *testing.T) {
 	circuit.Cells[16] = core.MapCell{Circuit: core.Latch, Group: 1}
 	circuit.Cells[24] = core.MapCell{Circuit: core.Toggle, Group: 1}
 	circuit.Cells[32] = core.MapCell{Circuit: core.Door, Group: 1, InitiallyOpen: true}
-	circuit.Edges = []core.MapEdge{{A: 8, B: 9, Kind: core.Gate, Group: 1, InitiallyOpen: true}}
+	circuit.Edges = []core.MapEdge{{A: 8, B: 9, Kind: core.Gate, Group: 1, InitiallyOpen: true}, {A: 24, B: 25, Kind: core.BreakableBarrier}}
 	for _, m := range append(core.StarterMaps(), circuit) {
 		g, err := core.NewGameWithMap(m, 2)
 		if err != nil {
@@ -25,6 +25,7 @@ func TestMapMessagesRoundTrip(t *testing.T) {
 			if _, err := g.Apply(24); err != nil {
 				t.Fatal(err)
 			}
+			g.EdgeDurability[1] = 1
 		}
 		for _, msg := range []Msg{Lobby{Cols: uint8(m.Cols), Rows: uint8(m.Rows), Map: &m}, Snapshot{Seq: 9, Game: g.Snapshot()}} {
 			b := Append(nil, msg)
