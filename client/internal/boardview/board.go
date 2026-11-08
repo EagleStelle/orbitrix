@@ -96,6 +96,7 @@ type Board struct {
 	badge       *text.GoTextFace
 
 	mapImg      *ebiten.Image // physical map pieces, rebuilt only when their appearance changes
+	mapLocks    *ebiten.Image // closed-Door icons above trapped orbs
 	mapTheme    *ui.Palette
 	mapRevision uint64
 	mapMarks    bool
@@ -138,10 +139,7 @@ func (b *Board) Layout(area ui.Rect, u float64) {
 		b.TileImg.Deallocate()
 		b.OrbImg.Deallocate()
 	}
-	if b.mapImg != nil {
-		b.mapImg.Deallocate()
-		b.mapImg = nil
-	}
+	b.releaseMapLayers()
 	cell := b.base * b.k
 	ts := int(math.Ceil(cell*(1-2*TileGutter))) + 2
 	b.TileImg = ebiten.NewImage(ts, ts)
@@ -341,8 +339,12 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 			continue
 		}
 		cx, cy := b.Centre(i)
+		owner := int(b.State.Owner[i])
+		if !b.State.Geo.Playable(i) {
+			owner = int(core.NoOwner) // presentation only; the saved owner regains control on reopening
+		}
 		for _, p := range b.Orbs.update(i, int(n), int(b.State.Geo.Cap[i]), tms, b.base) {
-			b.Orb(cx+p[0]*b.k, cy+p[1]*b.k, int(b.State.Owner[i]))
+			b.Orb(cx+p[0]*b.k, cy+p[1]*b.k, owner)
 		}
 	}
 	b.flush(dst, b.OrbImg)
@@ -377,22 +379,36 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 		}
 		b.flush(dst, b.OrbImg)
 	}
+	if b.State.Replay != nil && b.mapLocks != nil {
+		var op ebiten.DrawImageOptions
+		op.GeoM.Translate(b.ox, b.oy)
+		dst.DrawImage(b.mapLocks, &op)
+	}
 }
 
-// drawMapLayer keeps the map's physical pieces in one cached image. Orb
-// ownership and motion stay in their existing batches above this layer.
+func (b *Board) releaseMapLayers() {
+	for _, img := range [2]*ebiten.Image{b.mapImg, b.mapLocks} {
+		if img != nil {
+			img.Deallocate()
+		}
+	}
+	b.mapImg, b.mapLocks = nil, nil
+}
+
+// Physical pieces and foreground locks are cached separately around the orb batch.
 func (b *Board) drawMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 	if b.mapImg == nil || b.mapTheme != sc || b.mapRevision != b.State.revision || b.mapMarks != b.marks {
 		cols, rows := b.ScreenSize()
 		cell := b.base * b.k
 		w, h := int(math.Ceil(float64(cols)*cell)), int(math.Ceil(float64(rows)*cell))
 		if b.mapImg == nil || b.mapImg.Bounds().Dx() != w || b.mapImg.Bounds().Dy() != h {
-			if b.mapImg != nil {
-				b.mapImg.Deallocate()
-			}
+			b.releaseMapLayers()
 			b.mapImg = ebiten.NewImage(max(1, w), max(1, h))
 		} else {
 			b.mapImg.Clear()
+			if b.mapLocks != nil {
+				b.mapLocks.Clear()
+			}
 		}
 		b.renderMapLayer(b.mapImg, sc)
 		b.mapTheme, b.mapRevision = sc, b.State.revision
@@ -407,15 +423,39 @@ func (b *Board) renderMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 	g := b.State.Replay
 	DrawMapArt(dst, sc, MapState{Map: g.Map, Durability: g.Durability, Pressed: g.Pressed, CircuitOn: g.CircuitOn, Owner: b.State.Owner, Count: b.State.Count},
 		MapTransform{Cell: b.base * b.k, Turned: b.Turned}, false, b.marks)
+	lockInk := ui.Palettes[ui.Dark].Tile
+	if ui.Luminance(sc.Tile) < .25 {
+		lockInk = ui.Palettes[ui.Light].Tile
+	}
+	for i, c := range g.Map.Cells {
+		if c.Circuit != core.Door || b.State.Count[i] == 0 || b.State.Geo.Playable(i) {
+			continue
+		}
+		if b.mapLocks == nil {
+			b.mapLocks = ebiten.NewImage(b.mapImg.Bounds().Dx(), b.mapImg.Bounds().Dy())
+		}
+		x, y := b.Centre(i)
+		cell := b.base * b.k
+		_, inner, _, _, width := mapDeviceGeometry(ui.Rect{X: x - b.ox - cell/2, Y: y - b.oy - cell/2, W: cell, H: cell})
+		path := mapDoorLockPath(inner, width, false)
+		ink := PartnerColor(sc, c.Group)
+		// A solid keyline preserves contrast where the lock crosses neutral orbs.
+		ui.StrokePath(b.mapLocks, path, width*1.5, ink)
+		ui.StrokePath(b.mapLocks, path, width, lockInk)
+	}
 }
 
-// orb queues one of player p's orbs at (x, y): its rim in the mat's colour, its fill, and its mark if marks are on.
+// Orb queues a player's orb, or a floor-colored, unmarked trapped orb for NoOwner.
 func (b *Board) Orb(x, y float64, p int) {
 	s := b.OrbSize
 	h := b.OrbDrawSize / 2
+	fill := b.Palette.Tile
+	if p >= 0 {
+		fill = b.Palette.Players[p]
+	}
 	b.quad(x, y, h, 0, s, b.Palette.Ground, 1)
-	b.quad(x, y, h, s, s, b.Palette.Players[p], 1)
-	if b.marks {
+	b.quad(x, y, h, s, s, fill, 1)
+	if b.marks && p >= 0 {
 		b.quad(x, y, h, float64(2+p)*s, s, b.markInk[p], 1)
 	}
 }

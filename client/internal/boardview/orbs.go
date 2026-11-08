@@ -71,6 +71,12 @@ func newOrbField(geo *core.Geometry) *orbField {
 // them; the result is only valid until the next call. capacity is from the displayed
 // geometry. cell is the base cell size; the motion runs at orbCell.
 func (f *orbField) update(i, count, capacity int, tms, cell float64) [][2]float64 {
+	slots := min(count, orbSlots)
+	// Closed Doors retain their last positions, including jitter and breathing.
+	if capacity == 0 && int(f.N[i]) == slots {
+		f.lastT[i] = tms
+		return f.positions(i, slots, cell)
+	}
 	pop := count >= capacity-1
 	corner := capacity == 2
 	r := orbRadius(orbCell)
@@ -86,7 +92,6 @@ func (f *orbField) update(i, count, capacity int, tms, cell float64) [][2]float6
 	if pop {
 		minSep = math.Floor(minSep * 1.06)
 	}
-	slots := min(count, orbSlots)
 	base := i * orbSlots
 	phase := f.phase[i]
 	t := &f.tgt
@@ -217,9 +222,14 @@ func (f *orbField) update(i, count, capacity int, tms, cell float64) [][2]float6
 		}
 	}
 	f.N[i], f.lastT[i] = uint8(slots), tms
+	return f.positions(i, slots, cell)
+}
+
+func (f *orbField) positions(i, slots int, cell float64) [][2]float64 {
+	p := f.Pos[i*orbSlots*2 : (i*orbSlots+slots)*2]
 	s := cell / orbCell
 	for k := range slots {
-		t[k] = [2]float64{p[2*k] * s, p[2*k+1] * s}
+		f.tgt[k] = [2]float64{p[2*k] * s, p[2*k+1] * s}
 	}
-	return t[:slots]
+	return f.tgt[:slots]
 }

@@ -61,6 +61,7 @@ fill empty seats with AI, and enjoy following a chain reaction as it plays out.
   Breakable walls show a connected, tapered negative-space fracture rooted at the center: three main splits and two forks, visibly identifying breakability at initial durability 2. At durability 1 the same whole connected network grows 1.24x, longer and wider toward the edges. Use branching fractures rather than repetitive zigzags; no random texture, detached flecks or circles. Fracture cuts are structural damage, not additional device-icon stroke weights. Wall fill and joins stay unchanged; destruction creates empty Floor.
   Circuit groups any mixture and number of switches with Gates and Doors; each output has an editable open/closed starting state. Maps are stored locally, with file/code/QR portability,
   editable draft recovery, test play, and automatic host-to-player distribution. See `docs/maps.md`.
+  Closed Doors preserve trapped orbs and their owner: they appear frozen in Floor ink without Colorblind marks, beneath a locked icon in the opposite theme's Floor color. Reopening restores their owner's normal appearance, motion and control.
 
 - Rules, screens, AI behaviour and multiplayer design are specified in `CLAUDE.md`, the source of truth.
 - Every graphic is drawn and every sound synthesised in code. No image or audio files in the game; the only

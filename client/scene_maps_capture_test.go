@@ -4,9 +4,11 @@ package client
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/png"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,6 +32,12 @@ type mapCaptureCase struct {
 }
 
 var mapCaptureCases = []mapCaptureCase{
+	{"door-orbs-light", 1040, 640, false, false, false, "door-orbs", brushDoor},
+	{"door-orbs-dark", 1040, 640, true, false, false, "door-orbs", brushDoor},
+	{"door-orbs-dark-marks", 1040, 640, true, true, false, "door-orbs", brushDoor},
+	{"door-orbs-reopened", 1040, 640, false, true, true, "door-orbs", brushDoor},
+	{"door-orbs-reopened-dark", 1040, 640, true, true, true, "door-orbs", brushDoor},
+	{"door-orbs-mobile", 390, 844, true, true, false, "door-orbs", brushDoor},
 	{"circuit-door-desktop", 1040, 640, false, false, false, "", brushDoor},
 	{"circuit-door-mobile", 390, 844, true, false, false, "initial-open", brushDoor},
 	{"circuit-gate-small", 320, 640, false, false, false, "initial-open", brushGate},
@@ -201,6 +209,97 @@ func drawArtStates(dst *ebiten.Image, a *app) {
 		piece.Deallocate()
 	}
 }
+
+func drawDoorOrbStates(dst *ebiten.Image, a *app, reopen bool) error {
+	m := core.NewMap(5, 3)
+	groups := []uint8{1, 2, 7, 8, 11}
+	for col, group := range groups {
+		m.Cells[col*m.Rows+1] = core.MapCell{Circuit: core.Door, Group: group, InitiallyOpen: true}
+		m.Cells[col*m.Rows+2] = core.MapCell{Circuit: core.Toggle, Group: group}
+	}
+	g, err := core.NewGameWithMap(m, 5)
+	if err != nil {
+		return err
+	}
+	for col := range groups {
+		cell := col*m.Rows + 1
+		g.Count[cell], g.Owner[cell], g.Orbs[col] = uint8(col+1), int8(col), int32(col+1)
+	}
+	b := boardview.New(g)
+	b.Layout(ui.Rect{X: 24, Y: 80, W: a.w - 48, H: a.h - 104}, 1)
+	label := "Trapped orbs"
+	if reopen {
+		label = "Reopened Doors"
+	}
+	draw := func(tms float64) {
+		dst.Fill(a.sc.Ground)
+		ui.DrawText(dst, label, a.f.Title, 24, 32, text.AlignStart, a.sc.Ink)
+		b.Draw(dst, a.sc, tms, 0, a.set.Marks)
+	}
+	draw(1000)
+	for _, group := range groups {
+		g.ReplayTerrain([]core.TerrainEvent{{Cell: -1, Group: group, Open: true}})
+	}
+	b.Sync(g)
+	draw(1017)
+	before := make([]byte, dst.Bounds().Dx()*dst.Bounds().Dy()*4)
+	dst.ReadPixels(before)
+	draw(20000)
+	after := make([]byte, len(before))
+	dst.ReadPixels(after)
+	if !bytes.Equal(before, after) {
+		return &captureMapError{"locked Door orbs moved between frames"}
+	}
+	// A lone trapped orb must be Floor-colored, with the shared lock art above it.
+	x, y := b.Centre(1)
+	nx, ny := b.Centre(4)
+	cell := math.Hypot(nx-x, ny-y)
+	pixels := image.NewRGBA(dst.Bounds())
+	copy(pixels.Pix, after)
+	if pixels.RGBAAt(int(x), int(y-cell*.08)) != a.sc.Tile {
+		return fmt.Errorf("trapped orb ink %v, want Floor %v at (%v, %v), capacity %d", pixels.RGBAAt(int(x), int(y-cell*.08)), a.sc.Tile, x, y-cell*.08, b.State.Geo.Cap[1])
+	}
+	reference := ebiten.NewImage(dst.Bounds().Dx(), dst.Bounds().Dy())
+	defer reference.Deallocate()
+	boardview.DrawMapBrush(reference, a.sc, boardview.Brush{Circuit: core.Door, Edge: -1},
+		ui.Rect{X: x - cell/2, Y: y - cell/2, W: cell, H: cell}, groups[0], false, a.set.Marks)
+	refPixels := image.NewRGBA(dst.Bounds())
+	reference.ReadPixels(refPixels.Pix)
+	lockInk := ui.Palettes[ui.Dark].Tile
+	if a.sc == &ui.Palettes[ui.Dark] {
+		lockInk = ui.Palettes[ui.Light].Tile
+	}
+	checked := 0
+	for py := int(y - cell*.1); py < int(y+cell*.1); py++ {
+		for px := int(x - cell*.1); px < int(x+cell*.1); px++ {
+			ink := ui.InkOn(a.sc.Players[0])
+			if refPixels.RGBAAt(px, py) == ink {
+				checked++
+				if pixels.RGBAAt(px, py) != lockInk {
+					return &captureMapError{"occupied locked icon must use the opposite theme's Floor color above its orbs"}
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		return &captureMapError{"lock reference did not overlap the trapped orb"}
+	}
+	if reopen {
+		for _, group := range groups {
+			g.ReplayTerrain([]core.TerrainEvent{{Cell: -1, Group: group, Open: false}})
+		}
+		b.Sync(g)
+		draw(20017)
+		for col := range groups {
+			cell := col*m.Rows + 1
+			if !b.State.Geo.Playable(cell) || b.State.Owner[cell] != int8(col) || b.State.Count[cell] != uint8(col+1) {
+				return &captureMapError{"reopening failed to restore the trapped owner's orbs"}
+			}
+		}
+	}
+	return nil
+}
+
 func (g *mapCaptureGame) Draw(*ebiten.Image) {
 	if g.index >= len(mapCaptureCases) || g.err != nil {
 		return
@@ -251,7 +350,7 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		lib := &mapsScene{back: newHome(), selected: 1, store: store}
 		lib.refresh()
 		s = lib
-	case "art", "wall-corners":
+	case "art", "wall-corners", "door-orbs":
 	default:
 		if c.mode == "large" {
 			m = resizeMap(m, 40, 40)
@@ -355,6 +454,10 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 				boardview.DrawMapArt(out, a.sc, state, boardview.MapTransform{X: 20.2 + float64(missing)*245, Y: 20.2 + float64(variant)*340, Cell: 75.3, Turned: c.preview}, true, false)
 			}
 		}
+	} else if c.mode == "door-orbs" {
+		if err := drawDoorOrbStates(out, a, c.preview); err != nil {
+			g.err = err
+		}
 	} else if c.mode == "art" {
 		drawArtStates(out, a)
 	} else {
@@ -434,7 +537,9 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 			err = closeErr
 		}
 	}
-	g.err = err
+	if err != nil {
+		g.err = err
+	}
 	g.index++
 }
 

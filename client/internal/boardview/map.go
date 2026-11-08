@@ -289,21 +289,7 @@ func drawMapCircuit(dst *ebiten.Image, sc *ui.Palette, component core.CircuitKin
 			ui.FillRound(dst, body, radius, c)
 			ink = ui.InkOn(c)
 		}
-		x, y, k := body.Cx(), body.Cy(), body.W
-		ui.StrokeRound(dst, ui.Rect{X: x - .20*k, Y: y - .02*k, W: .40 * k, H: .32 * k}, min(innerRadius, width), width, ink)
-		// Opening lifts the free end of the shackle; the colored obstruction vanishes.
-		offset, end := 0.0, -.02
-		if pressed {
-			offset, end = .16, -.10
-		}
-		p := &mapPath
-		p.Reset()
-		p.MoveTo(float32(x+(-.13+offset)*k), float32(y-.02*k))
-		p.LineTo(float32(x+(-.13+offset)*k), float32(y-.18*k))
-		p.QuadTo(float32(x+(-.13+offset)*k), float32(y-.31*k), float32(x+offset*k), float32(y-.31*k))
-		p.QuadTo(float32(x+(.13+offset)*k), float32(y-.31*k), float32(x+(.13+offset)*k), float32(y-.18*k))
-		p.LineTo(float32(x+(.13+offset)*k), float32(y+end*k))
-		ui.StrokePath(dst, p, width, ink)
+		ui.StrokePath(dst, mapDoorLockPath(inner, width, pressed), width, ink)
 	case core.Latch:
 		ui.StrokeRound(dst, body, radius, width, sc.Dim)
 		if pressed {
@@ -331,6 +317,39 @@ func drawMapCircuit(dst *ebiten.Image, sc *ui.Palette, component core.CircuitKin
 			ui.StrokeRound(dst, inner, innerRadius, width, c)
 		}
 	}
+}
+
+func mapDoorLockPath(inner ui.Rect, width float64, open bool) *vector.Path {
+	// One vector outline keeps both states crisp within the same centered square.
+	lock := inner.Inset(width / 2)
+	lock.X += inner.W * .08
+	lock.W -= inner.W * .16
+	x0, x1 := float32(lock.X), float32(lock.Right())
+	y0, y1 := float32(inner.Y+inner.H*.46+width/2), float32(lock.Bottom())
+	bend := float32(width)
+	p := &mapPath
+	p.Reset()
+	p.MoveTo(x0+bend, y0)
+	p.LineTo(x1-bend, y0)
+	p.ArcTo(x1, y0, x1, y0+bend, bend)
+	p.LineTo(x1, y1-bend)
+	p.ArcTo(x1, y1, x1-bend, y1, bend)
+	p.LineTo(x0+bend, y1)
+	p.ArcTo(x0, y1, x0, y1-bend, bend)
+	p.LineTo(x0, y0+bend)
+	p.ArcTo(x0, y0, x0+bend, y0, bend)
+	p.Close()
+	side, top := float32(lock.W*.20), float32(lock.Y)
+	p.MoveTo(x0+side, y0)
+	p.LineTo(x0+side, top+bend)
+	p.ArcTo(x0+side, top, x0+side+bend, top, bend)
+	p.LineTo(x1-side-bend, top)
+	p.ArcTo(x1-side, top, x1-side, top+bend, bend)
+	if open {
+		y0 -= float32(2.5 * width)
+	}
+	p.LineTo(x1-side, y0)
+	return p
 }
 
 // mapArtEdge gives the actual shared grid boundary, including its vertices.

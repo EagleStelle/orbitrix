@@ -113,7 +113,7 @@ func TestDoorInitialStatesClosureAndReplay(t *testing.T) {
 	if _, err := g.Apply(40); err != nil {
 		t.Fatal(err)
 	}
-	if !g.Geo.Playable(30) || g.Geo.Playable(31) || g.Count[31] != 1 || g.Owner[31] != 0 {
+	if !g.Geo.Playable(30) || g.Geo.Playable(31) || g.Legal(31) || g.Count[31] != 1 || g.Owner[31] != 0 {
 		t.Fatal("Door closure lost trapped orbs or ignored polarity")
 	}
 	replay.ReplayTerrain(g.TerrainEvents)
@@ -128,8 +128,13 @@ func TestDoorInitialStatesClosureAndReplay(t *testing.T) {
 	if _, err := g.Apply(60); err != nil {
 		t.Fatal(err)
 	}
-	if !g.Geo.Playable(31) || g.Count[31] != 1 {
+	g.Turn = 0
+	if !g.Geo.Playable(31) || g.Count[31] != 1 || g.Owner[31] != 0 || !g.Legal(31) {
 		t.Fatal("reopened Door did not preserve its orbs")
+	}
+	g.Turn = 1
+	if g.Legal(31) {
+		t.Fatal("reopened Door gave its orbs to another player")
 	}
 }
 
