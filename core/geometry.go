@@ -24,8 +24,8 @@ type Geometry struct {
 	// Cap is the explosion threshold; blocked terrain has zero capacity.
 	Cap    []uint8
 	Degree []uint8 // outgoing connections, independent of Reservoir capacity
-	// Holes counts connections into Hole terrain, stored in the Nbr slots after the Degree active ones. Nil
-	// without Holes.
+	// Holes counts connections into Hole terrain, plus a Spillway's own pit (its own index), stored in the Nbr
+	// slots after the Degree active ones. Nil without Holes or Spillways.
 	Holes []uint8
 	// Nbr holds MaxConnections slots per cell, of which Degree are active.
 	Nbr []int16

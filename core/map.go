@@ -25,6 +25,7 @@ const (
 	Link
 	Reservoir
 	Portal
+	Spillway // a Reservoir whose extra orb is lost, like one sent into a Hole
 )
 
 const MaxMapGroups = MaxPlayers
@@ -108,7 +109,7 @@ func (m MapDefinition) ValidateStructure() error {
 		return fmt.Errorf("map has too many edges")
 	}
 	for i, c := range m.Cells {
-		if c.Terrain > Hole || c.Feature > Portal || c.Circuit > Door {
+		if c.Terrain > Hole || c.Feature > Spillway || c.Circuit > Door {
 			return fmt.Errorf("map cell %d has unknown terrain or feature", i)
 		}
 		if c.Feature != NoFeature && c.Circuit != NoCircuit {
@@ -254,7 +255,7 @@ func (m MapDefinition) InitialConnections(cell int, dst []int) []int {
 	return dst
 }
 
-// Capacity is the initial explosion threshold, including a Reservoir's reserve and adjacent Holes.
+// Capacity is the initial explosion threshold, including a Reservoir's or Spillway's extra orb and adjacent Holes.
 func (m MapDefinition) Capacity(cell int) int {
 	if !m.initialFloor(cell) {
 		return 0
@@ -266,7 +267,7 @@ func (m MapDefinition) Capacity(cell int) int {
 			n++
 		}
 	}
-	if m.Cells[cell].Feature == Reservoir {
+	if f := m.Cells[cell].Feature; f == Reservoir || f == Spillway {
 		n++
 	}
 	return n

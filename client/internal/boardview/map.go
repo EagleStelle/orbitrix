@@ -334,6 +334,16 @@ func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, g
 	switch feature {
 	case core.Link, core.Portal:
 		drawPartnerMark(dst, sc, group, x, y, body.W/.72, feature == core.Portal, axes)
+	case core.Spillway:
+		// Corner channels spill into a pit pocket, where the extra orb is lost as in a Hole.
+		ui.StrokeRound(dst, body, radius, width, sc.Dim)
+		pocket := body.Inset(body.W * .30)
+		ui.FillRound(dst, pocket, 0, sc.Pit)
+		ui.StrokeRound(dst, pocket, 0, width, sc.Dim)
+		end := body.W/2 - radius*(1-math.Sqrt2/2) - 2*width // stop short of the frame's rounded corner
+		for _, d := range [][2]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}} {
+			ui.Line(dst, x+d[0]*pocket.W/2, y+d[1]*pocket.H/2, x+d[0]*end, y+d[1]*end, width, sc.Dim)
+		}
 	case core.Reservoir:
 		ui.StrokeRound( // A recessed square well seen from above; the inset is the reserve pocket.
 			dst, body, radius, width, sc.Dim)
@@ -555,7 +565,7 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		}
 		pressed := i < len(state.Pressed) && state.Pressed[i] != 0
 		featureScheme := *sc
-		if cfg.Feature == core.Reservoir {
+		if cfg.Feature == core.Reservoir || cfg.Feature == core.Spillway {
 			featureScheme.Dim = mapReservoirColor(sc, state, i)
 		}
 		axes := core.BothAxes

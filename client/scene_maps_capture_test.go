@@ -44,6 +44,8 @@ var mapCaptureCases = []mapCaptureCase{
 	{"portal-locked-landscape", 568, 320, false, false, false, "portal-horizontal", brushPortal},
 	{"hole-desktop", 1040, 640, false, false, false, "", brushHole},
 	{"hole-mobile-dark", 390, 844, true, false, false, "", brushHole},
+	{"spillway-desktop", 1040, 640, false, false, false, "", brushSpillway},
+	{"spillway-mobile-dark", 390, 844, true, false, false, "", brushSpillway},
 	{"breakable-barrier-desktop", 1040, 640, false, false, false, "", brushBreakBarrier},
 	{"breakable-barrier-mobile", 390, 844, true, false, false, "", brushBreakBarrier},
 	{"breakable-barrier-small", 320, 640, false, false, false, "", brushBreakBarrier},
@@ -141,6 +143,7 @@ func editorShowcaseMap() core.MapDefinition {
 	m.Cells[9*m.Rows+4] = core.MapCell{Circuit: core.Toggle, Group: 2}
 	m.Cells[2*m.Rows+7] = core.MapCell{Circuit: core.Hold, Group: 3}
 	m.Cells[8*m.Rows+8].Feature = core.Reservoir
+	m.Cells[9*m.Rows+8].Feature = core.Spillway
 	m.Cells[6*m.Rows+3] = core.MapCell{Circuit: core.Toggle, Group: 1}
 	m.Cells[8*m.Rows+2] = core.MapCell{Circuit: core.Door, Group: 1}
 	m.Cells[9*m.Rows+2] = core.MapCell{Circuit: core.Door, Group: 1, InitiallyOpen: true}
@@ -215,19 +218,21 @@ func drawArtStates(dst *ebiten.Image, a *app) {
 		}
 	}
 	m := core.NewMap(3, 3)
-	m.Cells[0].Feature = core.Reservoir
-	for i, owner := range []int8{core.NoOwner, 0, 1} {
-		state := boardview.MapState{Map: &m, Owner: []int8{owner}, Count: []uint8{1}}
-		if owner == core.NoOwner {
-			state.Count[0] = 0
+	for row, feature := range []core.Feature{core.Reservoir, core.Spillway} {
+		m.Cells[0].Feature = feature
+		for i, owner := range []int8{core.NoOwner, 0, 1} {
+			state := boardview.MapState{Map: &m, Owner: []int8{owner}, Count: []uint8{1}}
+			if owner == core.NoOwner {
+				state.Count[0] = 0
+			}
+			piece := ebiten.NewImage(96, 96)
+			boardview.DrawMapArt(piece, sc, state, boardview.MapTransform{Cell: 96}, true, a.set.Marks)
+			var op ebiten.DrawImageOptions
+			op.GeoM.Scale(.8, .8)
+			op.GeoM.Translate(832+float64(i)*84, 516+float64(row)*84)
+			dst.DrawImage(piece, &op)
+			piece.Deallocate()
 		}
-		piece := ebiten.NewImage(96, 96)
-		boardview.DrawMapArt(piece, sc, state, boardview.MapTransform{Cell: 96}, true, a.set.Marks)
-		var op ebiten.DrawImageOptions
-		op.GeoM.Scale(.8, .8)
-		op.GeoM.Translate(832+float64(i)*84, 516)
-		dst.DrawImage(piece, &op)
-		piece.Deallocate()
 	}
 }
 

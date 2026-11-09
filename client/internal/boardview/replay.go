@@ -52,13 +52,14 @@ func (v *view) Place(cell int, p int8) []core.TerrainEvent {
 }
 
 // launch takes one orb per connection out of every cell in w; a Reservoir keeps
-// its reserve. The launched orbs are in flight until land; those aimed at Holes never land.
+// its reserve. The launched orbs are in flight until land; those aimed at Holes or a Spillway's pit never land.
 func (v *view) Launch(w core.Wave) {
 	v.from = v.from[:0]
 	for _, e := range w {
 		v.from = append(v.from, v.Owner[e])
 		v.Count[e] -= uint8(len(v.Geo.Targets(int(e))))
 		if v.Count[e] == 0 {
+			v.reservoirChanged(int(e), core.NoOwner) // an emptied Spillway returns to neutral ink
 			v.Owner[e] = core.NoOwner
 		}
 	}
@@ -79,7 +80,10 @@ func (v *view) Land(w core.Wave) []core.TerrainEvent {
 }
 
 func (v *view) reservoirChanged(cell int, owner int8) {
-	if v.Replay != nil && v.Replay.Map.Cells[cell].Feature == core.Reservoir && (v.Count[cell] == 0 || v.Owner[cell] != owner) {
+	if v.Replay == nil {
+		return
+	}
+	if f := v.Replay.Map.Cells[cell].Feature; (f == core.Reservoir || f == core.Spillway) && (v.Count[cell] == 0 || v.Owner[cell] != owner) {
 		v.revision++
 	}
 }

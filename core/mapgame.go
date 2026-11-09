@@ -106,7 +106,7 @@ func (g *Game) mapGeometry() *Geometry {
 		if g.TerrainAt(i) != Floor || c.Feature == Portal {
 			continue
 		}
-		var holes [4]int16
+		var holes [5]int16
 		nholes := 0
 		for d := range 4 {
 			var scratch [4 * MaxMapGroups]int16
@@ -130,6 +130,11 @@ func (g *Game) mapGeometry() *Geometry {
 		if c.Feature == Link && t.pairs[i] >= 0 {
 			geo.Nbr[MaxConnections*i+int(geo.Degree[i])] = t.pairs[i]
 			geo.Degree[i]++
+		}
+		if c.Feature == Spillway {
+			// Its extra orb drops into its own pit: a Hole target at itself. No Link, so at most 5 targets.
+			holes[nholes] = int16(i)
+			nholes++
 		}
 		if nholes > 0 {
 			if geo.Holes == nil {

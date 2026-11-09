@@ -1,6 +1,7 @@
 package core
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -94,44 +95,45 @@ func TestHoleValidation(t *testing.T) {
 }
 
 func TestHoleRandomPlayLosesOnlyHoleOrbs(t *testing.T) {
-	m := holeMap()
-	encoded, err := EncodeMap(m)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decoded, err := DecodeMap(encoded); err != nil || decoded.Cells[12].Terrain != Hole {
-		t.Fatalf("Hole did not survive the map codec: %v", err)
-	}
-	g, err := NewGameWithMap(m, 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rng := NewRNG(789)
-	lost := 0
-	var moves []int
-	for turn := 0; turn < 300 && !g.Over(); turn++ {
-		moves = g.LegalMoves(moves[:0])
-		cell := moves[rng.Intn(len(moves))]
-		c := g.Clone()
-		waves := mustApply(t, g, cell)
-		if err := c.Simulate(cell); err != nil || c.Hash() != g.Hash() {
-			t.Fatal("simulation differs")
+	for name, m := range map[string]MapDefinition{"Hole": holeMap(), "Spillway": spillwayMap()} {
+		encoded, err := EncodeMap(m)
+		if err != nil {
+			t.Fatal(err)
 		}
-		for _, w := range waves {
-			for _, e := range w {
-				lost += int(g.Geo.Holes[e]) // this map has no terrain that changes its geometry
+		if decoded, err := DecodeMap(encoded); err != nil || !slices.Equal(decoded.Cells, m.Cells) {
+			t.Fatalf("%s did not survive the map codec: %v", name, err)
+		}
+		g, err := NewGameWithMap(m, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rng := NewRNG(789)
+		lost := 0
+		var moves []int
+		for turn := 0; turn < 300 && !g.Over(); turn++ {
+			moves = g.LegalMoves(moves[:0])
+			cell := moves[rng.Intn(len(moves))]
+			c := g.Clone()
+			waves := mustApply(t, g, cell)
+			if err := c.Simulate(cell); err != nil || c.Hash() != g.Hash() {
+				t.Fatalf("%s: simulation differs", name)
+			}
+			for _, w := range waves {
+				for _, e := range w {
+					lost += int(g.Geo.Holes[e]) // these maps have no terrain that changes their geometry
+				}
+			}
+			if total(g) != g.Moves-lost {
+				t.Fatalf("%s turn %d: %d orbs after %d moves and %d lost", name, turn, total(g), g.Moves, lost)
+			}
+			r, err := Restore(g.Snapshot())
+			if err != nil || r.Hash() != g.Hash() {
+				t.Fatalf("%s turn %d: restore %v", name, turn, err)
 			}
 		}
-		if total(g) != g.Moves-lost {
-			t.Fatalf("turn %d: %d orbs after %d moves and %d lost", turn, total(g), g.Moves, lost)
+		if lost == 0 {
+			t.Fatalf("random play never lost an orb to a %s", name)
 		}
-		r, err := Restore(g.Snapshot())
-		if err != nil || r.Hash() != g.Hash() {
-			t.Fatalf("turn %d: restore %v", turn, err)
-		}
-	}
-	if lost == 0 {
-		t.Fatal("random play never reached a Hole")
 	}
 }
 

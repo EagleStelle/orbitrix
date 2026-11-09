@@ -8,6 +8,39 @@ import (
 	"orbitrix/core"
 )
 
+func TestSpillwayReplayDropsItsExtraOrb(t *testing.T) {
+	m := core.NewMap(5, 5)
+	m.Cells[12].Feature = core.Spillway
+	g, err := core.NewGameWithMap(m, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Owner[12], g.Count[12], g.Orbs[0] = 0, 4, 4
+	v := NewView(g)
+	revision := v.revision
+	v.Count[12]++
+	v.Launch(core.Wave{12})
+	if v.revision == revision {
+		t.Fatal("emptying a Spillway must return its ink to neutral")
+	}
+	b := New(g)
+	waves, err := g.Apply(12)
+	if err != nil || len(waves) != 1 {
+		t.Fatalf("waves=%v err=%v", waves, err)
+	}
+	b.Start(12, 0, waves, nil)
+	b.falls = b.falls[:0]
+	for b.Playing {
+		b.Tick(nil)
+	}
+	if len(b.falls) != 1 || b.falls[0].hole != 12 || b.falls[0].owner != 0 {
+		t.Fatalf("the extra orb must fall into the Spillway's own pit: %v", b.falls)
+	}
+	if !slices.Equal(b.State.Count, g.Count) || !slices.Equal(b.State.Owner, g.Owner) {
+		t.Fatal("Spillway replay differs from resolved game")
+	}
+}
+
 func TestHoleReplayDropsWastedOrbs(t *testing.T) {
 	m := core.NewMap(5, 5)
 	m.Cells[12].Terrain = core.Hole
