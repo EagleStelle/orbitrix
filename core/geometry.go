@@ -1,6 +1,9 @@
 package core
 
-import "fmt"
+import (
+	"fmt"
+	"math/bits"
+)
 
 const (
 	MinSize        = 3
@@ -23,10 +26,13 @@ type Geometry struct {
 	Cols, Rows int
 	// Cap is the explosion threshold; blocked terrain has zero capacity.
 	Cap    []uint8
-	Degree []uint8 // outgoing connections, independent of Reservoir capacity
+	Degree []uint8 // outgoing connections, independent of Reservoir and Spillway capacity
 	// Holes counts connections into Hole terrain, plus a Spillway's own pit (its own index), stored in the Nbr
 	// slots after the Degree active ones. Nil without Holes or Spillways.
 	Holes []uint8
+	// Outlets holds each Reservoir's open Floor routes, bit d for direction d (left, right, up, down): the sides its
+	// arrow can point to. Nil without Reservoirs.
+	Outlets []uint8
 	// Nbr holds MaxConnections slots per cell, of which Degree are active.
 	Nbr []int16
 	// PortalRoutes holds entry/exit pairs per connection, only on maps with active Portal routes.
@@ -76,6 +82,38 @@ func (g *Geometry) Targets(i int) []int16 {
 		n += int(g.Holes[i])
 	}
 	return g.Nbr[MaxConnections*i : MaxConnections*i+n]
+}
+
+// Released returns the orbs cell i's explosion takes from it: one per target, and a Reservoir's extra orb, thrown out
+// an open route (without one it stays).
+func (g *Geometry) Released(i int) uint8 {
+	n := uint8(len(g.Targets(i)))
+	if g.Outlets != nil && g.Outlets[i] != 0 {
+		n++
+	}
+	return n
+}
+
+// Outlet returns the neighbour slot that takes Reservoir i's extra orb, given its state (see ReservoirMakes), and its
+// state after the arrow turns.
+func (g *Geometry) Outlet(i int, state uint8) (slot int, next uint8) {
+	d, step := NextOutlet(g.Outlets[i], state)
+	return bits.OnesCount8(g.Outlets[i] & (1<<d - 1)), state&^3 | step // Floor routes fill the slots in direction order
+}
+
+// clockwise lists the route directions (left, right, up, down) clockwise from up.
+var clockwise = [4]uint8{2, 1, 3, 0}
+
+// NextOutlet returns the first open route in mask clockwise from a Reservoir's arrow step (0 up, 1 right, 2 down,
+// 3 left), as a direction (left, right, up, down), and the step after it; -1 for an empty mask.
+func NextOutlet(mask, step uint8) (direction int, next uint8) {
+	step &= 3 // the arrow's bits of a Reservoir's state
+	for k := range uint8(4) {
+		if s := (step + k) % 4; mask&(1<<clockwise[s]) != 0 {
+			return int(clockwise[s]), (s + 1) % 4
+		}
+	}
+	return -1, step
 }
 
 func (g *Geometry) PortalPath(cell, connection int) []int16 {

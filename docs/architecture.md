@@ -20,7 +20,7 @@ Orbitrix is one Go module that builds four things: the game client (desktop, And
 
 - A board is `cols × rows` cells in flat arrays: `[]uint8` counts and `[]int8` owners, indexed `c*rows + r`. `Geometry` precomputes each cell's capacity and neighbours, so the hot loops have no bounds logic and no maps.
 - Custom map definitions are copied on entry and retained as immutable designs. Geometry separates outgoing degree
-  from capacity and supports a fifth connection for Links; Reservoirs add one reserve to capacity; Spillways add one more connection into their own pit, a Hole slot targeting the cell itself. Factories and Crushers keep normal capacity; the map topology lists them so `Game.produce` visits only those cells after each move. Portals reroute
+  from capacity and supports a fifth connection for Links; Reservoirs add one to capacity and keep their open Floor routes in `Geometry.Outlets`; `explode` throws the extra orb out the route their arrow (`Pressed`) points to, turns it, and makes the new orb once per move (`ReservoirMade`); Spillways add one more connection into their own pit, a Hole slot targeting the cell itself. Factories and Crushers keep normal capacity; the map topology lists them so `Game.produce` visits only those cells after each move. Portals reroute
   cardinal connections through their pair without changing direction or adding a connection; their endpoints cannot
   hold orbs or accept placements. `PortalMode` stores the requested All directions (zero), Horizontal or Vertical setting.
   `core/portal.go` derives the enabled axes from that setting and physical obstructions: a blocked side at either endpoint

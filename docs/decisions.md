@@ -14,7 +14,9 @@ Decisions that future changes have to respect, and why. How things work is in [a
 ## Rules engine
 
 - Map capacity is an explosion threshold; outgoing degree counts transfers. Reservoirs add one to the threshold
-  without adding a transfer, so blasts preserve the reserve and total orbs. Spillways add one to the threshold and
+  and send that extra orb along their arrow, a turning clockwise step kept in `Pressed`, then make one new orb, only
+  on their first explosion each move: per explosion, a chain that never settles (two colours recapturing each other
+  until `MaxWaves`) would grow counts past their `uint8` range, and two Reservoirs could refill each other forever. Spillways add one to the threshold and
   one lost transfer into their own pit; a Spillway cannot also be a Link, so its targets fit `MaxConnections`.
 - Factories and Crushers act once per move, only for the mover, after the move's chain settles and before the turn
   passes; a Pass runs neither. Ownership is the occupying orbs, never a separate field.
@@ -45,7 +47,8 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - Holes and Spillways lose their orbs for good and never fill up; Crushers keep eating. Games end only when the board
   fills, so `MapDefinition.Estimate` predicts game length from a fit to bot games, and `Validate` refuses Instant
   and Endless. Each piece counts the same on every board size: the slowdown tracks how many there are, not their
-  share of the board. Factories offset the losses with diminishing returns, less beside a Hole, which they feed. The
+  share of the board. Factories offset the losses with diminishing returns, less beside a Hole, which they feed. Reservoirs do
+  too, less, since they make an orb only when they explode. The
   fit uses mixed 2–4 player lobbies of weak and strong bots: Factory maps run longer with more players and with
   players who ignore Factories, and the editor can't know either. Instant is an absolute move count (Factories ending
   games within about ten moves), not a share of an empty board, so short Factory games stay playable. It reads the

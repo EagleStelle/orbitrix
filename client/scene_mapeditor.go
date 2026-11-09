@@ -42,7 +42,7 @@ const (
 var editorTools = [...]string{"Floor", "Wall", "Void", "Breakable Wall", "Link", "Reservoir", "Latch", "Barrier", "Gate", "Erase", "Pan", "Toggle", "Hold", "Door", "Breakable Barrier", "Portal", "Hole", "Spillway", "Factory", "Crusher"}
 var editorHelp = [...]string{
 	"Playable surface. Open routes set its capacity.", "Blocks explosions permanently.", "Empty space outside the playable board.", "Two nearby blasts turn it into floor.",
-	"Pair two distant cells to route explosions.", "Stores one extra orb before exploding.", "Reverses once; another switch rearms it.", "Blocks a route between two floor cells.",
+	"Pair two distant cells to route explosions.", "Takes one extra orb to explode, sends it along its arrow, then makes one, once a move.", "Reverses once; another switch rearms it.", "Blocks a route between two floor cells.",
 	"Reverses with its circuit. Repaint to set its start.", "Remove an edge or restore a cell to floor.", "Drag the map to move around.", "Reverses on empty placement or orbs popping in or out.", "Reverses on press and release.", "A wall. Repaint to set its start.",
 	"Blocks a route. Two blasts from its two bordering cells break it.",
 	"Passes to its pair. Holds no orbs.",

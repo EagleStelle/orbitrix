@@ -18,6 +18,7 @@ type mapSpriteKey struct {
 	group, durability, corner       uint8
 	pressed, lock, cracks           bool
 	portalAxes                      core.PortalAxes
+	arrow                           uint8 // a Reservoir's outlet side, 1 up to 4 left
 }
 
 // Bound both texture memory and resize history. Large, sparse boards can draw
@@ -83,15 +84,15 @@ func renderMapSprite(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, key mapSprite
 		ui.StrokePath(dst, path, width*1.5, PartnerColor(sc, key.group))
 		ui.StrokePath(dst, path, width, ink)
 	case key.feature != core.NoFeature:
-		renderMapFeature(dst, sc, key.feature, key.group, key.portalAxes, r, key.pressed)
+		renderMapFeature(dst, sc, key.feature, key.group, key.portalAxes, key.arrow, r, key.pressed)
 	default:
 		renderMapCircuit(dst, sc, key.circuit, key.group, r, key.pressed)
 	}
 }
 
-func drawMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, axes core.PortalAxes, r ui.Rect, pressed bool) {
+func drawMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, axes core.PortalAxes, arrow uint8, r ui.Rect, pressed bool) {
 	if feature != core.NoFeature {
-		drawMapSprite(dst, sc, r, mapSpriteKey{feature: feature, group: group, portalAxes: axes, pressed: pressed})
+		drawMapSprite(dst, sc, r, mapSpriteKey{feature: feature, group: group, portalAxes: axes, arrow: arrow, pressed: pressed})
 	}
 }
 

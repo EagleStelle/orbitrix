@@ -421,6 +421,12 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 				x, y := b.flightPosition(int(e), connection, f)
 				b.Orb(x, y, int(b.State.from[k]))
 			}
+			if outlets := b.State.Geo.Outlets; outlets != nil && outlets[e] != 0 {
+				// A Reservoir's extra orb trails the one flying the way its arrow points.
+				slot, _ := b.State.Geo.Outlet(int(e), b.State.Replay.Pressed[e])
+				x, y := b.flightPosition(int(e), slot, f*.8)
+				b.Orb(x, y, int(b.State.from[k]))
+			}
 		}
 	}
 	b.flush(dst, b.OrbImg)
@@ -518,7 +524,7 @@ func (b *Board) drawMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 
 func (b *Board) renderMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 	g := b.State.Replay
-	DrawMapArt(dst, sc, MapState{Map: g.Map, Durability: g.Durability, EdgeDurability: g.EdgeDurability, Pressed: g.Pressed, CircuitOn: g.CircuitOn, Owner: b.State.Owner, Count: b.State.Count, PortalAxes: g.Geo.PortalAxes},
+	DrawMapArt(dst, sc, MapState{Map: g.Map, Durability: g.Durability, EdgeDurability: g.EdgeDurability, Pressed: g.Pressed, CircuitOn: g.CircuitOn, Owner: b.State.Owner, Count: b.State.Count, PortalAxes: g.Geo.PortalAxes, Outlets: g.Geo.Outlets},
 		MapTransform{Cell: b.base * b.k, Turned: b.Turned}, false, b.marks)
 }
 

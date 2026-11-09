@@ -24,6 +24,7 @@ type MapState struct {
 	Owner               []int8
 	Count               []uint8
 	PortalAxes          []core.PortalAxes
+	Outlets             []uint8 // the match geometry's Reservoir routes; nil uses the map's starting ones
 }
 
 type MapTransform struct {
@@ -333,7 +334,7 @@ func mapArtWallVertex(state *MapState, gx, gy int, join uint8) (terrain [4]core.
 	return
 }
 
-func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, axes core.PortalAxes, r ui.Rect, pressed bool) {
+func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, axes core.PortalAxes, arrow uint8, r ui.Rect, pressed bool) {
 	x, y := r.Cx(), r.Cy()
 	body, _, radius, _, width := mapDeviceGeometry(r)
 	if feature.IsMaker() {
@@ -377,10 +378,16 @@ func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, g
 			dst, body, radius, width, sc.Dim)
 		pocket := body.Inset(body.W * (.30 - .13) / .60)
 		ui.StrokeRound(dst, pocket, 0, width, sc.Dim)
-		// Four approach channels distinguish storage from a switch face.
-		for _, d := range [][2]float64{{0, -1}, {1, 0}, {0, 1}, {-1, 0}} {
-			ui.Line(dst, x+d[0]*pocket.W/2, y+d[1]*pocket.H/2,
-				x+d[0]*(body.W/2-2*width), y+d[1]*(body.H/2-2*width), width, sc.Dim)
+		// Four approach channels distinguish storage from a switch face; an open arrowhead tips the one its extra orb
+		// leaves by.
+		end := body.W/2 - 2*width
+		for k, d := range [][2]float64{{0, -1}, {1, 0}, {0, 1}, {-1, 0}} {
+			ui.Line(dst, x+d[0]*pocket.W/2, y+d[1]*pocket.H/2, x+d[0]*end, y+d[1]*end, width, sc.Dim)
+			if int(arrow) == k+1 {
+				tx, ty, a := x+d[0]*end, y+d[1]*end, body.W*.13
+				ui.Line(dst, tx, ty, tx-d[0]*a-d[1]*a, ty-d[1]*a+d[0]*a, width, sc.Dim)
+				ui.Line(dst, tx, ty, tx-d[0]*a+d[1]*a, ty-d[1]*a-d[0]*a, width, sc.Dim)
+			}
 		}
 	}
 }
@@ -604,7 +611,11 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 			}
 		}
 		working := cfg.Feature.IsMaker() && i < len(state.Pressed) && i < len(state.Owner) && core.MakerWorking(state.Pressed[i], state.Owner[i])
-		drawMapFeature(dst, &featureScheme, cfg.Feature, cfg.Group, axes, r, working)
+		arrow := uint8(0)
+		if cfg.Feature == core.Reservoir {
+			arrow = reservoirArrow(&state, tr, i)
+		}
+		drawMapFeature(dst, &featureScheme, cfg.Feature, cfg.Group, axes, arrow, r, working)
 		if cfg.Circuit.IsOutput() {
 			pressed = core.CircuitOpen(cfg.InitiallyOpen, state.CircuitOn[cfg.Group])
 		}
@@ -692,6 +703,28 @@ func DrawMapBrush(dst *ebiten.Image, sc *ui.Palette, brush Brush, r ui.Rect, gro
 	}
 	body, radius := mapTileGeometry(r)
 	ui.FillRound(dst, body, radius, sc.Tile)
-	drawMapFeature(dst, sc, brush.Feature, group, brush.PortalMode.Axes(), r, pressed)
+	drawMapFeature(dst, sc, brush.Feature, group, brush.PortalMode.Axes(), 1, r, pressed)
 	drawMapCircuit(dst, sc, brush.Circuit, group, r, pressed)
+}
+
+// reservoirArrow returns the screen side a Reservoir's extra orb leaves by: 1 up, 2 right, 3 down, 4 left, or 0 with
+// no open route.
+func reservoirArrow(state *MapState, tr MapTransform, i int) uint8 {
+	mask := state.Map.InitialOutlets(i)
+	if state.Outlets != nil {
+		mask = state.Outlets[i]
+	}
+	var step uint8
+	if i < len(state.Pressed) {
+		step = state.Pressed[i]
+	}
+	d, _ := core.NextOutlet(mask, step)
+	if d < 0 {
+		return 0
+	}
+	side := [4]uint8{3, 1, 0, 2}[d] // left, right, up, down, clockwise from up
+	if tr.Turned {
+		side = (side + 1) % 4 // turned boards rotate a quarter clockwise, like wall joins
+	}
+	return side + 1
 }

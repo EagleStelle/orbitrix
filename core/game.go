@@ -182,6 +182,11 @@ func (g *Game) play(cell int, record bool) error {
 	p := int8(g.Turn)
 	g.Played |= 1 << g.Turn
 	g.Moves++
+	if g.Map != nil {
+		for _, e := range g.topology.reservoirs {
+			g.Pressed[e] &^= ReservoirMade // each may make an orb again
+		}
+	}
 	g.Owner[cell] = p
 	g.Count[cell]++
 	g.Orbs[p]++
@@ -217,6 +222,16 @@ func (g *Game) play(cell int, record bool) error {
 		g.advance()
 	}
 	return nil
+}
+
+// ReservoirMade marks a Reservoir's Pressed byte once it has made its orb, until the next move starts; the low two
+// bits hold its arrow's clockwise step (0 up).
+const ReservoirMade uint8 = 4
+
+// ReservoirMakes reports whether a Reservoir in state makes an orb as it explodes, its first time this move, and its
+// state after.
+func ReservoirMakes(state uint8) (bool, uint8) {
+	return state&ReservoirMade == 0, state | ReservoirMade
 }
 
 // makerWorking marks a Factory's or Crusher's Pressed byte once it has worked for the holder in its low bits
@@ -339,10 +354,19 @@ func (g *Game) explode() {
 	g.next, g.from = g.next[:0], g.from[:0]
 	for _, e := range g.cur {
 		// One orb per target; those sent into Holes or a Spillway's pit are lost, so only Neighbours receive below.
-		p, released := g.Owner[e], uint8(len(geo.Targets(int(e))))
+		p, released := g.Owner[e], geo.Released(int(e))
 		g.from = append(g.from, p)
 		g.Count[e] -= released
 		g.Orbs[p] -= int32(released)
+		if geo.Outlets != nil && geo.Outlets[e] != 0 {
+			// A Reservoir makes one new orb on its first explosion each move; per explosion, chains that never settle
+			// would grow without bound.
+			var makes bool
+			if makes, g.Pressed[e] = ReservoirMakes(g.Pressed[e]); makes {
+				g.Count[e]++
+				g.Orbs[p]++
+			}
+		}
 		switch {
 		case g.Count[e] == 0:
 			g.Owner[e] = NoOwner // a Factory or Crusher keeps its state until the move settles
@@ -351,8 +375,15 @@ func (g *Game) explode() {
 		}
 	}
 	for k, e := range g.cur {
-		p := g.from[k]
-		for _, n := range geo.Neighbours(int(e)) {
+		p, to := g.from[k], geo.Neighbours(int(e))
+		if geo.Outlets != nil && geo.Outlets[e] != 0 {
+			// A Reservoir throws its extra orb out the side its arrow points to, then the arrow turns clockwise.
+			var slot int
+			slot, g.Pressed[e] = geo.Outlet(int(e), g.Pressed[e])
+			var buf [MaxConnections + 1]int16
+			to = append(append(buf[:0], to...), to[slot])
+		}
+		for _, n := range to {
 			if o := g.Owner[n]; o != p {
 				// Capture: the cell's existing orbs change hands with it.
 				if o != NoOwner {

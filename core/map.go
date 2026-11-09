@@ -24,9 +24,9 @@ type Feature uint8
 const (
 	NoFeature Feature = iota
 	Link
-	Reservoir
+	Reservoir // takes one extra orb to explode, throws it along its arrow and makes a new one
 	Portal
-	Spillway // a Reservoir whose extra orb is lost, like one sent into a Hole
+	Spillway // takes one extra orb to explode and loses it, like one sent into a Hole
 	Factory  // gains an orb after each of its owner's moves
 	Crusher  // loses an orb after each of its owner's moves
 )
@@ -253,6 +253,17 @@ func (m MapDefinition) route(cell, direction int, pairs []int16, blocked []uint8
 		cell = pair
 	}
 	return -1, path // A Portal-only loop has no landing cell.
+}
+
+// InitialOutlets returns a cell's open Floor routes at the start, bit d for direction d (left, right, up, down), as
+// Geometry.Outlets holds them for a Reservoir.
+func (m MapDefinition) InitialOutlets(cell int) (mask uint8) {
+	for d := range 4 {
+		if j, _ := m.route(cell, d, nil, nil, nil, nil); m.initialFloor(j) {
+			mask |= 1 << d
+		}
+	}
+	return mask
 }
 
 // InitialConnections appends a cell's open neighbors in left/right/up/down/Link
@@ -535,11 +546,11 @@ func (m MapDefinition) Validate() []MapIssue {
 	if _, _, pace := m.Estimate(); pace == Instant || pace == Endless {
 		issue := MapIssue{Message: "Too many Holes, Spillways and Crushers: games would never end"}
 		if pace == Instant {
-			issue.Message = "Too many Factories: games would end almost at once"
+			issue.Message = "Too many Factories and Reservoirs: games would end almost at once"
 		}
 		for i, c := range m.Cells {
 			drains := c.Terrain == Hole || c.Feature == Spillway || c.Feature == Crusher
-			if pace == Instant && c.Feature == Factory || pace == Endless && drains {
+			if pace == Instant && (c.Feature == Factory || c.Feature == Reservoir) || pace == Endless && drains {
 				issue.Cells = append(issue.Cells, i)
 			}
 		}
@@ -553,9 +564,10 @@ func (m MapDefinition) Validate() []MapIssue {
 // about 0.75 moves per orb of room (what its Floor holds without exploding), and fills at the orb each move adds.
 // Each open Hole side, Spillway and Crusher loses part of it, the same on every board size. Factories add to it, each
 // a little less as they crowd, and less still beside a Hole, which they feed. More players make Factory maps longer,
-// since each Factory works only on its holder's turn. Integers keep validation identical on every device.
+// since each Factory works only on its holder's turn. Reservoirs add to it too, less, as they make an orb only when
+// they explode. Integers keep validation identical on every device.
 func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
-	room, growth, factories := 0, 1000, 0 // growth in thousandths of an empty board's
+	room, growth, factories, reservoirs := 0, 1000, 0, 0 // growth in thousandths of an empty board's
 	for i := range m.Cells {
 		capacity, holes := m.capacity(i)
 		if capacity == 0 {
@@ -571,9 +583,14 @@ func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 		case Factory:
 			factories++
 			growth -= 30 * holes
+		case Reservoir:
+			if m.InitialOutlets(i) != 0 {
+				reservoirs++
+			}
 		}
 	}
 	growth += 150 * 83 * factories / (83 + factories)
+	growth += 7600 * reservoirs / (300 + reservoirs)
 	length = math.MaxInt32
 	if growth > 0 {
 		length = 1_000_000 / growth

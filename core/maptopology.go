@@ -21,6 +21,7 @@ type mapTopology struct {
 	switches, walls []int16
 	barriers        []int16
 	makers          []int16 // Factories and Crushers, which act after their owner's move
+	reservoirs      []int16
 	pairs           []int16
 	mu              sync.Mutex
 	cache           [topologyCacheSize]topologyEntry
@@ -45,6 +46,9 @@ func newMapTopology(m *MapDefinition) *mapTopology {
 		}
 		if c.Feature.IsMaker() {
 			t.makers = append(t.makers, int16(i))
+		}
+		if c.Feature == Reservoir {
+			t.reservoirs = append(t.reservoirs, int16(i))
 		}
 		if c.Feature == Link || c.Feature == Portal {
 			if j := first[c.Feature][c.Group]; j >= 0 {

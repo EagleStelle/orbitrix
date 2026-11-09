@@ -72,6 +72,8 @@ func Restore(s Snapshot) (*Game, error) {
 			pressedOK := s.Pressed[i] <= 1 && (c.Circuit.IsSwitch() || s.Pressed[i] == 0)
 			if holder := s.Pressed[i] &^ makerWorking; c.Feature.IsMaker() {
 				pressedOK = s.Pressed[i] == 0 || holder >= 1 && int(holder) <= s.Players && s.Count[i] > 0
+			} else if c.Feature == Reservoir {
+				pressedOK = s.Pressed[i]&^(ReservoirMade|3) == 0 // its arrow's clockwise step and made flag
 			}
 			if s.Durability[i] > 2 || c.Terrain != BreakableWall && s.Durability[i] != 0 || !pressedOK {
 				return nil, fmt.Errorf("restore: invalid terrain state at cell %d", i)

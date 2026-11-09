@@ -46,18 +46,31 @@ func (v *view) sync(g *core.Game) {
 func (v *view) Place(cell int, p int8) []core.TerrainEvent {
 	v.inkChanged(cell, p)
 	v.wave = 0
+	if v.Replay != nil {
+		for i, c := range v.Replay.Map.Cells {
+			if c.Feature == core.Reservoir {
+				v.Replay.Pressed[i] &^= core.ReservoirMade // each may make an orb again, as in core.Game
+			}
+		}
+	}
 	v.Owner[cell] = p
 	v.Count[cell]++
 	return v.applyTerrain(-1)
 }
 
-// launch takes one orb per connection out of every cell in w; a Reservoir keeps
-// its reserve. The launched orbs are in flight until land; those aimed at Holes or a Spillway's pit never land.
+// launch takes the orbs every cell in w releases, as core does. The launched orbs are in flight until land; those
+// aimed at Holes or a Spillway's pit never land.
 func (v *view) Launch(w core.Wave) {
 	v.from = v.from[:0]
 	for _, e := range w {
 		v.from = append(v.from, v.Owner[e])
-		v.Count[e] -= uint8(len(v.Geo.Targets(int(e))))
+		v.Count[e] -= v.Geo.Released(int(e))
+		if v.Geo.Outlets != nil && v.Geo.Outlets[e] != 0 {
+			var makes bool
+			if makes, v.Replay.Pressed[e] = core.ReservoirMakes(v.Replay.Pressed[e]); makes {
+				v.Count[e]++
+			}
+		}
 		if v.Count[e] == 0 {
 			v.inkChanged(int(e), core.NoOwner) // an emptied Spillway returns to neutral ink
 			v.Owner[e] = core.NoOwner
@@ -65,10 +78,19 @@ func (v *view) Launch(w core.Wave) {
 	}
 }
 
-// land gives one orb to each neighbour of every cell in w, capturing it for the launching cell's owner.
+// land gives one orb to each neighbour of every cell in w, and a Reservoir's extra orb to the side its arrow points
+// to, capturing them for the launching cell's owner.
 func (v *view) Land(w core.Wave) []core.TerrainEvent {
 	for k, e := range w {
-		for _, n := range v.Geo.Neighbours(int(e)) {
+		to := v.Geo.Neighbours(int(e))
+		if v.Geo.Outlets != nil && v.Geo.Outlets[e] != 0 {
+			var slot int
+			slot, v.Replay.Pressed[e] = v.Geo.Outlet(int(e), v.Replay.Pressed[e])
+			var buf [core.MaxConnections + 1]int16
+			to = append(append(buf[:0], to...), to[slot])
+			v.revision++ // its arrow turned
+		}
+		for _, n := range to {
 			v.inkChanged(int(n), v.from[k])
 			v.Owner[n] = v.from[k]
 			v.Count[n]++

@@ -21,7 +21,10 @@ func TestBotsOnCustomMaps(t *testing.T) {
 	factories := core.NewMap(5, 5)
 	factories.Name = "Factories and Crushers"
 	factories.Cells[12].Feature, factories.Cells[2].Feature, factories.Cells[22].Feature = core.Factory, core.Factory, core.Crusher
-	for _, m := range append(core.StarterMaps(), barriers, portals, holes, spillways, factories) {
+	reservoirs := core.NewMap(5, 5)
+	reservoirs.Name = "Reservoirs"
+	reservoirs.Cells[12].Feature, reservoirs.Cells[7].Feature, reservoirs.Cells[2].Feature = core.Reservoir, core.Reservoir, core.Reservoir
+	for _, m := range append(core.StarterMaps(), barriers, portals, holes, spillways, factories, reservoirs) {
 		t.Run(m.Name, func(t *testing.T) {
 			g, err := core.NewGameWithMap(m, 3)
 			if err != nil {

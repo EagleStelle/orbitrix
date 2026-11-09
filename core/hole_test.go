@@ -130,9 +130,9 @@ func TestEstimate(t *testing.T) {
 			}
 		}
 	}
-	// One piece in the open: a Hole drains four sides, then a Crusher, then a Spillway.
+	// One piece in the open: a Hole drains four sides, then a Crusher, then a Spillway; a Reservoir speeds it up.
 	var last int
-	for _, cell := range []MapCell{{}, {Feature: Spillway}, {Feature: Crusher}, {Terrain: Hole}} {
+	for _, cell := range []MapCell{{Feature: Reservoir}, {}, {Feature: Spillway}, {Feature: Crusher}, {Terrain: Hole}} {
 		m := NewMap(9, 9)
 		m.Cells[40] = cell
 		moves, _, _ := m.Estimate()
@@ -176,6 +176,18 @@ func TestEstimate(t *testing.T) {
 	tiny.Cells[edges[10]].Feature = Factory
 	if moves, _, pace := tiny.Estimate(); pace != Instant || moves != 9 || !slices.Equal(marked(tiny), edges[:11]) {
 		t.Fatalf("11 Factories on 4×4: %d moves %v, marked %v", moves, pace, marked(tiny))
+	}
+	// Reservoirs count the same on every board size, like the other pieces.
+	var lengths [2]int
+	for k, size := range []int{9, 20} {
+		m := NewMap(size, size)
+		for _, i := range []int{size + 1, size + 3, 3*size + 1, 3*size + 3} {
+			m.Cells[i].Feature = Reservoir
+		}
+		_, lengths[k], _ = m.Estimate()
+	}
+	if lengths[0] != lengths[1] || lengths[0] >= 1000 {
+		t.Fatalf("4 Reservoirs: length %d on 9×9, %d on 20×20", lengths[0], lengths[1])
 	}
 }
 

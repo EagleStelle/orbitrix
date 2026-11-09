@@ -107,7 +107,7 @@ func (g *Game) mapGeometry() *Geometry {
 			continue
 		}
 		var holes [5]int16
-		nholes := 0
+		nholes, outlets := 0, uint8(0)
 		for d := range 4 {
 			var scratch [4 * MaxMapGroups]int16
 			j, path := m.route(i, d, t.pairs, blocked[:], geo.PortalAxes, scratch[:0])
@@ -125,6 +125,7 @@ func (g *Game) mapGeometry() *Geometry {
 					geo.PortalRoutes[slot] = slices.Clone(path)
 				}
 				geo.Degree[i]++
+				outlets |= 1 << d
 			}
 		}
 		if c.Feature == Link && t.pairs[i] >= 0 {
@@ -144,8 +145,12 @@ func (g *Game) mapGeometry() *Geometry {
 			geo.Holes[i] = uint8(nholes)
 		}
 		geo.Cap[i] = geo.Degree[i] + uint8(nholes)
-		if c.Feature == Reservoir {
-			geo.Cap[i]++
+		if c.Feature == Reservoir && geo.Cap[i] > 0 { // shut in by Gates, it holds its orbs like Floor
+			geo.Cap[i]++ // its extra orb
+			if geo.Outlets == nil {
+				geo.Outlets = make([]uint8, n)
+			}
+			geo.Outlets[i] = outlets
 		}
 	}
 	t.cache[t.next] = topologyEntry{key: key, geo: geo}
