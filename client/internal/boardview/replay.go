@@ -17,6 +17,7 @@ type view struct {
 	Events   []core.TerrainEvent
 	wave     int
 	revision uint64
+	dropped  []fallingOrb // orbs on the Breakable Floors the last landed wave broke, for Board to drop
 }
 
 func NewView(g *core.Game) *view {
@@ -156,10 +157,17 @@ func (v *view) applyTerrain(wave int) []core.TerrainEvent {
 	for end < len(v.Events) && v.Events[end].Wave == wave {
 		end++
 	}
+	v.dropped = v.dropped[:0]
 	if end > 0 && v.Replay != nil {
 		v.Replay.ReplayTerrain(v.Events[:end])
 		v.Geo = v.Replay.Geo
 		v.revision++
+		for _, e := range v.Events[:end] {
+			if c := e.Cell; !e.Edge && !e.Switch && c >= 0 && e.Durability == 0 && v.Count[c] > 0 && v.Replay.Map.Cells[c].Terrain == core.BreakableFloor {
+				v.dropped = append(v.dropped, fallingOrb{hole: int16(c), owner: v.Owner[c]})
+				v.Count[c], v.Owner[c] = 0, core.NoOwner
+			}
+		}
 	}
 	events := v.Events[:end]
 	v.Events = v.Events[end:]

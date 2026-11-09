@@ -46,6 +46,10 @@ var mapCaptureCases = []mapCaptureCase{
 	{"landfill-close-dark", 1040, 500, true, true, false, "landfill-close", brushLandfill},
 	{"landfill-game-desktop", 1040, 640, false, false, false, "game", brushLandfill},
 	{"landfill-game-mobile-dark", 390, 844, true, true, false, "game", brushLandfill},
+	{"breakfloor-desktop", 1040, 640, false, false, false, "", brushBreakFloor},
+	{"breakfloor-mobile-dark", 390, 844, true, true, false, "", brushBreakFloor},
+	{"breakfloor-game-desktop", 1040, 640, false, false, false, "game", brushBreakFloor},
+	{"breakfloor-game-mobile-dark", 390, 844, true, true, false, "game", brushBreakFloor},
 	{"portal-desktop", 1040, 640, false, false, false, "", brushPortal},
 	{"portal-mobile", 390, 844, true, true, false, "", brushPortal},
 	{"portal-landscape", 568, 320, false, false, false, "", brushPortal},
@@ -371,6 +375,12 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 			m.Cells[cell] = core.MapCell{Terrain: core.Landfill}
 		}
 	}
+	if c.tool == brushBreakFloor {
+		m.Name = "Breakable Floor"
+		for _, cell := range []int{5*m.Rows + 8, 6*m.Rows + 8, 7*m.Rows + 8, 6*m.Rows + 9} {
+			m.Cells[cell] = core.MapCell{Terrain: core.BreakableFloor}
+		}
+	}
 	if issues := m.Validate(); len(issues) > 0 {
 		g.err = &captureMapError{issues[0].Message}
 		return
@@ -384,6 +394,9 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 			return
 		}
 		if c.tool == brushLandfill {
+			game.ReplayTerrain([]core.TerrainEvent{{Cell: 6*m.Rows + 8, Durability: 1}, {Cell: 7*m.Rows + 8, Durability: 0}})
+		}
+		if c.tool == brushBreakFloor {
 			game.ReplayTerrain([]core.TerrainEvent{{Cell: 6*m.Rows + 8, Durability: 1}, {Cell: 7*m.Rows + 8, Durability: 0}})
 		}
 		if c.preview {

@@ -38,9 +38,10 @@ const (
 	brushFactory
 	brushCrusher
 	brushLandfill
+	brushBreakFloor
 )
 
-var editorTools = [...]string{"Floor", "Wall", "Void", "Breakable Wall", "Link", "Reservoir", "Latch", "Barrier", "Gate", "Erase", "Pan", "Toggle", "Hold", "Door", "Breakable Barrier", "Portal", "Hole", "Spillway", "Factory", "Crusher", "Landfill"}
+var editorTools = [...]string{"Floor", "Wall", "Void", "Breakable Wall", "Link", "Reservoir", "Latch", "Barrier", "Gate", "Erase", "Pan", "Toggle", "Hold", "Door", "Breakable Barrier", "Portal", "Hole", "Spillway", "Factory", "Crusher", "Landfill", "Breakable Floor"}
 var editorHelp = [...]string{
 	"Playable surface. Open routes set its capacity.", "Blocks explosions permanently.", "Empty space outside the playable board.", "Two nearby blasts turn it into floor.",
 	"Pair two distant cells to route explosions.", "Takes one extra orb to explode, sends it along its arrow, then makes one, once a move.", "Reverses once; another switch rearms it.", "Blocks a route between two floor cells.",
@@ -52,12 +53,13 @@ var editorHelp = [...]string{
 	"Adds one orb after each move by its owner.",
 	"Removes one orb after each move by its owner.",
 	"Absorbs two incoming orbs, then becomes floor. Keeps nearby capacity unchanged.",
+	"Playable floor. Its second explosion turns it into void, taking its orbs and its neighbors' routes.",
 }
 var editorGroups = [...]struct {
 	name  string
 	tools []int
 }{
-	{"Terrain", []int{brushFloor, brushVoid, brushHole, brushLandfill, brushWall, brushBarrier, brushBreak, brushBreakBarrier}},
+	{"Terrain", []int{brushVoid, brushHole, brushLandfill, brushFloor, brushWall, brushBarrier, brushBreakFloor, brushBreak, brushBreakBarrier}},
 	{"Devices", []int{brushLink, brushPortal, brushReservoir, brushSpillway, brushFactory, brushCrusher}},
 	{"Circuit", []int{brushLatch, brushToggle, brushHold, brushGate, brushDoor}},
 }
@@ -73,6 +75,7 @@ var editorBrushes = [...]boardview.Brush{
 	{Feature: core.Factory, Edge: -1},
 	{Feature: core.Crusher, Edge: -1},
 	{Terrain: core.Landfill, Edge: -1},
+	{Terrain: core.BreakableFloor, Edge: -1},
 }
 
 type mapEditor struct {
@@ -407,9 +410,11 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 	}
 	var next core.MapCell
 	switch e.tool {
-	case brushFloor, brushWall, brushVoid, brushBreak, brushHole, brushLandfill, brushErase:
+	case brushFloor, brushWall, brushVoid, brushBreak, brushHole, brushLandfill, brushBreakFloor, brushErase:
 		next.Terrain = core.Floor
 		switch e.tool {
+		case brushBreakFloor:
+			next.Terrain = core.BreakableFloor
 		case brushWall:
 			next.Terrain = core.Wall
 		case brushVoid:

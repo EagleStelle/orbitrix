@@ -163,8 +163,13 @@ func mapArtTerrain(state *MapState, i int) core.Terrain {
 	if t == core.Landfill && state.LandfillDurability != nil {
 		durability = state.LandfillDurability
 	}
-	if (t == core.BreakableWall || t == core.Landfill) && i < len(durability) && durability[i] == 0 {
-		return core.Floor
+	if i < len(durability) && durability[i] == 0 {
+		switch t {
+		case core.BreakableWall, core.Landfill:
+			return core.Floor
+		case core.BreakableFloor:
+			return core.Void
+		}
 	}
 	return t
 }
@@ -219,6 +224,14 @@ func mapArtWallColor(sc *ui.Palette, terrain core.Terrain) color.RGBA {
 		return ui.Mix(sc.Dim, sc.Tile, 0.23)
 	}
 	return sc.Dim
+}
+
+// mapArtFloorColor shifts Breakable Floor toward Dim, the reverse of Breakable Wall's shift toward Tile.
+func mapArtFloorColor(sc *ui.Palette, terrain core.Terrain) color.RGBA {
+	if terrain == core.BreakableFloor {
+		return ui.Mix(sc.Tile, sc.Dim, 0.12)
+	}
+	return sc.Tile
 }
 
 // DrawMapWall draws a wall, Hole or Landfill, extended across the gutters named by mask.
@@ -686,21 +699,24 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		if t == core.Hole || t == core.Landfill {
 			continue // drawMapPits
 		}
+		durability := uint8(2)
+		if i < len(state.Durability) {
+			durability = state.Durability[i]
+		}
 		if mapArtJoin(t) != 0 {
 			mask := mapArtWallMask(&state, i)
 			if tr.Turned {
 				mask = (mask<<1 | mask>>3) & 15
-			}
-			durability := uint8(2)
-			if i < len(state.Durability) {
-				durability = state.Durability[i]
 			}
 			DrawMapWall(dst, sc, r, t, mask, durability)
 			continue
 		}
 		if drawFloor {
 			body, radius := mapTileGeometry(r)
-			ui.FillRound(dst, body, radius, sc.Tile)
+			ui.FillRound(dst, body, radius, mapArtFloorColor(sc, t))
+		}
+		if t == core.BreakableFloor {
+			drawMapSprite(dst, sc, r, mapSpriteKey{cracks: true, durability: durability}) // cut through to the mat, as Void will be
 		}
 		pressed := i < len(state.Pressed) && state.Pressed[i] != 0
 		featureScheme := *sc
@@ -807,7 +823,10 @@ func DrawMapBrush(dst *ebiten.Image, sc *ui.Palette, brush Brush, r ui.Rect, gro
 		return
 	}
 	body, radius := mapTileGeometry(r)
-	ui.FillRound(dst, body, radius, sc.Tile)
+	ui.FillRound(dst, body, radius, mapArtFloorColor(sc, brush.Terrain))
+	if brush.Terrain == core.BreakableFloor {
+		drawMapSprite(dst, sc, r, mapSpriteKey{cracks: true, durability: 2})
+	}
 	drawMapFeature(dst, sc, brush.Feature, group, brush.PortalMode.Axes(), 1, r, pressed)
 	drawMapCircuit(dst, sc, brush.Circuit, group, r, pressed)
 }

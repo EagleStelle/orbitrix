@@ -16,7 +16,8 @@ const (
 	Void
 	BreakableWall
 	Hole
-	Landfill // absorbs two incoming orbs, then becomes empty Floor
+	Landfill       // absorbs two incoming orbs, then becomes empty Floor
+	BreakableFloor // Floor until its second explosion breaks it into Void, which takes its orbs
 )
 
 // Feature is an optional mechanic attached to a Floor cell.
@@ -133,7 +134,7 @@ func (m MapDefinition) ValidateStructure() error {
 		return fmt.Errorf("map has too many edges")
 	}
 	for i, c := range m.Cells {
-		if c.Terrain > Landfill || c.Feature > Crusher || c.Circuit > Door {
+		if c.Terrain > BreakableFloor || c.Feature > Crusher || c.Circuit > Door {
 			return fmt.Errorf("map cell %d has unknown terrain or feature", i)
 		}
 		if c.Feature != NoFeature && c.Circuit != NoCircuit {
@@ -162,8 +163,9 @@ func (m MapDefinition) adjacent(a, b int) bool {
 	return max(dc, -dc)+max(dr, -dr) == 1
 }
 
+// floor includes Breakable Floor, which plays as Floor until it breaks.
 func (m MapDefinition) floor(i int) bool {
-	return i >= 0 && i < len(m.Cells) && m.Cells[i].Terrain == Floor
+	return i >= 0 && i < len(m.Cells) && (m.Cells[i].Terrain == Floor || m.Cells[i].Terrain == BreakableFloor)
 }
 
 // EdgeFits reports whether a Barrier or Gate may join adjacent cells a and b: Floor on both sides, or Floor
@@ -390,7 +392,7 @@ func (m MapDefinition) Validate() []MapIssue {
 		var sealed []int
 		for d := range 4 {
 			j := m.neighbor(i, d)
-			if j < 0 || m.Cells[j].Terrain != Floor && m.Cells[j].Terrain != BreakableWall && m.Cells[j].Terrain != Landfill {
+			if j < 0 || !m.floor(j) && m.Cells[j].Terrain != BreakableWall && m.Cells[j].Terrain != Landfill {
 				continue
 			}
 			sides++
@@ -452,11 +454,18 @@ func (m MapDefinition) Validate() []MapIssue {
 	if first < 0 {
 		return append(issues, MapIssue{Message: "Map needs playable Floor"})
 	}
-	// Destructible terrain can join regions later without changing starting capacities.
+	if slices.ContainsFunc(m.Cells, func(c MapCell) bool { return c.Terrain == BreakableFloor }) {
+		issues = append(issues, m.sealedByBreaking()...)
+	}
+	// Destructible terrain can join regions later without changing starting capacities. Breakable Floor can only
+	// split them, so the board must hold together without it.
 	future := m.Clone()
 	for i, c := range future.Cells {
-		if c.Terrain == BreakableWall || c.Terrain == Landfill {
+		switch c.Terrain {
+		case BreakableWall, Landfill:
 			future.Cells[i].Terrain = Floor
+		case BreakableFloor:
+			future.Cells[i].Terrain = Void
 		}
 	}
 	future.Edges = slices.DeleteFunc(future.Edges, func(e MapEdge) bool { return e.Kind == BreakableBarrier })
@@ -541,14 +550,21 @@ func (m MapDefinition) Validate() []MapIssue {
 			issues = append(issues, MapIssue{Message: "Gate must share a Floor group with a switch", Cells: slices.Clone(switches[e.Group]), Edges: []int{i}, Group: e.Group})
 		}
 	}
+	ref := 0 // the region of the first playable Floor that can't break away
+	for i, c := range m.Cells {
+		if m.initialFloor(i) && c.Terrain == Floor {
+			ref = regions[i]
+			break
+		}
+	}
 	var disconnected []int
 	for i, c := range m.Cells {
-		if (c.Terrain == Floor || c.Terrain == Landfill) && c.Feature != Portal && regions[i] != regions[first] {
+		if (c.Terrain == Floor || c.Terrain == Landfill) && c.Feature != Portal && regions[i] != ref {
 			disconnected = append(disconnected, i)
 		}
 	}
 	if len(disconnected) > 0 {
-		issues = append(issues, MapIssue{Message: "All Floor must connect through Landfills, breakable walls, breakable barriers or reachable Gates", Cells: disconnected})
+		issues = append(issues, MapIssue{Message: "All Floor must connect through Landfills, breakable walls, breakable barriers or reachable Gates, never only Breakable Floor", Cells: disconnected})
 	}
 	if _, _, pace := m.Estimate(); pace == Instant || pace == Endless {
 		issue := MapIssue{Message: "Too many Holes, Spillways and Crushers: games would never end"}
@@ -566,15 +582,45 @@ func (m MapDefinition) Validate() []MapIssue {
 	return issues
 }
 
+// sealedByBreaking reports cells that every Breakable Floor around them breaking, walls standing, would leave without
+// a route: their orbs could never explode or be captured.
+func (m MapDefinition) sealedByBreaking() []MapIssue {
+	broken := m.Clone()
+	for i, c := range broken.Cells {
+		if c.Terrain == BreakableFloor {
+			broken.Cells[i].Terrain = Void
+		}
+	}
+	var sealed []int
+	for i, c := range m.Cells {
+		if !m.initialFloor(i) && c.Terrain != BreakableWall && c.Terrain != Landfill {
+			continue
+		}
+		was := broken.Cells[i].Terrain
+		// Still standing, or opened, while the floors around it have broken; a shut-in Reservoir holds its orbs.
+		broken.Cells[i].Terrain = Floor
+		if n := broken.Capacity(i); n == 0 || n == 1 && c.Feature == Reservoir {
+			sealed = append(sealed, i)
+		}
+		broken.Cells[i].Terrain = was
+	}
+	if len(sealed) == 0 {
+		return nil
+	}
+	return []MapIssue{{Message: "Floor needs a route that breaking Breakable Floors can't remove", Cells: sealed}}
+}
+
 // Estimate predicts a game's average moves on the starting layout (0 when Endless), its length in thousandths of an
 // empty board's, and its pace. Bot games of 2 to 4 mixed seats fit it on 7×7 to 40×40 boards: an empty board lasts
 // about 0.75 moves per orb of room (what its Floor holds without exploding), and fills at the orb each move adds.
 // Each open Hole side, Spillway and Crusher loses part of it, the same on every board size. Factories add to it, each
 // a little less as they crowd, and less still beside a Hole, which they feed. More players make Factory maps longer,
 // since each Factory works only on its holder's turn. Reservoirs add to it too, less, as they make an orb only when
-// they explode. Integers keep validation identical on every device.
+// they explode. A Breakable Floor drains nothing, so it leaves the pace alone, but breaking into Void takes its room
+// and a route from each neighbor, about two thirds of the way into a game on average. Integers keep validation
+// identical on every device.
 func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
-	room, growth, factories, reservoirs := 0, 1000, 0, 0 // growth in thousandths of an empty board's
+	room, growth, factories, reservoirs, broken := 0, 1000, 0, 0, 0 // growth in thousandths of an empty board's
 	for i := range m.Cells {
 		if m.Cells[i].Terrain == Landfill {
 			room += 2 // a finite fill cost, not a permanent drain on growth
@@ -585,6 +631,15 @@ func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 		}
 		room += capacity - 1
 		growth -= 45 * holes
+		if m.Cells[i].Terrain == BreakableFloor {
+			broken += capacity - 1 // its own room, and one route from each neighbor that outlasts it
+			var near [5]int
+			for _, j := range m.InitialConnections(i, near[:0]) {
+				if m.Cells[j].Terrain != BreakableFloor {
+					broken++
+				}
+			}
+		}
 		switch m.Cells[i].Feature {
 		case Spillway:
 			growth -= 35
@@ -599,6 +654,7 @@ func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 			}
 		}
 	}
+	room -= broken * 2 / 3 // Breakable Floors break partway through a game
 	growth += 150 * 83 * factories / (83 + factories)
 	growth += 7600 * reservoirs / (300 + reservoirs)
 	length = math.MaxInt32

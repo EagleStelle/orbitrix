@@ -207,7 +207,7 @@ func TestMapCodecRejectsInvalidContents(t *testing.T) {
 		"short dimensions":             mapTestEnvelope([]byte{3, 3}, 2),
 		"invalid dimensions":           mutated(func(b []byte) { b[0] = 255 }),
 		"unknown terrain":              mutated(func(b []byte) { b[3] = 15 }),
-		"reserved terrain bit":         mutated(func(b []byte) { b[3] = byte(Landfill) + 1 }),
+		"reserved terrain bit":         mutated(func(b []byte) { b[3] = byte(BreakableFloor) + 1 }),
 		"unknown feature":              mutated(func(b []byte) { b[3] = 15<<4 | byte(Floor) }),
 		"initial state without output": mutated(func(b []byte) { b[3] = 8 }),
 		"incorrect edge count":         mutated(func(b []byte) { b[len(b)-1] = 1 }),

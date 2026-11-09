@@ -48,11 +48,22 @@ Decisions that future changes have to respect, and why. How things work is in [a
   fills, so `MapDefinition.Estimate` predicts game length from a fit to bot games, and `Validate` refuses Instant
   and Endless. Each piece counts the same on every board size: the slowdown tracks how many there are, not their
   share of the board. Factories offset the losses with diminishing returns, less beside a Hole, which they feed. Reservoirs do
-  too, less, since they make an orb only when they explode. The
+  too, less, since they make an orb only when they explode. Breakable Floors drain nothing, so they leave the
+  pace alone; breaking takes room, which only shortens the move count, and they break partway through a game. The
   fit uses mixed 2–4 player lobbies of weak and strong bots: Factory maps run longer with more players and with
   players who ignore Factories, and the editor can't know either. Instant is an absolute move count (Factories ending
   games within about ten moves), not a share of an empty board, so short Factory games stay playable. It reads the
   starting layout only, in integers so every device validates alike. Fast and Slow stay playable.
+- Every map piece that adds, removes or delays orbs, or changes what counts as Floor or a Hole, needs its own term in
+  `Estimate`, and in `Validate`'s Instant or Endless marking. Classify it first (a permanent drain like a Hole side,
+  a source like a Factory, a finite cost like filling a Landfill, or a delayed change like a Breakable Floor, weighed as
+  what it becomes), then measure it with `TestPaceFit` (`ORBITRIX_PACE=1`) against Holes and an empty board, and set
+  an integer weight per piece, never per share of the board. Guessed weights let validation pass maps whose games
+  never end.
+- Breakable Floor breaks into Void, Breakable Wall's counterpart, so neighbors lose that route as when a Door
+  closes. Validation therefore assumes every one broken, walls standing: each cell that is or can become Floor keeps
+  a route, and the other Floor still connects. A cell left with none would hold orbs nobody can explode or capture,
+  and a split board can leave players who never meet, so neither game could end.
 - Map files carry a bounded, versioned binary payload and checksum. QR links embed it in a URL fragment; there is
   no map lookup service. Invalid gameplay drafts remain portable, but malformed data is rejected.
 - Portable exports remain format 2 with `orbitrix-map2.` codes. The two-byte cell and six-byte edge layouts keep

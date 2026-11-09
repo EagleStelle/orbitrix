@@ -36,7 +36,7 @@ fill empty seats with AI, and enjoy following a chain reaction as it plays out.
 - Play together anywhere: same device, LAN without internet, or online. Every client shares one room, one rules
   engine and one protocol.
 - Tactile feel: orbs orbit while idle and turn frantic just before exploding, with pentatonic sound generated in code.
-  Links chime, switches click in distinct voices, and breakable walls knock or crumble, all in C major pentatonic.
+  Links chime, switches click in distinct voices, and breakable walls and floors knock or crumble, all in C major pentatonic.
 
 ## Operating Context
 
@@ -54,7 +54,7 @@ fill empty seats with AI, and enjoy following a chain reaction as it plays out.
 
 ## Capabilities and Constraints
 
-- Custom maps and Map Editor: Floor, Void, Hole, Landfill, Wall, Breakable wall, Barriers, Gates, Doors, Links, Reservoirs (take an extra orb, throw it along a turning arrow and make a new one), Spillways, Factories (gain an
+- Custom maps and Map Editor: Floor, Void, Hole, Landfill, Wall, Breakable wall, Breakable floor (its second explosion breaks it into Void, dropping its orbs), Barriers, Gates, Doors, Links, Reservoirs (take an extra orb, throw it along a turning arrow and make a new one), Spillways, Factories (gain an
   orb after each move by their holder), Crushers (lose one), both after a one-move grace, and three
   switch types: Latch (rearmed by another switch), Toggle (flips on empty-cell placement or receiving/exploding waves), and Hold (pressed while occupied).
   A pace strip under the editor canvas estimates a game's average moves from Instant to Endless; Instant and Endless

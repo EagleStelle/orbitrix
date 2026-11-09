@@ -341,6 +341,12 @@ func (b *Board) Tick(snd *sound.Sound) {
 		fallStart := len(b.falls)
 		effects |= b.dropIntoHoles()
 		effects |= b.State.terrainSounds(b.State.Land(b.Waves[b.Wave]))
+		// shortcut: a broken floor's whole stack falls as one orb from its centre; drop each from its orbit spot if
+		// stacks should read as several.
+		for _, o := range b.State.dropped {
+			o.start = b.Clock
+			b.falls = append(b.falls, o)
+		}
 		for i := fallStart; i < len(b.falls); i++ {
 			if o := &b.falls[i]; o.landfill {
 				o.remaining, o.slot = b.State.Replay.Durability[o.hole], b.landfillSlot(o.hole, i)
@@ -438,10 +444,6 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 		}
 	}
 	ts := float64(b.TileImg.Bounds().Dx())
-	lit := sc.Tile
-	if turn >= 0 {
-		lit = ui.Mix(sc.Tile, sc.Players[turn], tileTint)
-	}
 	for i, o := range b.State.Owner {
 		c := sc.Tile
 		if b.State.Replay != nil {
@@ -454,10 +456,12 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 				continue
 			case core.Wall, core.BreakableWall:
 				c = sc.TileHi
+			case core.Floor:
+				c = mapArtFloorColor(sc, b.State.Replay.Map.Cells[i].Terrain)
 			}
 		}
-		if int(o) == turn {
-			c = lit
+		if turn >= 0 && int(o) == turn {
+			c = ui.Mix(c, sc.Players[turn], tileTint)
 		}
 		x, y := b.Centre(i)
 		b.quad(x, y, ts/2, 0, ts, c, 1)

@@ -39,7 +39,7 @@ func NewGameWithMap(m MapDefinition, players int) (*Game, error) {
 	g.topology = newMapTopology(&m)
 	g.Durability, g.Pressed = make([]uint8, len(m.Cells)), make([]uint8, len(m.Cells))
 	for i, c := range m.Cells {
-		if c.Terrain == BreakableWall || c.Terrain == Landfill {
+		if c.Terrain == BreakableWall || c.Terrain == Landfill || c.Terrain == BreakableFloor {
 			g.Durability[i] = 2
 		}
 	}
@@ -63,7 +63,12 @@ func (g *Game) TerrainAt(i int) Terrain {
 	if c.Circuit == Door && !CircuitOpen(c.InitiallyOpen, g.CircuitOn[c.Group]) {
 		return Wall
 	}
-	if (t == BreakableWall || t == Landfill) && g.Durability[i] == 0 {
+	switch {
+	case (t == BreakableWall || t == Landfill) && g.Durability[i] == 0:
+		return Floor
+	case t == BreakableFloor && g.Durability[i] == 0:
+		return Void
+	case t == BreakableFloor:
 		return Floor
 	}
 	return t
@@ -174,6 +179,9 @@ func (g *Game) terrainWave(wave int, record bool) {
 	if len(g.topology.walls) != 0 {
 		for _, e := range g.cur {
 			i := int(e)
+			if g.Map.Cells[i].Terrain == BreakableFloor && g.Durability[i] > 0 {
+				damage[i]++ // only its own explosions crack it
+			}
 			for _, target := range g.Geo.Targets(i)[g.Geo.Degree[i]:] {
 				if g.Map.Cells[target].Terrain == Landfill && g.Durability[target] > 0 {
 					damage[target]++
@@ -196,6 +204,10 @@ func (g *Game) terrainWave(wave int, record bool) {
 				if d >= g.Durability[i] {
 					g.Durability[i] = 0
 					changed = true
+					if g.Count[i] > 0 && g.Map.Cells[i].Terrain == BreakableFloor { // its orbs fall into the new Void
+						g.Orbs[g.Owner[i]] -= int32(g.Count[i])
+						g.Count[i], g.Owner[i] = 0, NoOwner
+					}
 				} else {
 					g.Durability[i] -= d
 				}

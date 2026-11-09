@@ -17,7 +17,7 @@ Client tests run Ebitengine scenes headless. They need no window, so they run in
 | Package | Tests |
 |---|---|
 | `core` | Table-driven rules cases (capacity, explosions, leftovers, ownership, immediate wins, turn order, passes), property tests over random games (orbs grow by exactly one per move, determinism, a win always ends the game, classic `Apply` allocates nothing), `FuzzGame`, snapshot validation, the map game-length estimate, RNG output, and a pinned state hash for the empty 9×9 board |
-| `core/ai` | Every strategy plays legal moves and is deterministic over full games, behaviour cases per bot, exact Factory and Crusher outcomes, the slowest valid map still ending, the integer network's forward pass, and benchmarks |
+| `core/ai` | Every strategy plays legal moves and is deterministic over full games, behaviour cases per bot, exact Factory and Crusher outcomes, the slowest valid map still ending, the integer network's forward pass, and benchmarks. `ORBITRIX_PACE=1` runs `TestPaceFit`, the bot games each map piece's `Estimate` weight is set from (minutes) |
 | `proto` | Encode and decode of every message, rejection of malformed input, and `FuzzDecode`, which checks that whatever decodes re-encodes to the same bytes (100% coverage) |
 | `server/hub` | Lobby, ready, start, rematch, leave, rejoin tokens and the seat grace, kick, replace, skip, Swap and Remove, the turn timer, bot seats and the message limits |
 | `server/signal` | The message order, proof of work, password checks, approvals and the pending cap, TURN credential limits and revocation, socket caps and the origin check. `TestOnlineGame` plays a whole game between two pion peers through signaling |
