@@ -14,6 +14,10 @@ func (v *view) terrainSounds(events []core.TerrainEvent) (effects sound.Effects)
 			continue
 		}
 		if !e.Switch {
+			if !e.Edge && v.Replay.Map.Cells[e.Cell].Terrain == core.Landfill {
+				effects |= sound.Fall
+				continue
+			}
 			if e.Durability == 0 {
 				effects |= sound.WallBreak
 			} else {
@@ -42,12 +46,12 @@ func (v *view) terrainSounds(events []core.TerrainEvent) (effects sound.Effects)
 }
 
 func (b *Board) linkSound() sound.Effects {
-	if b.Playing && b.State.Replay != nil {
+	if b.Playing && !b.settling && b.State.Replay != nil {
 		for _, cell := range b.Waves[b.Wave] {
 			if b.State.Replay.Map.Cells[cell].Feature == core.Link {
 				return sound.Link
 			}
-			for connection := range b.State.Geo.Neighbours(int(cell)) {
+			for connection := range b.State.Geo.Targets(int(cell)) {
 				if len(b.State.Geo.PortalPath(int(cell), connection)) != 0 {
 					return sound.Link
 				}

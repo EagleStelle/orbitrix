@@ -160,7 +160,7 @@ func TestCombinedSoundsKeepFifteenVoiceLimit(t *testing.T) {
 	s, _, peak := testSound()
 	for k := range 30 {
 		s.last = time.Now().Add(-minGap)
-		s.Wave(k, 16, Link|Latch|ToggleOn|ToggleOff|HoldOn|HoldOff|WallHit|WallBreak|Fall)
+		s.Wave(k, 16, Link|Latch|ToggleOn|ToggleOff|HoldOn|HoldOff|WallHit|WallBreak|Fall|LandfillFull)
 		if *peak > 15 {
 			t.Fatalf("simultaneous voices reached %d", *peak)
 		}
@@ -292,7 +292,7 @@ func TestDenseNormalizedBurstsKeepMixHeadroom(t *testing.T) {
 	for _, cells := range []int{1, 16} {
 		for k := range 7 {
 			s, players, _ := testSound()
-			s.Wave(k, cells, Link|Latch|ToggleOn|ToggleOff|HoldOn|HoldOff|WallHit|WallBreak|Fall)
+			s.Wave(k, cells, Link|Latch|ToggleOn|ToggleOff|HoldOn|HoldOff|WallHit|WallBreak|Fall|LandfillFull)
 			for frame := range int(noteLength * sampleRate) {
 				mix := 0.0
 				for i, p := range players {

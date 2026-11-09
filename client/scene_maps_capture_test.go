@@ -11,6 +11,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +34,18 @@ type mapCaptureCase struct {
 }
 
 var mapCaptureCases = []mapCaptureCase{
+	{"landfill-desktop", 1040, 640, false, false, false, "", brushLandfill},
+	{"landfill-mobile-dark", 390, 844, true, true, false, "", brushLandfill},
+	{"landfill-states-light", 1040, 500, false, false, false, "landfills", brushLandfill},
+	{"landfill-states-dark", 1040, 500, true, true, false, "landfills", brushLandfill},
+	{"landfill-joins-light", 1040, 500, false, false, false, "landfill-joins", brushLandfill},
+	{"landfill-joins-dark", 1040, 500, true, true, true, "landfill-joins", brushLandfill},
+	{"landfill-fall-light", 1040, 500, false, false, false, "landfill-fall", brushLandfill},
+	{"landfill-fall-dark", 1040, 500, true, true, false, "landfill-fall", brushLandfill},
+	{"landfill-close-light", 1040, 500, false, false, false, "landfill-close", brushLandfill},
+	{"landfill-close-dark", 1040, 500, true, true, false, "landfill-close", brushLandfill},
+	{"landfill-game-desktop", 1040, 640, false, false, false, "game", brushLandfill},
+	{"landfill-game-mobile-dark", 390, 844, true, true, false, "game", brushLandfill},
 	{"portal-desktop", 1040, 640, false, false, false, "", brushPortal},
 	{"portal-mobile", 390, 844, true, true, false, "", brushPortal},
 	{"portal-landscape", 568, 320, false, false, false, "", brushPortal},
@@ -351,6 +365,12 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 	a.set.Marks = c.marks
 	a.in.x, a.in.y = offScreen, offScreen
 	m := editorShowcaseMap()
+	if c.tool == brushLandfill {
+		m.Name = "Landfill"
+		for _, cell := range []int{5*m.Rows + 8, 6*m.Rows + 8, 7*m.Rows + 8} {
+			m.Cells[cell] = core.MapCell{Terrain: core.Landfill}
+		}
+	}
 	if issues := m.Validate(); len(issues) > 0 {
 		g.err = &captureMapError{issues[0].Message}
 		return
@@ -362,6 +382,9 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		if err != nil {
 			g.err = err
 			return
+		}
+		if c.tool == brushLandfill {
+			game.ReplayTerrain([]core.TerrainEvent{{Cell: 6*m.Rows + 8, Durability: 1}, {Cell: 7*m.Rows + 8, Durability: 0}})
 		}
 		if c.preview {
 			for i, cfg := range m.Cells {
@@ -389,7 +412,7 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		lib := &mapsScene{back: newHome(), selected: 1, store: store}
 		lib.refresh()
 		s = lib
-	case "art", "wall-corners", "door-orbs", "barriers", "portals":
+	case "art", "wall-corners", "door-orbs", "barriers", "portals", "landfills", "landfill-joins", "landfill-fall", "landfill-close":
 	default:
 		if c.mode == "large" {
 			m = resizeMap(m, 40, 40)
@@ -515,6 +538,72 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 			ui.DrawText(out, portalLabels[mode], a.f.LabelBold, x, 380, text.AlignStart, a.sc.Ink)
 			boardview.DrawMapBrush(out, a.sc, boardview.Brush{Feature: core.Portal, PortalMode: mode, Edge: -1}, ui.Rect{X: x, Y: 410, W: 64, H: 64}, 4, false, c.marks)
 		}
+	} else if c.mode == "landfill-fall" || c.mode == "landfill-close" {
+		ui.DrawText(out, "Falling into Landfill", a.f.Title, 30, 36, text.AlignStart, a.sc.Ink)
+		for i, ticks := range []int{0, 14, 20} {
+			m := core.NewMap(3, 3)
+			m.Cells[4].Terrain = core.Landfill
+			game, err := core.NewGameWithMap(m, 2)
+			if err != nil {
+				g.err = err
+				return
+			}
+			game.Count[1], game.Owner[1], game.Orbs[0] = 2, 0, 2
+			remaining := uint8(2)
+			if c.mode == "landfill-close" {
+				remaining = 1
+				game.Durability[4] = remaining
+			}
+			board := boardview.New(game)
+			waves, err := game.Apply(1)
+			if err != nil {
+				g.err = err
+				return
+			}
+			board.State.Events = game.TerrainEvents
+			board.Start(1, 0, waves, game.ProducedAt, nil)
+			for board.Playing && board.State.Replay.Durability[4] == remaining {
+				board.Tick(nil)
+			}
+			for range ticks {
+				board.Tick(nil)
+			}
+			board.Layout(ui.Rect{X: 30 + float64(i)*340, Y: 90, W: 270, H: 270}, 1)
+			board.Draw(out, a.sc, 1000, -1, c.marks)
+			label := []string{"At opening", "Falling", "Settled below"}[i]
+			if c.mode == "landfill-close" {
+				label = []string{"Second arrival", "Still open", "Floor"}[i]
+			}
+			ui.DrawText(out, label, a.f.LabelBold, 165+float64(i)*340, 400, text.AlignCenter, a.sc.Ink)
+		}
+	} else if c.mode == "landfill-joins" {
+		ui.DrawText(out, "Connected Landfills", a.f.Title, 30, 36, text.AlignStart, a.sc.Ink)
+		for i, cells := range [][]int{{1, 4, 7}, {0, 1, 4}, {0, 1, 3, 4}, {0, 1, 3, 4}} {
+			m := core.NewMap(3, 3)
+			state := boardview.MapState{Map: &m, Durability: make([]uint8, 9)}
+			for _, cell := range cells {
+				m.Cells[cell].Terrain, state.Durability[cell] = core.Landfill, 2
+			}
+			if i == 3 {
+				state.Durability[4] = 0
+			}
+			boardview.DrawMapArt(out, a.sc, state, boardview.MapTransform{X: 10 + float64(i)*260, Y: 100, Cell: 75, Turned: c.preview}, true, c.marks)
+			ui.DrawText(out, []string{"Straight", "Corner", "Block", "One filled"}[i], a.f.LabelBold, 122+float64(i)*260, 380, text.AlignCenter, a.sc.Ink)
+		}
+	} else if c.mode == "landfills" {
+		ui.DrawText(out, "Landfill fills into Floor", a.f.Title, 30, 36, text.AlignStart, a.sc.Ink)
+		for i, remaining := range []uint8{2, 1, 0} {
+			m := core.NewMap(3, 3)
+			m.Cells[4].Terrain = core.Landfill
+			state := boardview.MapState{Map: &m, Durability: make([]uint8, 9)}
+			state.Durability[4] = remaining
+			boardview.DrawMapArt(out, a.sc, state, boardview.MapTransform{X: 30 + float64(i)*340, Y: 90, Cell: 90}, true, c.marks)
+			ui.DrawText(out, []string{"Empty", "One orb", "Floor"}[i], a.f.LabelBold, 165+float64(i)*340, 390, text.AlignCenter, a.sc.Ink)
+		}
+		for i, size := range []float64{64, 32, 24} {
+			boardview.DrawMapBrush(out, a.sc, boardview.Brush{Terrain: core.Landfill, Edge: -1}, ui.Rect{X: 30 + float64(i)*100, Y: 420, W: size, H: size}, 0, false, c.marks)
+		}
+		ui.DrawText(out, "Palette sizes", a.f.Label, 340, 454, text.AlignStart, a.sc.Ink)
 	} else if c.mode == "barriers" {
 		ui.DrawText(out, "Breakable Barriers", a.f.Title, 30, 36, text.AlignStart, a.sc.Ink)
 		for i, durability := range []uint8{2, 1, 0} {
@@ -648,6 +737,9 @@ type captureMapError struct{ message string }
 
 func (e *captureMapError) Error() string { return e.message }
 func TestCaptureMaps(t *testing.T) {
+	if only := os.Getenv("ORBITRIX_CAPTURE_ONLY"); only != "" {
+		mapCaptureCases = slices.DeleteFunc(mapCaptureCases, func(c mapCaptureCase) bool { return !strings.HasPrefix(c.name, only) })
+	}
 	dir := os.Getenv("ORBITRIX_CAPTURE_DIR")
 	if dir == "" {
 		dir = filepath.Join("..", "dist", "map-captures")

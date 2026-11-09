@@ -16,6 +16,7 @@ const (
 	Void
 	BreakableWall
 	Hole
+	Landfill // absorbs two incoming orbs, then becomes empty Floor
 )
 
 // Feature is an optional mechanic attached to a Floor cell.
@@ -132,7 +133,7 @@ func (m MapDefinition) ValidateStructure() error {
 		return fmt.Errorf("map has too many edges")
 	}
 	for i, c := range m.Cells {
-		if c.Terrain > Hole || c.Feature > Crusher || c.Circuit > Door {
+		if c.Terrain > Landfill || c.Feature > Crusher || c.Circuit > Door {
 			return fmt.Errorf("map cell %d has unknown terrain or feature", i)
 		}
 		if c.Feature != NoFeature && c.Circuit != NoCircuit {
@@ -166,10 +167,11 @@ func (m MapDefinition) floor(i int) bool {
 }
 
 // EdgeFits reports whether a Barrier or Gate may join adjacent cells a and b: Floor on both sides, or Floor
-// beside a Hole.
+// beside a Hole. A Landfill can become Floor on either side.
 func (m MapDefinition) EdgeFits(a, b int) bool {
 	hole := func(i int) bool { return i >= 0 && i < len(m.Cells) && m.Cells[i].Terrain == Hole }
-	return m.floor(a) && (m.floor(b) || hole(b)) || hole(a) && m.floor(b)
+	floor := func(i int) bool { return m.floor(i) || i >= 0 && i < len(m.Cells) && m.Cells[i].Terrain == Landfill }
+	return floor(a) && (floor(b) || hole(b)) || hole(a) && floor(b)
 }
 
 func (m MapDefinition) initialFloor(i int) bool {
@@ -289,13 +291,13 @@ func (m MapDefinition) InitialConnections(cell int, dst []int) []int {
 	return dst
 }
 
-// Capacity is the initial explosion threshold, including a Reservoir's or Spillway's extra orb and adjacent Holes.
+// Capacity is the initial explosion threshold, including extra orbs and routes into Holes or Landfills.
 func (m MapDefinition) Capacity(cell int) int {
 	n, _ := m.capacity(cell)
 	return n
 }
 
-// capacity also returns how many of the cell's routes end in a Hole.
+// capacity also returns how many routes permanently lose an orb to a Hole.
 func (m MapDefinition) capacity(cell int) (n, holes int) {
 	if !m.initialFloor(cell) {
 		return 0, 0
@@ -303,8 +305,13 @@ func (m MapDefinition) capacity(cell int) (n, holes int) {
 	var neighbors [5]int
 	n = len(m.InitialConnections(cell, neighbors[:0]))
 	for d := range 4 {
-		if j, _ := m.route(cell, d, nil, nil, nil, nil); j >= 0 && m.Cells[j].Terrain == Hole {
-			holes++
+		if j, _ := m.route(cell, d, nil, nil, nil, nil); j >= 0 {
+			switch m.Cells[j].Terrain {
+			case Hole:
+				holes++
+			case Landfill:
+				n++
+			}
 		}
 	}
 	if f := m.Cells[cell].Feature; f == Reservoir || f == Spillway {
@@ -361,7 +368,7 @@ func (m MapDefinition) Validate() []MapIssue {
 	seenEdges := make(map[[2]int]int, len(m.Edges))
 	for i, e := range m.Edges {
 		if !m.EdgeFits(e.A, e.B) {
-			issues = append(issues, MapIssue{Message: "Barriers and Gates need Floor on both sides, or Floor beside a Hole", Edges: []int{i}})
+			issues = append(issues, MapIssue{Message: "Barriers and Gates need Floor or Landfill on both sides, or beside a Hole", Edges: []int{i}})
 		}
 		key := [2]int{min(e.A, e.B), max(e.A, e.B)}
 		if prev, found := seenEdges[key]; found {
@@ -383,7 +390,7 @@ func (m MapDefinition) Validate() []MapIssue {
 		var sealed []int
 		for d := range 4 {
 			j := m.neighbor(i, d)
-			if j < 0 || m.Cells[j].Terrain != Floor && m.Cells[j].Terrain != BreakableWall {
+			if j < 0 || m.Cells[j].Terrain != Floor && m.Cells[j].Terrain != BreakableWall && m.Cells[j].Terrain != Landfill {
 				continue
 			}
 			sides++
@@ -448,7 +455,7 @@ func (m MapDefinition) Validate() []MapIssue {
 	// Destructible terrain can join regions later without changing starting capacities.
 	future := m.Clone()
 	for i, c := range future.Cells {
-		if c.Terrain == BreakableWall {
+		if c.Terrain == BreakableWall || c.Terrain == Landfill {
 			future.Cells[i].Terrain = Floor
 		}
 	}
@@ -536,12 +543,12 @@ func (m MapDefinition) Validate() []MapIssue {
 	}
 	var disconnected []int
 	for i, c := range m.Cells {
-		if c.Terrain == Floor && c.Feature != Portal && regions[i] != regions[first] {
+		if (c.Terrain == Floor || c.Terrain == Landfill) && c.Feature != Portal && regions[i] != regions[first] {
 			disconnected = append(disconnected, i)
 		}
 	}
 	if len(disconnected) > 0 {
-		issues = append(issues, MapIssue{Message: "All Floor must connect through breakable walls, breakable barriers or reachable Gates", Cells: disconnected})
+		issues = append(issues, MapIssue{Message: "All Floor must connect through Landfills, breakable walls, breakable barriers or reachable Gates", Cells: disconnected})
 	}
 	if _, _, pace := m.Estimate(); pace == Instant || pace == Endless {
 		issue := MapIssue{Message: "Too many Holes, Spillways and Crushers: games would never end"}
@@ -569,6 +576,9 @@ func (m MapDefinition) Validate() []MapIssue {
 func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 	room, growth, factories, reservoirs := 0, 1000, 0, 0 // growth in thousandths of an empty board's
 	for i := range m.Cells {
+		if m.Cells[i].Terrain == Landfill {
+			room += 2 // a finite fill cost, not a permanent drain on growth
+		}
 		capacity, holes := m.capacity(i)
 		if capacity == 0 {
 			continue

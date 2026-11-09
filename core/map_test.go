@@ -70,14 +70,14 @@ func TestMapDraftValidation(t *testing.T) {
 		{"Breakable Barrier on Wall", func(m *MapDefinition) {
 			m.Cells[12].Terrain = Wall
 			m.Edges = []MapEdge{{A: 12, B: 13, Kind: BreakableBarrier}}
-		}, "need Floor on both sides"},
+		}, "need Floor or Landfill on both sides"},
 		{"duplicate edge", func(m *MapDefinition) {
 			m.Edges = []MapEdge{{A: 12, B: 13}, {A: 13, B: 12}}
 		}, "Only one Barrier or Gate"},
 		{"edge on Wall", func(m *MapDefinition) {
 			m.Cells[12].Terrain = Wall
 			m.Edges = []MapEdge{{A: 12, B: 13}}
-		}, "need Floor on both sides"},
+		}, "need Floor or Landfill on both sides"},
 		{"corner dead end", func(m *MapDefinition) { m.Cells[1].Terrain = Wall }, "capacity of at least two"},
 		{"isolated Floor", func(m *MapDefinition) {
 			for _, i := range []int{7, 11, 13, 17} {

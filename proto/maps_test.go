@@ -16,7 +16,9 @@ func TestMapMessagesRoundTrip(t *testing.T) {
 	portals := core.NewMap(7, 7)
 	portals.Cells[16], portals.Cells[32] = core.MapCell{Feature: core.Portal, Group: 1}, core.MapCell{Feature: core.Portal, Group: 1}
 	portals.Cells[16].PortalMode, portals.Cells[32].PortalMode = core.PortalVertical, core.PortalVertical
-	for _, m := range append(core.StarterMaps(), circuit, portals) {
+	landfills := core.NewMap(7, 7)
+	landfills.Cells[24].Terrain = core.Landfill
+	for _, m := range append(core.StarterMaps(), circuit, portals, landfills) {
 		g, err := core.NewGameWithMap(m, 2)
 		if err != nil {
 			t.Fatal(err)
@@ -56,6 +58,31 @@ func TestMapMessagesRoundTrip(t *testing.T) {
 					t.Fatalf("accepted truncated map message at %d", i)
 				}
 			}
+		}
+	}
+}
+
+func TestPartialLandfillSurvivesResync(t *testing.T) {
+	m := core.NewMap(5, 5)
+	m.Cells[12].Terrain = core.Landfill
+	g, err := core.NewGameWithMap(m, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, remaining := range []uint8{2, 1, 0} {
+		s := g.Snapshot()
+		s.Durability[12] = remaining
+		g, err = core.Restore(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := Decode(Append(nil, Snapshot{Seq: 9, Game: g.Snapshot()}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		restored, err := core.Restore(decoded.(Snapshot).Game)
+		if err != nil || restored.Hash() != g.Hash() || restored.Geo.Playable(12) != (remaining == 0) {
+			t.Fatalf("Landfill with %d left to fill lost during resync: %v", remaining, err)
 		}
 	}
 }

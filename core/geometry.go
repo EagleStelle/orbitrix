@@ -27,8 +27,8 @@ type Geometry struct {
 	// Cap is the explosion threshold; blocked terrain has zero capacity.
 	Cap    []uint8
 	Degree []uint8 // outgoing connections, independent of Reservoir and Spillway capacity
-	// Holes counts connections into Hole terrain, plus a Spillway's own pit (its own index), stored in the Nbr
-	// slots after the Degree active ones. Nil without Holes or Spillways.
+	// Holes counts routes into Holes, unfilled Landfills and a Spillway's own pit (its own index), stored in the Nbr
+	// slots after the Degree active ones. These targets consume orbs instead of receiving ownership.
 	Holes []uint8
 	// Outlets holds each Reservoir's open Floor routes, bit d for direction d (left, right, up, down): the sides its
 	// arrow can point to. Nil without Reservoirs.

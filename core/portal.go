@@ -58,7 +58,7 @@ func (m MapDefinition) portalAxes(pairs []int16, blocked []uint8, floor func(int
 			if open && floor != nil {
 				open = floor(next)
 			} else if open {
-				open = m.floor(next) && (m.Cells[next].Circuit != Door || m.Cells[next].InitiallyOpen)
+				open = m.floor(next) && (m.Cells[next].Circuit != Door || m.Cells[next].InitiallyOpen) || m.Cells[next].Terrain == Landfill
 			}
 			if !open || m.routeBlocked(i, d, blocked) {
 				axes[i] &^= PortalAxes(1 << (d / 2))

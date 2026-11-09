@@ -13,6 +13,7 @@ const (
 	smoothness   = 8.0     // exponential smoothing rate (1/s): lower is smoother but laggier
 	angIdle      = 0.00008 // angular speed in rad/ms: slow orbit when idle
 	angUrgent    = 0.0016  // and frantic when the cell is about to explode
+	landfillSpin = 0.0005  // an orb resting on a Landfill bottom rolls round about every 12 s
 	relaxPasses  = 8       // pairwise separation passes
 	snapAfterMS  = 200     // a cell not drawn for this long snaps to its layout instead of gliding
 	tau          = 2 * math.Pi
@@ -223,6 +224,20 @@ func (f *orbField) update(i, count, capacity int, tms, cell float64) [][2]float6
 	}
 	f.N[i], f.lastT[i] = uint8(slots), tms
 	return f.positions(i, slots, cell)
+}
+
+// drift is the slow orbit of an orb resting on Landfill i's bottom, radius from the centre: a lone Floor orb sits still,
+// but this one keeps rolling round, its direction and phase from the cell's own seed. Later slots share the orbit,
+// the second opposite the first.
+func (f *orbField) drift(i int, tms, radius float64, slot uint8) (x, y float64) {
+	fr, sv := f.frac[i*orbSlots], f.seed[i*orbSlots]
+	dir := 1.0
+	if sv&1 != 0 {
+		dir = -1
+	}
+	angle := fr*tau + dir*tms*landfillSpin*(0.8+fr*0.4) + [4]float64{0, math.Pi, math.Pi / 2, -math.Pi / 2}[slot&3]
+	radius *= 1 + 0.2*math.Sin(tms*0.0011+float64(sv%500)) // breathing
+	return radius * math.Cos(angle), radius * math.Sin(angle)
 }
 
 func (f *orbField) positions(i, slots int, cell float64) [][2]float64 {

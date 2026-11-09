@@ -39,7 +39,7 @@ func NewGameWithMap(m MapDefinition, players int) (*Game, error) {
 	g.topology = newMapTopology(&m)
 	g.Durability, g.Pressed = make([]uint8, len(m.Cells)), make([]uint8, len(m.Cells))
 	for i, c := range m.Cells {
-		if c.Terrain == BreakableWall {
+		if c.Terrain == BreakableWall || c.Terrain == Landfill {
 			g.Durability[i] = 2
 		}
 	}
@@ -63,7 +63,7 @@ func (g *Game) TerrainAt(i int) Terrain {
 	if c.Circuit == Door && !CircuitOpen(c.InitiallyOpen, g.CircuitOn[c.Group]) {
 		return Wall
 	}
-	if t == BreakableWall && g.Durability[i] == 0 {
+	if (t == BreakableWall || t == Landfill) && g.Durability[i] == 0 {
 		return Floor
 	}
 	return t
@@ -101,18 +101,20 @@ func (g *Game) mapGeometry() *Geometry {
 		}
 		blocked[4*e.A+d], blocked[4*e.B+(d^1)] = 1, 1
 	}
-	geo.PortalAxes = m.portalAxes(t.pairs, blocked[:], func(i int) bool { return g.TerrainAt(i) == Floor }, 0)
+	geo.PortalAxes = m.portalAxes(t.pairs, blocked[:], func(i int) bool { return g.TerrainAt(i) == Floor || g.TerrainAt(i) == Landfill }, 0)
 	for i, c := range m.Cells {
 		if g.TerrainAt(i) != Floor || c.Feature == Portal {
 			continue
 		}
 		var holes [5]int16
+		var holePaths [5][]int16
 		nholes, outlets := 0, uint8(0)
 		for d := range 4 {
 			var scratch [4 * MaxMapGroups]int16
 			j, path := m.route(i, d, t.pairs, blocked[:], geo.PortalAxes, scratch[:0])
-			if j >= 0 && g.TerrainAt(j) == Hole {
+			if j >= 0 && (g.TerrainAt(j) == Hole || g.TerrainAt(j) == Landfill) {
 				holes[nholes] = int16(j)
+				holePaths[nholes] = slices.Clone(path)
 				nholes++
 			}
 			if j >= 0 && g.TerrainAt(j) == Floor {
@@ -143,6 +145,14 @@ func (g *Game) mapGeometry() *Geometry {
 			}
 			copy(geo.Nbr[MaxConnections*i+int(geo.Degree[i]):], holes[:nholes])
 			geo.Holes[i] = uint8(nholes)
+			for h, path := range holePaths[:nholes] {
+				if len(path) != 0 {
+					if geo.PortalRoutes == nil {
+						geo.PortalRoutes = make([][]int16, n*MaxConnections)
+					}
+					geo.PortalRoutes[MaxConnections*i+int(geo.Degree[i])+h] = path
+				}
+			}
 		}
 		geo.Cap[i] = geo.Degree[i] + uint8(nholes)
 		if c.Feature == Reservoir && geo.Cap[i] > 0 { // shut in by Gates, it holds its orbs like Floor
@@ -164,6 +174,11 @@ func (g *Game) terrainWave(wave int, record bool) {
 	if len(g.topology.walls) != 0 {
 		for _, e := range g.cur {
 			i := int(e)
+			for _, target := range g.Geo.Targets(i)[g.Geo.Degree[i]:] {
+				if g.Map.Cells[target].Terrain == Landfill && g.Durability[target] > 0 {
+					damage[target]++
+				}
+			}
 			x, y := g.Geo.Coords(i)
 			for _, d := range [4][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
 				nx, ny := x+d[0], y+d[1]

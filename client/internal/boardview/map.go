@@ -25,6 +25,7 @@ type MapState struct {
 	Count               []uint8
 	PortalAxes          []core.PortalAxes
 	Outlets             []uint8 // the match geometry's Reservoir routes; nil uses the map's starting ones
+	LandfillDurability  []uint8 // presentation waits until incoming orbs have reached the bottom
 }
 
 type MapTransform struct {
@@ -158,7 +159,11 @@ func mapArtTerrain(state *MapState, i int) core.Terrain {
 		return core.Void
 	}
 	t := state.Map.Cells[i].Terrain
-	if t == core.BreakableWall && state.Durability != nil && i < len(state.Durability) && state.Durability[i] == 0 {
+	durability := state.Durability
+	if t == core.Landfill && state.LandfillDurability != nil {
+		durability = state.LandfillDurability
+	}
+	if (t == core.BreakableWall || t == core.Landfill) && i < len(durability) && durability[i] == 0 {
 		return core.Floor
 	}
 	return t
@@ -176,15 +181,18 @@ func mapArtSolid(t core.Terrain) bool { return t == core.Wall || t == core.Break
 const (
 	mapJoinWall uint8 = 1 + iota
 	mapJoinHole
+	mapJoinLandfill
 )
 
-// mapArtJoin groups terrain that merges across gutters: both kinds of wall, or Holes. Zero never joins.
+// mapArtJoin keeps walls, Holes and Landfills in separate connected surfaces.
 func mapArtJoin(t core.Terrain) uint8 {
 	switch {
 	case mapArtSolid(t):
 		return mapJoinWall
 	case t == core.Hole:
 		return mapJoinHole
+	case t == core.Landfill:
+		return mapJoinLandfill
 	}
 	return 0
 }
@@ -207,42 +215,81 @@ func mapArtWallMask(state *MapState, i int) (mask uint8) {
 }
 
 func mapArtWallColor(sc *ui.Palette, terrain core.Terrain) color.RGBA {
-	switch terrain {
-	case core.BreakableWall:
+	if terrain == core.BreakableWall {
 		return ui.Mix(sc.Dim, sc.Tile, 0.23)
-	case core.Hole:
-		return sc.Pit
 	}
 	return sc.Dim
 }
 
-// DrawMapWall draws a wall or Hole, extended across the gutters named by mask.
+// DrawMapWall draws a wall, Hole or Landfill, extended across the gutters named by mask.
 func DrawMapWall(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, terrain core.Terrain, mask uint8, durability uint8) {
-	k, g := r.W, r.W*TileGutter
-	c := mapArtWallColor(sc, terrain)
-	// Overlap shared edges by one render pixel; antialiased rectangles that only touch leave a dark seam.
-	const overlap = 1.0
-	radius := k * 0.14
-	if terrain == core.Hole {
-		radius = k * TileRadius // a lone Hole keeps the Floor footprint
+	if terrain == core.Hole || terrain == core.Landfill {
+		for _, step := range pitSteps(terrain) {
+			inset, radius := step.geometry()
+			drawMapJoinedSurface(dst, r, mask, inset*r.W, radius*r.W, step.ink(sc))
+		}
+		return
 	}
-	ui.FillRound(dst, r.Inset(g), radius, c)
-	if mask&mapNorth != 0 {
-		ui.FillRound(dst, ui.Rect{X: r.X + g, Y: r.Y - overlap, W: k - 2*g, H: k*0.3 + overlap}, 0, c)
-	}
-	if mask&mapEast != 0 {
-		ui.FillRound(dst, ui.Rect{X: r.Right() - k*0.3, Y: r.Y + g, W: k*0.3 + overlap, H: k - 2*g}, 0, c)
-	}
-	if mask&mapSouth != 0 {
-		ui.FillRound(dst, ui.Rect{X: r.X + g, Y: r.Bottom() - k*0.3, W: k - 2*g, H: k*0.3 + overlap}, 0, c)
-	}
-	if mask&mapWest != 0 {
-		ui.FillRound(dst, ui.Rect{X: r.X - overlap, Y: r.Y + g, W: k*0.3 + overlap, H: k - 2*g}, 0, c)
-	}
+	drawMapJoinedSurface(dst, r, mask, r.W*TileGutter, r.W*0.14, mapArtWallColor(sc, terrain))
 	if terrain == core.BreakableWall {
 		drawMapSprite(dst, sc, r, mapSpriteKey{cracks: true, durability: durability})
 	}
 }
+
+func drawMapJoinedSurface(dst *ebiten.Image, r ui.Rect, mask uint8, inset, radius float64, ink color.RGBA) {
+	k, arm := r.W, r.W/2 // arms reach the centre, so deep pit steps join too
+	// Overlap shared edges; antialiased rectangles that only touch leave a seam.
+	const overlap = 1.0
+	ui.FillRound(dst, r.Inset(inset), radius, ink)
+	if mask&mapNorth != 0 {
+		ui.FillRound(dst, ui.Rect{X: r.X + inset, Y: r.Y - overlap, W: k - 2*inset, H: arm + overlap}, 0, ink)
+	}
+	if mask&mapEast != 0 {
+		ui.FillRound(dst, ui.Rect{X: r.Right() - arm, Y: r.Y + inset, W: arm + overlap, H: k - 2*inset}, 0, ink)
+	}
+	if mask&mapSouth != 0 {
+		ui.FillRound(dst, ui.Rect{X: r.X + inset, Y: r.Bottom() - arm, W: k - 2*inset, H: arm + overlap}, 0, ink)
+	}
+	if mask&mapWest != 0 {
+		ui.FillRound(dst, ui.Rect{X: r.X - overlap, Y: r.Y + inset, W: arm + overlap, H: k - 2*inset}, 0, ink)
+	}
+}
+
+// pitStep is one flat band of a pit seen straight from above: deeper bands are smaller copies of the opening and
+// darker, as less light reaches them. Steps only ever darken inward; a lighter band would read as a raised rim.
+type pitStep struct {
+	scale float64 // of the Floor footprint
+	depth float64 // Tile mixed toward Pit
+}
+
+// A Hole keeps stepping down to a Pit core, with no bottom. A Landfill shares the Hole's band widths but stops a step
+// earlier and lighter; its last band is the bottom an orb rests on.
+var (
+	holeSteps     = []pitStep{{1, .2}, {.82, .4}, {.68, .6}, {.57, .8}, {.48, 1}}
+	landfillSteps = []pitStep{{1, .15}, {.82, .29}, {.68, .41}, {.57, .52}}
+)
+
+func pitSteps(t core.Terrain) []pitStep {
+	if t == core.Hole {
+		return holeSteps
+	}
+	return landfillSteps
+}
+
+// geometry is the step's inset and corner radius, as fractions of the cell.
+func (s pitStep) geometry() (inset, radius float64) {
+	return (1 - (1-2*TileGutter)*s.scale) / 2, TileRadius * s.scale
+}
+
+func (s pitStep) ink(sc *ui.Palette) color.RGBA { return ui.Mix(sc.Tile, sc.Pit, s.depth) }
+
+const (
+	landfillOrbScale = .7  // an orb on a Landfill bottom, smaller for being below the board
+	landfillDrift    = .06 // its orbit radius, as a fraction of the cell, inside the bottom
+)
+
+// landfillOrbInk is the neutral fill an orb takes on a Landfill bottom.
+func landfillOrbInk(sc *ui.Palette) color.RGBA { return sc.Dim }
 
 func renderMapCracks(dst *ebiten.Image, r ui.Rect, durability uint8, ink color.RGBA) {
 	k := r.W
@@ -280,26 +327,24 @@ func drawMapWallCorners(dst *ebiten.Image, sc *ui.Palette, state *MapState, tr M
 	m := state.Map
 	for gx := 1; gx < m.Cols; gx++ {
 		for gy := 1; gy < m.Rows; gy++ {
-			for _, join := range [2]uint8{mapJoinWall, mapJoinHole} {
-				terrain, count := mapArtWallVertex(state, gx, gy, join)
-				if count < 3 {
-					continue
-				}
-				for corner, d := range [4][2]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}} {
-					sx, sy := d[0], d[1]
-					if count == 4 {
-						x, y := tr.Point(m.Rows, float64(gx)+sx*TileGutter/2, float64(gy)+sy*TileGutter/2)
-						g := tr.Cell * TileGutter
-						ui.FillRound(dst, ui.Rect{X: x - g/2 - 1, Y: y - g/2 - 1, W: g + 2, H: g + 2}, 0, mapArtWallColor(sc, terrain[corner]))
-					} else if mapArtJoin(terrain[corner]) != join {
-						x, y := tr.Point(m.Rows, float64(gx), float64(gy))
-						rotation := corner
-						if tr.Turned {
-							rotation = (rotation + 1) % 4
-						}
-						drawMapSprite(dst, sc, ui.Rect{X: x - tr.Cell/2, Y: y - tr.Cell/2, W: tr.Cell, H: tr.Cell},
-							mapSpriteKey{terrain: terrain[(corner+2)%4], corner: uint8(rotation + 1)})
+			terrain, count := mapArtWallVertex(state, gx, gy, mapJoinWall)
+			if count < 3 {
+				continue
+			}
+			for corner, d := range [4][2]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}} {
+				sx, sy := d[0], d[1]
+				if count == 4 {
+					x, y := tr.Point(m.Rows, float64(gx)+sx*TileGutter/2, float64(gy)+sy*TileGutter/2)
+					g := tr.Cell * TileGutter
+					ui.FillRound(dst, ui.Rect{X: x - g/2 - 1, Y: y - g/2 - 1, W: g + 2, H: g + 2}, 0, mapArtWallColor(sc, terrain[corner]))
+				} else if mapArtJoin(terrain[corner]) != mapJoinWall {
+					x, y := tr.Point(m.Rows, float64(gx), float64(gy))
+					rotation := corner
+					if tr.Turned {
+						rotation = (rotation + 1) % 4
 					}
+					drawMapSprite(dst, sc, ui.Rect{X: x - tr.Cell/2, Y: y - tr.Cell/2, W: tr.Cell, H: tr.Cell},
+						mapSpriteKey{terrain: terrain[(corner+2)%4], corner: uint8(rotation + 1)})
 				}
 			}
 		}
@@ -307,19 +352,75 @@ func drawMapWallCorners(dst *ebiten.Image, sc *ui.Palette, state *MapState, tr M
 }
 
 func renderMapWallCorner(dst *ebiten.Image, r ui.Rect, ink color.RGBA, corner int) {
+	renderMapSurfaceCorner(dst, r, ink, corner, TileGutter, .14)
+}
+
+// renderMapSurfaceCorner rounds the concave corner of a joined surface inset and radius (fractions of the cell)
+// from the grid vertex at r's centre.
+func renderMapSurfaceCorner(dst *ebiten.Image, r ui.Rect, ink color.RGBA, corner int, inset, radius float64) {
 	d := [4][2]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}}[corner]
 	sx, sy := d[0], d[1]
-	x, y := r.Cx()-sx*TileGutter*r.W, r.Cy()-sy*TileGutter*r.W
+	x, y := r.Cx()-sx*inset*r.W, r.Cy()-sy*inset*r.W
 	p := &mapPath
 	p.Reset()
 	// Extend into both arms so antialiasing cannot leave a seam.
 	p.MoveTo(float32(x-sx*.75), float32(y-sy*.75))
-	p.LineTo(float32(x-sx*.75), float32(y+sy*.14*r.W))
-	p.LineTo(float32(x), float32(y+sy*.14*r.W))
-	p.QuadTo(float32(x), float32(y), float32(x+sx*.14*r.W), float32(y))
-	p.LineTo(float32(x+sx*.14*r.W), float32(y-sy*.75))
+	p.LineTo(float32(x-sx*.75), float32(y+sy*radius*r.W))
+	p.LineTo(float32(x), float32(y+sy*radius*r.W))
+	p.QuadTo(float32(x), float32(y), float32(x+sx*radius*r.W), float32(y))
+	p.LineTo(float32(x+sx*radius*r.W), float32(y-sy*.75))
 	p.Close()
 	ui.FillPath(dst, p, ink)
+}
+
+// drawMapPits draws Holes and Landfills step by step, finishing each step across a whole connected opening before
+// the deeper one, so joined openings share one set of bands.
+func drawMapPits(dst *ebiten.Image, sc *ui.Palette, state *MapState, tr MapTransform) {
+	m := state.Map
+	cell := func(i int) (ui.Rect, uint8) {
+		x, y := tr.Point(m.Rows, float64(i/m.Rows)+.5, float64(i%m.Rows)+.5)
+		mask := mapArtWallMask(state, i)
+		if tr.Turned {
+			mask = (mask<<1 | mask>>3) & 15
+		}
+		return ui.Rect{X: x - tr.Cell/2, Y: y - tr.Cell/2, W: tr.Cell, H: tr.Cell}, mask
+	}
+	for _, pit := range [2]core.Terrain{core.Hole, core.Landfill} {
+		join := mapArtJoin(pit)
+		for _, step := range pitSteps(pit) {
+			inset, radius := step.geometry()
+			ink := step.ink(sc)
+			for i := range m.Cells {
+				if mapArtTerrain(state, i) == pit {
+					r, mask := cell(i)
+					drawMapJoinedSurface(dst, r, mask, inset*tr.Cell, radius*tr.Cell, ink)
+				}
+			}
+			for gx := 1; gx < m.Cols; gx++ {
+				for gy := 1; gy < m.Rows; gy++ {
+					terrain, count := mapArtWallVertex(state, gx, gy, join)
+					if count < 3 {
+						continue
+					}
+					x, y := tr.Point(m.Rows, float64(gx), float64(gy))
+					if count == 4 {
+						d := inset * tr.Cell
+						ui.FillRound(dst, ui.Rect{X: x - d - 1, Y: y - d - 1, W: 2*d + 2, H: 2*d + 2}, 0, ink)
+						continue
+					}
+					for corner, t := range terrain {
+						if mapArtJoin(t) == join {
+							continue
+						}
+						if tr.Turned {
+							corner = (corner + 1) % 4
+						}
+						renderMapSurfaceCorner(dst, ui.Rect{X: x - tr.Cell/2, Y: y - tr.Cell/2, W: tr.Cell, H: tr.Cell}, ink, corner, inset, radius)
+					}
+				}
+			}
+		}
+	}
 }
 
 // mapArtWallVertex counts the cells around grid vertex (gx, gy) in join group join.
@@ -582,6 +683,9 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		}
 		x, y := tr.Point(m.Rows, float64(i/m.Rows)+0.5, float64(i%m.Rows)+0.5)
 		r := ui.Rect{X: x - tr.Cell/2, Y: y - tr.Cell/2, W: tr.Cell, H: tr.Cell}
+		if t == core.Hole || t == core.Landfill {
+			continue // drawMapPits
+		}
 		if mapArtJoin(t) != 0 {
 			mask := mapArtWallMask(&state, i)
 			if tr.Turned {
@@ -622,6 +726,7 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		drawMapCircuit(dst, sc, cfg.Circuit, cfg.Group, r, pressed)
 	}
 	drawMapWallCorners(dst, sc, &state, tr)
+	drawMapPits(dst, sc, &state, tr)
 	shared := mapGateVertices(m)
 	for edgeIndex, e := range m.Edges {
 		durability := uint8(2)

@@ -76,7 +76,7 @@ func TestHoleValidation(t *testing.T) {
 		present bool
 	}{
 		"Holes do not connect Floor": {split, "All Floor must connect", true},
-		"edge between Holes":         {pit, "need Floor on both sides", true},
+		"edge between Holes":         {pit, "need Floor or Landfill on both sides", true},
 		"feature on a Hole":          {feature, "Features need Floor", true},
 		"Barrier beside a Hole":      {sealed(Barrier), "Floor on both sides", false},
 		"one open Floor side":        {sealed(Barrier, Barrier, BreakableBarrier), enclosed, false},
