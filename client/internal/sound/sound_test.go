@@ -160,7 +160,7 @@ func TestCombinedSoundsKeepFifteenVoiceLimit(t *testing.T) {
 	s, _, peak := testSound()
 	for k := range 30 {
 		s.last = time.Now().Add(-minGap)
-		s.Wave(k, 16, Link|Latch|ToggleOn|ToggleOff|HoldOn|HoldOff|WallHit|WallBreak)
+		s.Wave(k, 16, Link|Latch|ToggleOn|ToggleOff|HoldOn|HoldOff|WallHit|WallBreak|Fall)
 		if *peak > 15 {
 			t.Fatalf("simultaneous voices reached %d", *peak)
 		}
@@ -258,7 +258,7 @@ func TestGeneratedCuesHaveConsistentLoudness(t *testing.T) {
 			check(t, synth(440*math.Pow(2, float64(midi-69)/12)))
 		})
 	}
-	for i, name := range []string{"link", "latch", "toggle-on", "toggle-off", "hold-on", "hold-off", "wall-hit", "wall-break"} {
+	for i, name := range []string{"link", "latch", "toggle-on", "toggle-off", "hold-on", "hold-off", "wall-hit", "wall-break", "fall"} {
 		t.Run(name, func(t *testing.T) { check(t, synthEffect(effectTones[i])) })
 	}
 }
@@ -292,7 +292,7 @@ func TestDenseNormalizedBurstsKeepMixHeadroom(t *testing.T) {
 	for _, cells := range []int{1, 16} {
 		for k := range 7 {
 			s, players, _ := testSound()
-			s.Wave(k, cells, Link|Latch|ToggleOn|ToggleOff|HoldOn|HoldOff|WallHit|WallBreak)
+			s.Wave(k, cells, Link|Latch|ToggleOn|ToggleOff|HoldOn|HoldOff|WallHit|WallBreak|Fall)
 			for frame := range int(noteLength * sampleRate) {
 				mix := 0.0
 				for i, p := range players {

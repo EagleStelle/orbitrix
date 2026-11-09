@@ -42,6 +42,8 @@ var mapCaptureCases = []mapCaptureCase{
 	{"portal-locked-desktop", 1040, 640, false, false, false, "portal-vertical", brushPortal},
 	{"portal-locked-mobile", 390, 844, true, false, false, "portal-vertical", brushPortal},
 	{"portal-locked-landscape", 568, 320, false, false, false, "portal-horizontal", brushPortal},
+	{"hole-desktop", 1040, 640, false, false, false, "", brushHole},
+	{"hole-mobile-dark", 390, 844, true, false, false, "", brushHole},
 	{"breakable-barrier-desktop", 1040, 640, false, false, false, "", brushBreakBarrier},
 	{"breakable-barrier-mobile", 390, 844, true, false, false, "", brushBreakBarrier},
 	{"breakable-barrier-small", 320, 640, false, false, false, "", brushBreakBarrier},

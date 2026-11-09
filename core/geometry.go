@@ -24,6 +24,9 @@ type Geometry struct {
 	// Cap is the explosion threshold; blocked terrain has zero capacity.
 	Cap    []uint8
 	Degree []uint8 // outgoing connections, independent of Reservoir capacity
+	// Holes counts connections into Hole terrain, stored in the Nbr slots after the Degree active ones. Nil
+	// without Holes.
+	Holes []uint8
 	// Nbr holds MaxConnections slots per cell, of which Degree are active.
 	Nbr []int16
 	// PortalRoutes holds entry/exit pairs per connection, only on maps with active Portal routes.
@@ -64,6 +67,15 @@ func (g *Geometry) Coords(i int) (c, r int) { return i / g.Rows, i % g.Rows }
 // Neighbours returns cell i's orthogonal neighbours. The slice aliases the table: don't modify it.
 func (g *Geometry) Neighbours(i int) []int16 {
 	return g.Nbr[MaxConnections*i : MaxConnections*i+int(g.Degree[i])]
+}
+
+// Targets returns where cell i's exploding orbs go, one each: its neighbours, then its Holes.
+func (g *Geometry) Targets(i int) []int16 {
+	n := int(g.Degree[i])
+	if g.Holes != nil {
+		n += int(g.Holes[i])
+	}
+	return g.Nbr[MaxConnections*i : MaxConnections*i+n]
 }
 
 func (g *Geometry) PortalPath(cell, connection int) []int16 {

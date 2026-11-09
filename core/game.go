@@ -250,10 +250,11 @@ func (g *Game) explode() {
 	}
 	g.next, g.from = g.next[:0], g.from[:0]
 	for _, e := range g.cur {
-		p, capacity := g.Owner[e], geo.Degree[e]
+		// One orb per target; those sent into Holes are lost, so only Neighbours receive below.
+		p, released := g.Owner[e], uint8(len(geo.Targets(int(e))))
 		g.from = append(g.from, p)
-		g.Count[e] -= capacity
-		g.Orbs[p] -= int32(capacity)
+		g.Count[e] -= released
+		g.Orbs[p] -= int32(released)
 		switch {
 		case g.Count[e] == 0:
 			g.Owner[e] = NoOwner

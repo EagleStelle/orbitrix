@@ -19,6 +19,7 @@ type Palette struct {
 	InkHi   color.RGBA // hovered primary controls
 	Dim     color.RGBA // secondary text, dashed outlines
 	Danger  color.RGBA // a destructive choice (Remove player), apart from every player ink
+	Pit     color.RGBA // a map Hole: deeper than every printed surface
 	Players [core.MaxPlayers]color.RGBA
 }
 
@@ -30,7 +31,7 @@ const (
 var Palettes = [2]Palette{
 	Light: {
 		Ground: hex(0xF4F3F0), Tile: hex(0xE0DED9), TileHi: hex(0xD1CEC8),
-		Ink: hex(0x171615), InkHi: hex(0x3B3936), Dim: hex(0x65615B), Danger: hex(0xC21D3A),
+		Ink: hex(0x171615), InkHi: hex(0x3B3936), Dim: hex(0x65615B), Danger: hex(0xC21D3A), Pit: hex(0x171615),
 		Players: [core.MaxPlayers]color.RGBA{
 			hex(0xD55E00), hex(0x0072B2), hex(0x009E73), hex(0xE69F00), hex(0xCC79A7), hex(0x56B4E9),
 			hex(0xE8D21D), hex(0x2E2C2A), hex(0x901CFC), hex(0x8B5A2B), hex(0x440048), hex(0x641404),
@@ -38,7 +39,7 @@ var Palettes = [2]Palette{
 	},
 	Dark: {
 		Ground: hex(0x1C1A18), Tile: hex(0x2D2A27), TileHi: hex(0x3B3733),
-		Ink: hex(0xF5F2EE), InkHi: hex(0xD4CEC6), Dim: hex(0xA39C92), Danger: hex(0xFF6B7A),
+		Ink: hex(0xF5F2EE), InkHi: hex(0xD4CEC6), Dim: hex(0xA39C92), Danger: hex(0xFF6B7A), Pit: hex(0x0D0C0B),
 		Players: [core.MaxPlayers]color.RGBA{
 			hex(0xE86A1A), hex(0x3A9BE0), hex(0x1FB88C), hex(0xF0AA1A), hex(0xDD8DB8), hex(0x7CC6F0),
 			hex(0xF0E442), hex(0xF4F4F4), hex(0x844CFC), hex(0xC98B4E), hex(0xB4FC84), hex(0xB85450),

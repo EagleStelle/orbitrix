@@ -167,16 +167,33 @@ const (
 
 func mapArtSolid(t core.Terrain) bool { return t == core.Wall || t == core.BreakableWall }
 
-// Four local lookups connect both kinds of wall, even across tile gutters.
+const (
+	mapJoinWall uint8 = 1 + iota
+	mapJoinHole
+)
+
+// mapArtJoin groups terrain that merges across gutters: both kinds of wall, or Holes. Zero never joins.
+func mapArtJoin(t core.Terrain) uint8 {
+	switch {
+	case mapArtSolid(t):
+		return mapJoinWall
+	case t == core.Hole:
+		return mapJoinHole
+	}
+	return 0
+}
+
+// Four local lookups connect joining terrain, even across tile gutters.
 func mapArtWallMask(state *MapState, i int) (mask uint8) {
 	m := state.Map
 	if m == nil || m.Rows <= 0 || i < 0 || i >= len(m.Cells) {
 		return
 	}
+	join := mapArtJoin(mapArtTerrain(state, i))
 	c, r := i/m.Rows, i%m.Rows
 	for d, step := range [4][2]int{{0, -1}, {1, 0}, {0, 1}, {-1, 0}} {
 		x, y := c+step[0], r+step[1]
-		if x >= 0 && x < m.Cols && y >= 0 && y < m.Rows && mapArtSolid(mapArtTerrain(state, x*m.Rows+y)) {
+		if join != 0 && x >= 0 && x < m.Cols && y >= 0 && y < m.Rows && mapArtJoin(mapArtTerrain(state, x*m.Rows+y)) == join {
 			mask |= 1 << d
 		}
 	}
@@ -184,18 +201,26 @@ func mapArtWallMask(state *MapState, i int) (mask uint8) {
 }
 
 func mapArtWallColor(sc *ui.Palette, terrain core.Terrain) color.RGBA {
-	if terrain == core.BreakableWall {
+	switch terrain {
+	case core.BreakableWall:
 		return ui.Mix(sc.Dim, sc.Tile, 0.23)
+	case core.Hole:
+		return sc.Pit
 	}
 	return sc.Dim
 }
 
+// DrawMapWall draws a wall or Hole, extended across the gutters named by mask.
 func DrawMapWall(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, terrain core.Terrain, mask uint8, durability uint8) {
 	k, g := r.W, r.W*TileGutter
 	c := mapArtWallColor(sc, terrain)
 	// Overlap shared edges by one render pixel; antialiased rectangles that only touch leave a dark seam.
 	const overlap = 1.0
-	ui.FillRound(dst, r.Inset(g), k*0.14, c)
+	radius := k * 0.14
+	if terrain == core.Hole {
+		radius = k * TileRadius // a lone Hole keeps the Floor footprint
+	}
+	ui.FillRound(dst, r.Inset(g), radius, c)
 	if mask&mapNorth != 0 {
 		ui.FillRound(dst, ui.Rect{X: r.X + g, Y: r.Y - overlap, W: k - 2*g, H: k*0.3 + overlap}, 0, c)
 	}
@@ -208,10 +233,9 @@ func DrawMapWall(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, terrain core.Terr
 	if mask&mapWest != 0 {
 		ui.FillRound(dst, ui.Rect{X: r.X - overlap, Y: r.Y + g, W: k*0.3 + overlap, H: k - 2*g}, 0, c)
 	}
-	if terrain == core.Wall {
-		return
+	if terrain == core.BreakableWall {
+		drawMapSprite(dst, sc, r, mapSpriteKey{cracks: true, durability: durability})
 	}
-	drawMapSprite(dst, sc, r, mapSpriteKey{cracks: true, durability: durability})
 }
 
 func renderMapCracks(dst *ebiten.Image, r ui.Rect, durability uint8, ink color.RGBA) {
@@ -250,24 +274,26 @@ func drawMapWallCorners(dst *ebiten.Image, sc *ui.Palette, state *MapState, tr M
 	m := state.Map
 	for gx := 1; gx < m.Cols; gx++ {
 		for gy := 1; gy < m.Rows; gy++ {
-			terrain, count := mapArtWallVertex(state, gx, gy)
-			if count < 3 {
-				continue
-			}
-			for corner, d := range [4][2]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}} {
-				sx, sy := d[0], d[1]
-				if count == 4 {
-					x, y := tr.Point(m.Rows, float64(gx)+sx*TileGutter/2, float64(gy)+sy*TileGutter/2)
-					g := tr.Cell * TileGutter
-					ui.FillRound(dst, ui.Rect{X: x - g/2 - 1, Y: y - g/2 - 1, W: g + 2, H: g + 2}, 0, mapArtWallColor(sc, terrain[corner]))
-				} else if !mapArtSolid(terrain[corner]) {
-					x, y := tr.Point(m.Rows, float64(gx), float64(gy))
-					rotation := corner
-					if tr.Turned {
-						rotation = (rotation + 1) % 4
+			for _, join := range [2]uint8{mapJoinWall, mapJoinHole} {
+				terrain, count := mapArtWallVertex(state, gx, gy, join)
+				if count < 3 {
+					continue
+				}
+				for corner, d := range [4][2]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}} {
+					sx, sy := d[0], d[1]
+					if count == 4 {
+						x, y := tr.Point(m.Rows, float64(gx)+sx*TileGutter/2, float64(gy)+sy*TileGutter/2)
+						g := tr.Cell * TileGutter
+						ui.FillRound(dst, ui.Rect{X: x - g/2 - 1, Y: y - g/2 - 1, W: g + 2, H: g + 2}, 0, mapArtWallColor(sc, terrain[corner]))
+					} else if mapArtJoin(terrain[corner]) != join {
+						x, y := tr.Point(m.Rows, float64(gx), float64(gy))
+						rotation := corner
+						if tr.Turned {
+							rotation = (rotation + 1) % 4
+						}
+						drawMapSprite(dst, sc, ui.Rect{X: x - tr.Cell/2, Y: y - tr.Cell/2, W: tr.Cell, H: tr.Cell},
+							mapSpriteKey{terrain: terrain[(corner+2)%4], corner: uint8(rotation + 1)})
 					}
-					drawMapSprite(dst, sc, ui.Rect{X: x - tr.Cell/2, Y: y - tr.Cell/2, W: tr.Cell, H: tr.Cell},
-						mapSpriteKey{terrain: terrain[(corner+2)%4], corner: uint8(rotation + 1)})
 				}
 			}
 		}
@@ -290,11 +316,12 @@ func renderMapWallCorner(dst *ebiten.Image, r ui.Rect, ink color.RGBA, corner in
 	ui.FillPath(dst, p, ink)
 }
 
-func mapArtWallVertex(state *MapState, gx, gy int) (terrain [4]core.Terrain, count int) {
+// mapArtWallVertex counts the cells around grid vertex (gx, gy) in join group join.
+func mapArtWallVertex(state *MapState, gx, gy int, join uint8) (terrain [4]core.Terrain, count int) {
 	m := state.Map
 	for i, d := range [4][2]int{{-1, -1}, {0, -1}, {0, 0}, {-1, 0}} {
 		terrain[i] = mapArtTerrain(state, (gx+d[0])*m.Rows+gy+d[1])
-		if mapArtSolid(terrain[i]) {
+		if mapArtJoin(terrain[i]) == join {
 			count++
 		}
 	}
@@ -510,7 +537,7 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		}
 		x, y := tr.Point(m.Rows, float64(i/m.Rows)+0.5, float64(i%m.Rows)+0.5)
 		r := ui.Rect{X: x - tr.Cell/2, Y: y - tr.Cell/2, W: tr.Cell, H: tr.Cell}
-		if mapArtSolid(t) {
+		if mapArtJoin(t) != 0 {
 			mask := mapArtWallMask(&state, i)
 			if tr.Turned {
 				mask = (mask<<1 | mask>>3) & 15
@@ -620,7 +647,7 @@ func DrawMapBrush(dst *ebiten.Image, sc *ui.Palette, brush Brush, r ui.Rect, gro
 	if brush.Terrain == core.Void {
 		return
 	}
-	if mapArtSolid(brush.Terrain) {
+	if mapArtJoin(brush.Terrain) != 0 {
 		DrawMapWall(dst, sc, r, brush.Terrain, 0, 2)
 		return
 	}

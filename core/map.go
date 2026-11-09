@@ -14,6 +14,7 @@ const (
 	Wall
 	Void
 	BreakableWall
+	Hole
 )
 
 // Feature is an optional mechanic attached to a Floor cell.
@@ -107,7 +108,7 @@ func (m MapDefinition) ValidateStructure() error {
 		return fmt.Errorf("map has too many edges")
 	}
 	for i, c := range m.Cells {
-		if c.Terrain > BreakableWall || c.Feature > Portal || c.Circuit > Door {
+		if c.Terrain > Hole || c.Feature > Portal || c.Circuit > Door {
 			return fmt.Errorf("map cell %d has unknown terrain or feature", i)
 		}
 		if c.Feature != NoFeature && c.Circuit != NoCircuit {
@@ -138,6 +139,13 @@ func (m MapDefinition) adjacent(a, b int) bool {
 
 func (m MapDefinition) floor(i int) bool {
 	return i >= 0 && i < len(m.Cells) && m.Cells[i].Terrain == Floor
+}
+
+// EdgeFits reports whether a Barrier or Gate may join adjacent cells a and b: Floor on both sides, or Floor
+// beside a Hole.
+func (m MapDefinition) EdgeFits(a, b int) bool {
+	hole := func(i int) bool { return i >= 0 && i < len(m.Cells) && m.Cells[i].Terrain == Hole }
+	return m.floor(a) && (m.floor(b) || hole(b)) || hole(a) && m.floor(b)
 }
 
 func (m MapDefinition) initialFloor(i int) bool {
@@ -246,13 +254,18 @@ func (m MapDefinition) InitialConnections(cell int, dst []int) []int {
 	return dst
 }
 
-// Capacity is the initial explosion threshold, including a Reservoir's reserve.
+// Capacity is the initial explosion threshold, including a Reservoir's reserve and adjacent Holes.
 func (m MapDefinition) Capacity(cell int) int {
 	if !m.initialFloor(cell) {
 		return 0
 	}
 	var neighbors [5]int
 	n := len(m.InitialConnections(cell, neighbors[:0]))
+	for d := range 4 {
+		if j, _ := m.route(cell, d, nil, nil, nil, nil); j >= 0 && m.Cells[j].Terrain == Hole {
+			n++
+		}
+	}
 	if m.Cells[cell].Feature == Reservoir {
 		n++
 	}
@@ -306,8 +319,8 @@ func (m MapDefinition) Validate() []MapIssue {
 	}
 	seenEdges := make(map[[2]int]int, len(m.Edges))
 	for i, e := range m.Edges {
-		if !m.floor(e.A) || !m.floor(e.B) {
-			issues = append(issues, MapIssue{Message: "Barriers and Gates need Floor on both sides", Edges: []int{i}})
+		if !m.EdgeFits(e.A, e.B) {
+			issues = append(issues, MapIssue{Message: "Barriers and Gates need Floor on both sides, or Floor beside a Hole", Edges: []int{i}})
 		}
 		key := [2]int{min(e.A, e.B), max(e.A, e.B)}
 		if prev, found := seenEdges[key]; found {
@@ -318,6 +331,27 @@ func (m MapDefinition) Validate() []MapIssue {
 			gates[e.Group] = append(gates[e.Group], i)
 		} else if e.Group != 0 {
 			issues = append(issues, MapIssue{Message: "Barriers do not use a gate group", Edges: []int{i}, Group: e.Group})
+		}
+	}
+	// A Hole sealed by Barriers on every Floor side can never swallow an orb; Gates may open.
+	for i, c := range m.Cells {
+		if c.Terrain != Hole {
+			continue
+		}
+		sides := 0
+		var sealed []int
+		for d := range 4 {
+			j := m.neighbor(i, d)
+			if j < 0 || m.Cells[j].Terrain != Floor && m.Cells[j].Terrain != BreakableWall {
+				continue
+			}
+			sides++
+			if k, found := seenEdges[[2]int{min(i, j), max(i, j)}]; found && m.Edges[k].Kind != Gate {
+				sealed = append(sealed, k)
+			}
+		}
+		if sides > 0 && len(sealed) == sides {
+			issues = append(issues, MapIssue{Message: "A Hole needs a Floor side without a Barrier", Cells: []int{i}, Edges: sealed})
 		}
 	}
 	for group := 0; group < len(links); group++ {

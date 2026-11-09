@@ -14,6 +14,7 @@ const (
 	HoldOff
 	WallHit
 	WallBreak
+	Fall
 )
 
 type effectTone struct {
@@ -33,6 +34,7 @@ var effectTones = [...]effectTone{
 	{[3]int{0, -1, -1}, .22, .003, .045, 0, [4]float64{1, .35, .08, 0}},      // Hold off: C4
 	{[3]int{0, -1, -1}, .16, .001, .025, 0, [4]float64{1, .5, .3, .2}},       // Wall damage: woody knock, C4
 	{[3]int{3, 2, 0}, .48, .001, .065, .035, [4]float64{1, .5, .3, .2}},      // Wall break: falling wooden fragments, G4 E4 C4
+	{[3]int{9, 6, 2}, .6, .004, .11, .085, [4]float64{1, 0, .3, 0}},          // Hole: hollow drop, wide steps down A5 D5 E4
 }
 
 func synthEffect(tone effectTone) []byte {

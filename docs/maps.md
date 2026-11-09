@@ -13,6 +13,7 @@ A **map** is the saved design. A **board** is that design in a match. A **cell**
 | Floor | Playable cell. Capacity equals its open connections. |
 | Wall | Permanent obstruction occupying a cell. |
 | Void | Missing surface, outside the playable area. Blocks connections like Wall. |
+| Hole | Unplayable, but counts toward neighboring Floor capacity; orbs sent into it are lost. Not a Portal exit. |
 | Breakable Wall | Starts with two durability. Each adjacent exploding cell deals one damage per wave; destruction creates empty Floor. |
 | Link | A pair of distant Floor cells are extra neighbors. Each endpoint sends one orb to the other when exploding. Arrivals land normally. |
 | Portal | An arriving orb passes through its pair and continues in the same direction to the next Floor cell on an enabled axis. No placement or orb storage. Enabled routes replace cardinal connections; disabled axes send no orbs and do not count toward nearby capacity. |
@@ -25,7 +26,7 @@ A **map** is the saved design. A **board** is that design in a match. A **cell**
 | Gate | An edge obstruction. Each circuit reversal swaps its configured open/closed starting state. |
 | Door | A whole-cell wall when closed, playable Floor when open. Each circuit reversal swaps its configured starting state. Orbs caught inside a closing Door remain owned and dormant until it reopens. |
 
-The palette groups **Terrain** (Floor, Void, Wall, Barrier, Breakable Wall, Breakable Barrier), **Devices** (Link, Portal, Reservoir), and **Circuit** (Latch, Toggle, Hold, Gate, Door). Desktop shows an icon-and-label list; short landscape uses a category picker and portrait uses tabs with a scrolling shelf. The inspector shows functional help and a color swatch. For Gate and Door, tap **Starts closed** or **Starts open** before painting. Repaint an existing component to change its starting state; Undo/Redo and Save preserve it. Each output has its own starting state, so one circuit can contain both initially open and initially closed outputs. The same visible control works with touch and mouse on every target.
+The palette groups **Terrain** (Floor, Void, Hole, Wall, Barrier, Breakable Wall, Breakable Barrier), **Devices** (Link, Portal, Reservoir), and **Circuit** (Latch, Toggle, Hold, Gate, Door). Desktop shows an icon-and-label list; short landscape uses a category picker and portrait uses tabs with a scrolling shelf. The inspector shows functional help and a color swatch. For Gate and Door, tap **Starts closed** or **Starts open** before painting. Repaint an existing component to change its starting state; Undo/Redo and Save preserve it. Each output has its own starting state, so one circuit can contain both initially open and initially closed outputs. The same visible control works with touch and mouse on every target.
 
 Edit the map name in the header, beside **Test**, **Save**, and **More** (the three-dot button). Undo, Redo, Erase, Pan, zoom out, Fit, and zoom in remain beside the canvas. Drag to paint one undoable stroke. Edge tools trace the drag between grid corners: horizontal and vertical passes stay on that line, and a held drag can turn corners without wrapping each Floor cell. A tap places one edge. Erase removes an edge obstruction when it hits one; otherwise it restores Floor. Pan and zoom make large maps reachable; Fit resets both.
 
@@ -45,7 +46,7 @@ Dimensions are 3–40 cells per side. With outputs in their configured starting 
 
 All playable Floor, including closed Doors, must eventually connect, counting Breakable Walls as future Floor and Breakable Barriers as future open connections. Gates may separate Floor groups when their matching switch is reachable from at least one side without opening that Gate first. Reachable Gates and Doors can connect further switches and outputs; circular dependencies are invalid. Links and Portal routes also connect Floor groups. Wall, Void, and permanent Barriers remain permanent obstructions, so regions enclosed only by them are invalid.
 
-Link and Portal pairs each need exactly two distinct, nonadjacent Floor endpoints. Features and circuit components require Floor and cannot overlap. Both kinds of Barrier and Gates require an orthogonal Floor edge, with only one element on that edge. Each circuit needs at least one switch and at least one Gate or Door. Any mixture and number of switches may share a circuit, within the map's cell limit. Player count cannot exceed initially playable Floor count; closed Doors are excluded.
+Link and Portal pairs each need exactly two distinct, nonadjacent Floor endpoints. Features and circuit components require Floor and cannot overlap. Both kinds of Barrier and Gates require an orthogonal Floor edge, or Floor beside a Hole, with only one element on that edge. A Hole needs a Floor side not sealed by a Barrier; Gates don't seal. Each circuit needs at least one switch and at least one Gate or Door. Any mixture and number of switches may share a circuit, within the map's cell limit. Player count cannot exceed initially playable Floor count; closed Doors are excluded.
 
 A blocked side at either Portal endpoint disables that entire horizontal or vertical axis across both endpoints. Wall, Void, the board edge, a closed Door, or a blocked edge can disable an axis. A pair must have at least one open axis in its starting layout; one blocked axis restricts travel to the other. Enabled routes may pass through further Portal pairs and count as connections only when they reach playable Floor. Nearby Floor must still meet the capacity and connectivity rules above.
 
@@ -67,6 +68,8 @@ Breakable walls show a connected, tapered negative-space fracture rooted at the 
 
 Breakable Barriers retain the permanent Barrier's thickness and use Breakable Wall's slightly shifted ink, with a transverse negative-space fracture that widens after damage. Destruction removes the edge art and its wall joins. The same art appears in the palette, editor, thumbnails and displayed match wave, in both themes and Colorblind states.
 
+A Hole is the Floor footprint in the theme's pit ink, joined to neighboring Holes like walls; orbs sent into it drop from its centre and fade.
+
 ## Sharing and files
 
 Exports use `.orbitrixmap`, portable format version 2, with zlib compression, a 64 KiB bound on both file and decompressed payload, and a checksum. Share codes start with `orbitrix-map2.`. Files, share codes, and QR payloads carry the same map definition. Files and pasted codes work offline. Imports show a preview and require **Save**; they never replace another map automatically.
@@ -81,7 +84,7 @@ In a room the host sends the selected map automatically. Joining does not add it
 
 ## Rules and compatibility
 
-Explosions preserve every orb: each accepted placement adds exactly one, and terrain neither creates nor consumes them. A direct accepted placement updates its switch and circuit immediately, before choosing the first exploding cells. This is recorded as terrain events at wave −1.
+Explosions preserve every orb except those sent into a Hole: each accepted placement adds exactly one, and no other terrain creates or consumes them. A direct accepted placement updates its switch and circuit immediately, before choosing the first exploding cells. This is recorded as terrain events at wave −1.
 
 Each explosion wave uses its starting connections. Transfers finish before wall damage and circuit inputs apply together. Toggle fires on empty-cell placement, or once when receiving or exploding in a wave, including when both occur. Hold changes on occupancy transitions. Latch fires once until another switch transition rearms it; rearming itself does not reverse the circuit. Inputs reverse circuit polarity, rather than assigning an open state: two simultaneous inputs cancel, three reverse once. Switch states remain individual even when inputs cancel. A circuit's polarity and each output's starting state determine its open/closed state. Connections and capacities rebuild before selecting the next wave. Victory is checked after the current wave's effects.
 
@@ -89,11 +92,11 @@ Map definitions contain no match state. Snapshots and resync carry wall durabili
 
 Map sounds follow the same displayed steps: the same glass chime when an exploding Link sends an orb across its pair or an orb traverses a Portal pair,
 distinct clicks when Latch, Toggle or Hold changes state, a lower note when Toggle or Hold releases, and separate
-woody damage and destruction cues for breakable walls. Repeated arrivals on an unchanged switch stay silent.
+woody damage and destruction cues for breakable walls, and a hollow falling cue for Holes. Repeated arrivals on an unchanged switch stay silent.
 All cues use the orb sounds' C major pentatonic scale, saved mute and volume, shared rate limit and voice cap.
 Rate-limited map cues coalesce for the next burst instead of disappearing, including after a chain's final wave.
 
-The game protocol remains version 3 and the map format remains version 2; both identifiers were already introduced after public release v1.0.0, which used protocol 1 and had no custom maps. Breakable Barriers use edge kind 2 in format 2. All peers must use the same development build: older development builds may share these identifiers while having incompatible circuit rules and snapshot fields, and cannot import breakable barriers. Different protocol numbers are rejected before play. Classic rectangular gameplay remains available.
+The game protocol remains version 3 and the map format remains version 2; both identifiers were already introduced after public release v1.0.0, which used protocol 1 and had no custom maps. Breakable Barriers use edge kind 2 and Holes terrain 4 in format 2. All peers must use the same development build: older development builds may share these identifiers while having incompatible circuit rules and snapshot fields, and cannot import breakable barriers or Holes. Different protocol numbers are rejected before play. Classic rectangular gameplay remains available.
 
 All twelve bots remain legal and deterministic on maps. Sovereign's existing network encodes rectangular neighborhoods with at most four neighbors; on custom maps it uses the existing Tactician search until a map-aware network is trained. Prodigy uses a full network evaluation for custom maps so topology changes cannot leave cached features stale.
 

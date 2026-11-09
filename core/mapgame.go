@@ -106,9 +106,15 @@ func (g *Game) mapGeometry() *Geometry {
 		if g.TerrainAt(i) != Floor || c.Feature == Portal {
 			continue
 		}
+		var holes [4]int16
+		nholes := 0
 		for d := range 4 {
 			var scratch [4 * MaxMapGroups]int16
 			j, path := m.route(i, d, t.pairs, blocked[:], geo.PortalAxes, scratch[:0])
+			if j >= 0 && g.TerrainAt(j) == Hole {
+				holes[nholes] = int16(j)
+				nholes++
+			}
 			if j >= 0 && g.TerrainAt(j) == Floor {
 				slot := MaxConnections*i + int(geo.Degree[i])
 				geo.Nbr[slot] = int16(j)
@@ -125,7 +131,14 @@ func (g *Game) mapGeometry() *Geometry {
 			geo.Nbr[MaxConnections*i+int(geo.Degree[i])] = t.pairs[i]
 			geo.Degree[i]++
 		}
-		geo.Cap[i] = geo.Degree[i]
+		if nholes > 0 {
+			if geo.Holes == nil {
+				geo.Holes = make([]uint8, n)
+			}
+			copy(geo.Nbr[MaxConnections*i+int(geo.Degree[i]):], holes[:nholes])
+			geo.Holes[i] = uint8(nholes)
+		}
+		geo.Cap[i] = geo.Degree[i] + uint8(nholes)
 		if c.Feature == Reservoir {
 			geo.Cap[i]++
 		}

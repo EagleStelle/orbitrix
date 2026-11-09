@@ -28,7 +28,15 @@ const (
 	TileRadius    = 0.2  // tile corner radius, as a fraction of the cell
 	tileTint      = 0.3  // how much of the player's ink their tiles take on their turn
 	burstSrcR     = 64   // radius of the burst ring source image
+	fallTicks     = 20   // an orb sent into a Hole drops from its centre and vanishes
 )
+
+// fallingOrb is an orb lost in a Hole, shown until it fades.
+type fallingOrb struct {
+	hole  int16
+	owner int8
+	start float64 // Board.Clock when it landed
+}
 
 // waveTicks paces chain playback; the rules have already resolved the move, this only sets how fast it is shown.
 // The first five waves play at full length so a move stays readable. Later ones speed up by 10% each down to 2.5
@@ -74,6 +82,7 @@ type Board struct {
 
 	burstStart, burstLen []float64
 	burstOwner           []int8
+	falls                []fallingOrb
 
 	// Layout in device pixels.
 	area   ui.Rect
@@ -246,6 +255,7 @@ func (b *Board) Start(cell int, mover int8, waves []core.Wave, snd *sound.Sound)
 // sync makes the view match g without animating.
 func (b *Board) Sync(g *core.Game) {
 	b.State.sync(g)
+	b.falls = b.falls[:0]
 }
 
 // next launches the following wave, or ends playback.
@@ -275,6 +285,13 @@ func (b *Board) FastForward() {
 // tick advances the animations by one 60 Hz tick. Short waves can finish several per tick.
 func (b *Board) Tick(snd *sound.Sound) {
 	b.Clock++
+	live := b.falls[:0]
+	for _, o := range b.falls {
+		if b.Clock-o.start < fallTicks {
+			live = append(live, o)
+		}
+	}
+	b.falls = live
 	if !b.Playing {
 		return
 	}
@@ -283,6 +300,7 @@ func (b *Board) Tick(snd *sound.Sound) {
 	var effects sound.Effects
 	for b.Playing && b.t >= b.dur {
 		b.t -= b.dur
+		effects |= b.dropIntoHoles()
 		effects |= b.State.terrainSounds(b.State.Land(b.Waves[b.Wave]))
 		b.next()
 		effects |= b.linkSound()
@@ -315,7 +333,7 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 		c := sc.Tile
 		if b.State.Replay != nil {
 			switch b.State.Replay.TerrainAt(i) {
-			case core.Void:
+			case core.Void, core.Hole: // the map layer draws the pit
 				continue
 			case core.Wall, core.BreakableWall:
 				c = sc.TileHi
@@ -366,17 +384,20 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 	}
 	b.flush(dst, b.burstImg)
 
-	// Orbs in flight to the neighbours of the wave being shown.
+	// Orbs lost in Holes, under the orbs in flight to the targets of the wave being shown.
+	for _, o := range b.falls {
+		b.queueFall(o)
+	}
 	if b.Playing {
 		f := min(1, b.t/b.dur)
 		for k, e := range b.Waves[b.Wave] {
-			for connection := range b.State.Geo.Neighbours(int(e)) {
+			for connection := range b.State.Geo.Targets(int(e)) {
 				x, y := b.flightPosition(int(e), connection, f)
 				b.Orb(x, y, int(b.State.from[k]))
 			}
 		}
-		b.flush(dst, b.OrbImg)
 	}
+	b.flush(dst, b.OrbImg)
 	if b.State.Replay != nil {
 		for i, c := range b.State.Replay.Map.Cells {
 			if c.Circuit == core.Door && b.State.Count[i] > 0 && !b.State.Geo.Playable(i) {
@@ -393,7 +414,7 @@ func (b *Board) flightPosition(cell, connection int, fraction float64) (float64,
 	segments := len(path)/2 + 1
 	progress := min(1, fraction) * float64(segments)
 	segment := min(int(progress), segments-1)
-	start, end := cell, int(b.State.Geo.Neighbours(cell)[connection])
+	start, end := cell, int(b.State.Geo.Targets(cell)[connection])
 	if segment > 0 {
 		start = int(path[2*segment-1])
 	}
@@ -404,6 +425,41 @@ func (b *Board) flightPosition(cell, connection int, fraction float64) (float64,
 	ex, ey := b.Centre(end)
 	f := progress - float64(segment)
 	return sx + (ex-sx)*f, sy + (ey-sy)*f
+}
+
+// dropIntoHoles starts a fall for every orb the landing wave sent into a Hole.
+func (b *Board) dropIntoHoles() sound.Effects {
+	geo := b.State.Geo
+	if geo.Holes == nil {
+		return 0
+	}
+	var effects sound.Effects
+	for k, e := range b.Waves[b.Wave] {
+		for _, hole := range geo.Targets(int(e))[geo.Degree[e]:] {
+			b.falls = append(b.falls, fallingOrb{hole: hole, owner: b.State.from[k], start: b.Clock})
+			effects = sound.Fall
+		}
+	}
+	return effects
+}
+
+// queueFall queues an orb lost in a Hole: from the centre it drops away, shrinking, darkening into the pit and
+// fading together, faster as it falls.
+func (b *Board) queueFall(o fallingOrb) {
+	f := min(1, (b.Clock-o.start)/fallTicks)
+	depth := f * f // accelerates like a fall
+	alpha := 1 - depth
+	x, y := b.Centre(int(o.hole))
+	s, h, sc := b.OrbSize, b.OrbDrawSize/2*(1-.7*depth), b.Palette
+	fill := sc.Tile
+	if o.owner >= 0 {
+		fill = sc.Players[o.owner]
+	}
+	b.quad(x, y, h, 0, s, ui.Mix(sc.Ground, sc.Pit, .9*depth), alpha)
+	b.quad(x, y, h, s, s, ui.Mix(fill, sc.Pit, .6*depth), alpha)
+	if b.marks && o.owner >= 0 {
+		b.quad(x, y, h, float64(2+int(o.owner))*s, s, ui.Mix(b.markInk[o.owner], sc.Pit, .6*depth), alpha)
+	}
 }
 
 func (b *Board) releaseMapLayers() {

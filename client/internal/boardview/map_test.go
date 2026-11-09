@@ -191,7 +191,7 @@ func TestWallVerticesCoverEveryLCorner(t *testing.T) {
 		}
 		m.Cells[cells[missing]].Terrain = core.Floor
 		state := MapState{Map: &m}
-		terrain, count := mapArtWallVertex(&state, 1, 1)
+		terrain, count := mapArtWallVertex(&state, 1, 1, mapJoinWall)
 		if count != 3 || mapArtSolid(terrain[missing]) {
 			t.Fatalf("L orientation %d has wrong vertex topology", missing)
 		}
@@ -203,7 +203,7 @@ func TestWallVerticesCoverEveryLCorner(t *testing.T) {
 			state.Durability[i] = 1
 		}
 		state.Durability[cells[missing]] = 0
-		terrain, count = mapArtWallVertex(&state, 1, 1)
+		terrain, count = mapArtWallVertex(&state, 1, 1, mapJoinWall)
 		if count != 3 || mapArtSolid(terrain[missing]) {
 			t.Fatalf("destroyed wall did not expose L orientation %d", missing)
 		}

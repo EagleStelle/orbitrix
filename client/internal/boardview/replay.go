@@ -52,12 +52,12 @@ func (v *view) Place(cell int, p int8) []core.TerrainEvent {
 }
 
 // launch takes one orb per connection out of every cell in w; a Reservoir keeps
-// its reserve. The launched orbs are in flight until land.
+// its reserve. The launched orbs are in flight until land; those aimed at Holes never land.
 func (v *view) Launch(w core.Wave) {
 	v.from = v.from[:0]
 	for _, e := range w {
 		v.from = append(v.from, v.Owner[e])
-		v.Count[e] -= v.Geo.Degree[e]
+		v.Count[e] -= uint8(len(v.Geo.Targets(int(e))))
 		if v.Count[e] == 0 {
 			v.Owner[e] = core.NoOwner
 		}
