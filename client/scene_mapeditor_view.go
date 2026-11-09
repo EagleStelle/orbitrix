@@ -589,7 +589,7 @@ func (e *mapEditor) drawPace(dst *ebiten.Image, a *app) {
 		ui.FillPill(dst, seg, fill)
 		ui.DrawText(dst, paceNames[p], face, seg.Cx(), labelY, text.AlignCenter, ink)
 	}
-	// Lengths run from about 75 (a board packed with Factories) up; Instant is set by moves, so its knob stays centred.
+	// Lengths run from about 75 (a board packed with Furnaces) up; Instant is set by moves, so its knob stays centred.
 	limits := [...]float64{75, float64(core.PaceLimits[0]), float64(core.PaceLimits[1]), float64(core.PaceLimits[2]), 4 * float64(core.PaceLimits[2])}
 	t := .5
 	if e.pace != core.Instant {

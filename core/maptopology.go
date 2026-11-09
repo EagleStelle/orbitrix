@@ -20,7 +20,7 @@ type topologyEntry struct {
 type mapTopology struct {
 	switches, walls []int16
 	barriers        []int16
-	makers          []int16 // Factories and Crushers, which act after their owner's move
+	makers          []int16 // Furnaces and Crushers, which act after their owner's move
 	reservoirs      []int16
 	pairs           []int16
 	mu              sync.Mutex

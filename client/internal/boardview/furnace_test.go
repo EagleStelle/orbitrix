@@ -7,12 +7,12 @@ import (
 	"orbitrix/core"
 )
 
-// TestFactoryPlaybackMatchesGame plays random games on a map with Factories and Crushers and checks that the board's
-// playback, including the step where the mover's Factories and Crushers run, ends exactly on the game's state.
-func TestFactoryPlaybackMatchesGame(t *testing.T) {
+// TestFurnacePlaybackMatchesGame plays random games on a map with Furnaces and Crushers and checks that the board's
+// playback, including the step where the mover's Furnaces and Crushers run, ends exactly on the game's state.
+func TestFurnacePlaybackMatchesGame(t *testing.T) {
 	m := core.NewMap(5, 5)
 	for _, i := range []int{2, 12, 18} {
-		m.Cells[i].Feature = core.Factory
+		m.Cells[i].Feature = core.Furnace
 	}
 	m.Cells[22].Feature, m.Cells[6].Feature = core.Crusher, core.Crusher
 	produced, crushed := false, false
@@ -47,13 +47,13 @@ func TestFactoryPlaybackMatchesGame(t *testing.T) {
 		}
 	}
 	if !produced || !crushed {
-		t.Fatal("random play never ran a Factory or never crushed an orb")
+		t.Fatal("random play never ran a Furnace or never crushed an orb")
 	}
 }
 
 func TestCrusherEmptiesToNeutralInk(t *testing.T) {
 	m := core.NewMap(5, 5)
-	m.Cells[22].Feature, m.Cells[12].Feature = core.Crusher, core.Factory
+	m.Cells[22].Feature, m.Cells[12].Feature = core.Crusher, core.Furnace
 	g, err := core.NewGameWithMap(m, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestCrusherEmptiesToNeutralInk(t *testing.T) {
 	v.Owner[22], v.Count[22] = 0, 1
 	v.Owner[12], v.Count[12] = 0, 1
 	if made, crushed := v.Produce(0, nil); made || len(crushed) != 0 || v.Count[22] != 1 || v.Count[12] != 1 {
-		t.Fatal("Factories and Crushers must skip their first turn")
+		t.Fatal("Furnaces and Crushers must skip their first turn")
 	}
 	v.Owner[12], v.Count[12] = core.NoOwner, 0 // leave only the Crusher
 	revision := v.revision

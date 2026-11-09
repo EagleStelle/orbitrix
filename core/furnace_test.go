@@ -5,24 +5,24 @@ import (
 	"testing"
 )
 
-// factoryMap is a 5×5 board with Factories on the left edge and at the centre, and a Crusher on the right edge.
-func factoryMap() MapDefinition {
+// furnaceMap is a 5×5 board with Furnaces on the left edge and at the centre, and a Crusher on the right edge.
+func furnaceMap() MapDefinition {
 	m := NewMap(5, 5)
-	m.Name = "Factories"
-	m.Cells[2].Feature = Factory
-	m.Cells[12].Feature = Factory
+	m.Name = "Furnaces"
+	m.Cells[2].Feature = Furnace
+	m.Cells[12].Feature = Furnace
 	m.Cells[22].Feature = Crusher
 	return m
 }
 
-func newFactoryGame(t *testing.T) *Game {
+func newFurnaceGame(t *testing.T) *Game {
 	t.Helper()
-	m := factoryMap()
+	m := furnaceMap()
 	if issues := m.Validate(); len(issues) != 0 {
 		t.Fatal(issues)
 	}
 	if m.Capacity(2) != 3 || m.Capacity(12) != 4 || m.Capacity(22) != 3 {
-		t.Fatal("Factories and Crushers must keep the normal capacity")
+		t.Fatal("Furnaces and Crushers must keep the normal capacity")
 	}
 	g, err := NewGameWithMap(m, 2)
 	if err != nil {
@@ -31,47 +31,47 @@ func newFactoryGame(t *testing.T) *Game {
 	return g
 }
 
-func TestFactoryProducesForItsOwnerUntilItPops(t *testing.T) {
-	g := newFactoryGame(t)
+func TestFurnaceProducesForItsOwnerUntilItPops(t *testing.T) {
+	g := newFurnaceGame(t)
 	steps := []struct {
-		cell, factory int
+		cell, furnace int
 		produced      bool
 	}{
-		{12, 1, true}, // a: the placed orb; the Factory skips its first turn
-		{6, 1, false}, // b owns no Factory
-		{20, 2, true}, // a moves elsewhere and the Factory makes one
+		{12, 1, true}, // a: the placed orb; the Furnace skips its first turn
+		{6, 1, false}, // b owns no Furnace
+		{20, 2, true}, // a moves elsewhere and the Furnace makes one
 		{7, 2, false}, // b
 		{21, 3, true}, // a
 		{8, 3, false}, // b
-		{23, 0, true}, // a: the Factory reaches capacity and explodes, capturing b's cell 7
+		{23, 0, true}, // a: the Furnace reaches capacity and explodes, capturing b's cell 7
 	}
 	for i, s := range steps {
 		waves := mustApply(t, g, s.cell)
 		checkTallies(t, g)
-		if g.Count[12] != uint8(s.factory) || (g.ProducedAt >= 0) != s.produced {
-			t.Fatalf("step %d: Factory %d orbs, produced at %d", i, g.Count[12], g.ProducedAt)
+		if g.Count[12] != uint8(s.furnace) || (g.ProducedAt >= 0) != s.produced {
+			t.Fatalf("step %d: Furnace %d orbs, produced at %d", i, g.Count[12], g.ProducedAt)
 		}
-		if working := MakerWorking(g.Pressed[12], g.Owner[12]); working != (i >= 2 && s.factory > 0) {
-			t.Fatalf("step %d: Factory working=%v", i, working)
+		if working := MakerWorking(g.Pressed[12], g.Owner[12]); working != (i >= 2 && s.furnace > 0) {
+			t.Fatalf("step %d: Furnace working=%v", i, working)
 		}
 		if i == len(steps)-1 && (g.ProducedAt != 0 || len(waves) != 1 || !slices.Equal(waves[0], Wave{12})) {
-			t.Fatalf("the Factory's chain must follow the move: produced at %d, waves %v", g.ProducedAt, waves)
+			t.Fatalf("the Furnace's chain must follow the move: produced at %d, waves %v", g.ProducedAt, waves)
 		}
 	}
 	if g.Owner[12] != NoOwner || g.Pressed[12] != 0 || g.Owner[7] != 0 || g.Orbs[1] != 2 {
-		t.Fatal("a popped Factory must turn neutral, start over and its chain capture as usual")
+		t.Fatal("a popped Furnace must turn neutral, start over and its chain capture as usual")
 	}
 	if total(g) != g.Moves+3 {
 		t.Fatalf("%d orbs after %d moves and 3 made", total(g), g.Moves)
 	}
 	if err := g.Pass(); err != nil || total(g) != g.Moves+3 {
-		t.Fatal("a Pass is not a move and must not run Factories")
+		t.Fatal("a Pass is not a move and must not run Furnaces")
 	}
 }
 
-// A Factory or Crusher that pops empty and is refilled by its holder in the same move keeps working.
+// A Furnace or Crusher that pops empty and is refilled by its holder in the same move keeps working.
 func TestMakerRefilledByItsHolderKeepsWorking(t *testing.T) {
-	for f, want := range map[Feature]uint8{Factory: 3, Crusher: 1} {
+	for f, want := range map[Feature]uint8{Furnace: 3, Crusher: 1} {
 		m := NewMap(5, 5)
 		m.Cells[12].Feature = f
 		g, err := NewGameWithMap(m, 2)
@@ -94,8 +94,8 @@ func TestMakerRefilledByItsHolderKeepsWorking(t *testing.T) {
 	}
 }
 
-func TestFactoryAndCrusherNeedCapacityThree(t *testing.T) {
-	for _, f := range []Feature{Factory, Crusher} {
+func TestFurnaceAndCrusherNeedCapacityThree(t *testing.T) {
+	for _, f := range []Feature{Furnace, Crusher} {
 		for _, tc := range []struct {
 			cell  int
 			walls []int
@@ -119,7 +119,7 @@ func TestFactoryAndCrusherNeedCapacityThree(t *testing.T) {
 }
 
 func TestCrusherTakesOneUntilEmpty(t *testing.T) {
-	g := newFactoryGame(t)
+	g := newFurnaceGame(t)
 	mustApply(t, g, 6)
 	mustApply(t, g, 16)
 	// Give a three orbs on the Crusher, as a chain would.
@@ -138,7 +138,7 @@ func TestCrusherTakesOneUntilEmpty(t *testing.T) {
 }
 
 func TestCrusherSkipsItsFirstMeal(t *testing.T) {
-	g := newFactoryGame(t)
+	g := newFurnaceGame(t)
 	mustApply(t, g, 22) // a's first orb survives the move it was placed
 	if g.Count[22] != 1 || g.Owner[22] != 0 || MakerWorking(g.Pressed[22], 0) {
 		t.Fatal("a Crusher must not eat on the move it becomes someone's")
@@ -166,7 +166,7 @@ func TestCrusherSkipsItsFirstMeal(t *testing.T) {
 }
 
 func TestRestoreChecksCrusherState(t *testing.T) {
-	g := newFactoryGame(t)
+	g := newFurnaceGame(t)
 	mustApply(t, g, 22)
 	for _, state := range []uint8{makerWorking, 3, 32} {
 		s := g.Snapshot()
@@ -186,15 +186,15 @@ func TestRestoreChecksCrusherState(t *testing.T) {
 	}
 }
 
-func TestFactoryRandomPlay(t *testing.T) {
-	m := factoryMap()
-	m.Cells[6].Feature, m.Cells[18].Feature = Crusher, Factory
+func TestFurnaceRandomPlay(t *testing.T) {
+	m := furnaceMap()
+	m.Cells[6].Feature, m.Cells[18].Feature = Crusher, Furnace
 	encoded, err := EncodeMap(m)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if decoded, err := DecodeMap(encoded); err != nil || !slices.Equal(decoded.Cells, m.Cells) {
-		t.Fatalf("Factories and Crushers did not survive the map codec: %v", err)
+		t.Fatalf("Furnaces and Crushers did not survive the map codec: %v", err)
 	}
 	ran, chained := false, false
 	for seed := uint64(1); seed <= 20; seed++ {
@@ -225,6 +225,6 @@ func TestFactoryRandomPlay(t *testing.T) {
 		}
 	}
 	if !ran || !chained {
-		t.Fatal("random play never ran a Factory or never popped one")
+		t.Fatal("random play never ran a Furnace or never popped one")
 	}
 }

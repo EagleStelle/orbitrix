@@ -141,41 +141,41 @@ func TestEstimate(t *testing.T) {
 		}
 		last = moves
 	}
-	// Factories make up for Holes, less when a Hole is beside them.
+	// Furnaces make up for Holes, less when a Hole is beside them.
 	endless := column(9, 7)
 	away, beside := endless.Clone(), endless.Clone()
-	away.Cells[10].Feature, beside.Cells[3*9].Feature = Factory, Factory
+	away.Cells[10].Feature, beside.Cells[3*9].Feature = Furnace, Furnace
 	movesAway, _, paceAway := away.Estimate()
 	movesBeside, _, paceBeside := beside.Estimate()
 	if paceAway != Slow || paceBeside != Slow || movesAway >= movesBeside {
-		t.Fatalf("Factory away %d %v, beside %d %v", movesAway, paceAway, movesBeside, paceBeside)
+		t.Fatalf("Furnace away %d %v, beside %d %v", movesAway, paceAway, movesBeside, paceBeside)
 	}
-	// A 9×9 packed with Factories is fast, never instant; a 4×4 can be.
+	// A 9×9 packed with Furnaces is fast, never instant; a 4×4 can be.
 	packed := NewMap(9, 9)
 	for c := 1; c < 8; c++ {
 		for r := 1; r < 8; r++ {
-			packed.Cells[c*9+r].Feature = Factory
+			packed.Cells[c*9+r].Feature = Furnace
 		}
 	}
 	if moves, _, pace := packed.Estimate(); pace != Fast || moves < 20 || marked(packed) != nil {
-		t.Fatalf("49 Factories on 9×9: %d moves %v", moves, pace)
+		t.Fatalf("49 Furnaces on 9×9: %d moves %v", moves, pace)
 	}
 	tiny := NewMap(4, 4)
-	var edges []int // Factories need capacity three, so not the corners
+	var edges []int // Furnaces need capacity three, so not the corners
 	for i := range tiny.Cells {
 		if tiny.Capacity(i) >= 3 {
 			edges = append(edges, i)
 		}
 	}
 	for _, i := range edges[:10] {
-		tiny.Cells[i].Feature = Factory
+		tiny.Cells[i].Feature = Furnace
 	}
 	if moves, _, pace := tiny.Estimate(); pace != Fast || moves != 10 || marked(tiny) != nil {
-		t.Fatalf("10 Factories on 4×4: %d moves %v", moves, pace)
+		t.Fatalf("10 Furnaces on 4×4: %d moves %v", moves, pace)
 	}
-	tiny.Cells[edges[10]].Feature = Factory
+	tiny.Cells[edges[10]].Feature = Furnace
 	if moves, _, pace := tiny.Estimate(); pace != Instant || moves != 9 || !slices.Equal(marked(tiny), edges[:11]) {
-		t.Fatalf("11 Factories on 4×4: %d moves %v, marked %v", moves, pace, marked(tiny))
+		t.Fatalf("11 Furnaces on 4×4: %d moves %v, marked %v", moves, pace, marked(tiny))
 	}
 	// Reservoirs count the same on every board size, like the other pieces.
 	var lengths [2]int

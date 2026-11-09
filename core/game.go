@@ -31,7 +31,7 @@ type Game struct {
 	CircuitOn      [256]bool // polarity: outputs reverse their individual starting states
 	Pressed        []uint8
 	TerrainEvents  []TerrainEvent // events in the last recorded move
-	// ProducedAt counts the waves of the last recorded move before the mover's Factories and Crushers ran; -1 when
+	// ProducedAt counts the waves of the last recorded move before the mover's Furnaces and Crushers ran; -1 when
 	// the mover owned none.
 	ProducedAt int
 	topology   *mapTopology // immutable designs and bounded, shared connection tables
@@ -234,11 +234,11 @@ func ReservoirMakes(state uint8) (bool, uint8) {
 	return state&ReservoirMade == 0, state | ReservoirMade
 }
 
-// makerWorking marks a Factory's or Crusher's Pressed byte once it has worked for the holder in its low bits
+// makerWorking marks a Furnace's or Crusher's Pressed byte once it has worked for the holder in its low bits
 // (player+1). Any other holder, or 0 after a move leaves it empty, makes it skip its next turn.
 const makerWorking uint8 = 16
 
-// MakerTurn returns a Factory's or Crusher's next state after its holder p moves, and whether it works now: it skips
+// MakerTurn returns a Furnace's or Crusher's next state after its holder p moves, and whether it works now: it skips
 // its first turn after changing hands or after a move left it empty.
 func MakerTurn(state uint8, p int8) (uint8, bool) {
 	if state&^makerWorking != uint8(p+1) {
@@ -247,13 +247,13 @@ func MakerTurn(state uint8, p int8) (uint8, bool) {
 	return uint8(p+1) | makerWorking, true
 }
 
-// MakerWorking reports whether a Factory or Crusher in state with this owner has started working for them.
+// MakerWorking reports whether a Furnace or Crusher in state with this owner has started working for them.
 func MakerWorking(state uint8, owner int8) bool {
 	return owner != NoOwner && state == uint8(owner+1)|makerWorking
 }
 
-// produce runs the mover's Factories and Crushers once their move has settled, after each skips its first turn:
-// each Factory they own gains an orb and each Crusher loses one, turning neutral when empty. Factories that reach
+// produce runs the mover's Furnaces and Crushers once their move has settled, after each skips its first turn:
+// each Furnace they own gains an orb and each Crusher loses one, turning neutral when empty. Furnaces that reach
 // capacity explode as a further chain numbered from wave.
 func (g *Game) produce(p int8, record bool, wave int) {
 	g.cur = g.cur[:0]
@@ -289,7 +289,7 @@ func (g *Game) produce(p int8, record bool, wave int) {
 	if record {
 		g.ProducedAt = wave
 	}
-	if g.unstable { // the move's chain hit the wave limit: its leftover cells explode with the Factories
+	if g.unstable { // the move's chain hit the wave limit: its leftover cells explode with the Furnaces
 		g.cur = g.cur[:0]
 		for i, n := range g.Count {
 			if g.Geo.Playable(i) && n >= g.Geo.Cap[i] {
@@ -300,7 +300,7 @@ func (g *Game) produce(p int8, record bool, wave int) {
 	g.resolve(record, wave) // also ends the game if a Crusher took the mover's last orb
 }
 
-// settleMakers resets every Factory and Crusher the move left empty, so whoever fills it next, its last holder
+// settleMakers resets every Furnace and Crusher the move left empty, so whoever fills it next, its last holder
 // included, skips a first turn. One that popped or was crushed empty and then refilled by its holder in the same move
 // keeps working; a different player's orbs already make it skip.
 func (g *Game) settleMakers() {
@@ -369,7 +369,7 @@ func (g *Game) explode() {
 		}
 		switch {
 		case g.Count[e] == 0:
-			g.Owner[e] = NoOwner // a Factory or Crusher keeps its state until the move settles
+			g.Owner[e] = NoOwner // a Furnace or Crusher keeps its state until the move settles
 		case g.Count[e] >= geo.Cap[e]:
 			g.next = append(g.next, e)
 		}

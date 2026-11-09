@@ -90,7 +90,7 @@ type Board struct {
 	Playing   bool
 	settling  bool // a completing Landfill fall finishes before the next wave or turn
 	mover     int8
-	produceAt int // waves shown before the mover's Factories and Crushers run; -1 once they have
+	produceAt int // waves shown before the mover's Furnaces and Crushers run; -1 once they have
 	crushed   []int16
 	tailCap   float64 // see waveTicks
 	skipCap   float64 // 0 until the player skips
@@ -262,14 +262,14 @@ func (b *Board) Bounds() ui.Rect {
 }
 
 // start shows a move: mover's orb lands in cell, then waves (from core.Game.Apply) play out, with the mover's
-// Factories and Crushers running after produceAt of them (core.Game.ProducedAt). snd may be nil.
+// Furnaces and Crushers running after produceAt of them (core.Game.ProducedAt). snd may be nil.
 func (b *Board) Start(cell int, mover int8, waves []core.Wave, produceAt int, snd *sound.Sound) {
 	effects := b.State.terrainSounds(b.State.Place(cell, mover))
 	b.Waves, b.Wave, b.t, b.Playing = waves, -1, 0, true
 	b.settling = false
 	b.mover, b.produceAt = mover, produceAt
 	b.tailCap, b.skipCap = tailCap(len(waves)), 0
-	_, produced := b.next() // a Factory's orb made now shares the placement note
+	_, produced := b.next() // a Furnace's orb made now shares the placement note
 	snd.Place(int(mover), effects|produced|b.linkSound())
 }
 
@@ -281,8 +281,8 @@ func (b *Board) Sync(g *core.Game) {
 	b.landfillDurability = append(b.landfillDurability[:0], g.Durability...)
 }
 
-// next runs the mover's Factories and Crushers at once when their turn comes, then launches the following wave or
-// ends playback. It reports whether a Factory made an orb, and the cues of crushed ones.
+// next runs the mover's Furnaces and Crushers at once when their turn comes, then launches the following wave or
+// ends playback. It reports whether a Furnace made an orb, and the cues of crushed ones.
 func (b *Board) next() (made bool, effects sound.Effects) {
 	if b.produceAt == b.Wave+1 {
 		b.produceAt = -1
@@ -423,7 +423,7 @@ func (b *Board) stepSound(snd *sound.Sound, made bool, effects sound.Effects) {
 	}
 }
 
-// produce runs the mover's Factories and Crushers; each crushed orb shrinks and fades like one lost in a Hole.
+// produce runs the mover's Furnaces and Crushers; each crushed orb shrinks and fades like one lost in a Hole.
 func (b *Board) produce() (made bool, effects sound.Effects) {
 	made, crushed := b.State.Produce(b.mover, b.crushed[:0])
 	b.crushed = crushed

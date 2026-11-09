@@ -102,8 +102,8 @@ func (v *view) Land(w core.Wave) []core.TerrainEvent {
 	return events
 }
 
-// Produce runs the mover's Factories and Crushers as core.Game does after the move's first chain. It reports whether a
-// Factory made an orb and appends each Crusher that lost one to crushed.
+// Produce runs the mover's Furnaces and Crushers as core.Game does after the move's first chain. It reports whether a
+// Furnace made an orb and appends each Crusher that lost one to crushed.
 func (v *view) Produce(p int8, crushed []int16) (bool, []int16) {
 	made := false
 	for i, c := range v.Replay.Map.Cells {
@@ -131,7 +131,7 @@ func (v *view) Produce(p int8, crushed []int16) (bool, []int16) {
 	return made, crushed
 }
 
-// settle resets the Factories and Crushers the move left empty, as core.Game does once a move settles.
+// settle resets the Furnaces and Crushers the move left empty, as core.Game does once a move settles.
 func (v *view) settle() {
 	if v.Replay == nil {
 		return

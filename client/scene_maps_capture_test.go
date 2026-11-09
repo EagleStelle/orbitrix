@@ -64,7 +64,7 @@ var mapCaptureCases = []mapCaptureCase{
 	{"hole-mobile-dark", 390, 844, true, false, false, "", brushHole},
 	{"spillway-desktop", 1040, 640, false, false, false, "", brushSpillway},
 	{"spillway-mobile-dark", 390, 844, true, false, false, "", brushSpillway},
-	{"factory-desktop", 1040, 640, false, false, false, "", brushFactory},
+	{"furnace-desktop", 1040, 640, false, false, false, "", brushFurnace},
 	{"crusher-mobile-dark", 390, 844, true, false, false, "", brushCrusher},
 	{"breakable-barrier-desktop", 1040, 640, false, false, false, "", brushBreakBarrier},
 	{"breakable-barrier-mobile", 390, 844, true, false, false, "", brushBreakBarrier},
@@ -87,8 +87,8 @@ var mapCaptureCases = []mapCaptureCase{
 	{"pace-slow-desktop", 1040, 640, false, false, false, "pace-slow", brushHole},
 	{"pace-endless-mobile-dark", 390, 844, true, false, false, "pace-endless", brushHole},
 	{"pace-endless-desktop", 1040, 640, false, false, false, "pace-endless", brushHole},
-	{"pace-instant-landscape", 568, 320, false, false, false, "pace-instant", brushFactory},
-	{"pace-fast-small", 320, 640, false, false, false, "pace-fast", brushFactory},
+	{"pace-instant-landscape", 568, 320, false, false, false, "pace-instant", brushFurnace},
+	{"pace-fast-small", 320, 640, false, false, false, "pace-fast", brushFurnace},
 	{"editor-overflow-end", 320, 640, true, false, false, "overflow-end", brushHold},
 	{"wall-corners-light", 1250, 700, false, false, false, "wall-corners", brushFloor},
 	{"wall-corners-dark", 1250, 700, true, false, false, "wall-corners", brushFloor},
@@ -169,7 +169,7 @@ func editorShowcaseMap() core.MapDefinition {
 	m.Cells[2*m.Rows+7] = core.MapCell{Circuit: core.Hold, Group: 3}
 	m.Cells[8*m.Rows+8].Feature = core.Reservoir
 	m.Cells[9*m.Rows+8].Feature = core.Spillway
-	m.Cells[10*m.Rows+9].Feature = core.Factory
+	m.Cells[10*m.Rows+9].Feature = core.Furnace
 	m.Cells[11*m.Rows+9].Feature = core.Crusher
 	m.Cells[6*m.Rows+3] = core.MapCell{Circuit: core.Toggle, Group: 1}
 	m.Cells[8*m.Rows+2] = core.MapCell{Circuit: core.Door, Group: 1}
@@ -245,7 +245,7 @@ func drawArtStates(dst *ebiten.Image, a *app) {
 		}
 	}
 	m := core.NewMap(3, 3)
-	for row, feature := range []core.Feature{core.Reservoir, core.Spillway, core.Factory, core.Crusher} {
+	for row, feature := range []core.Feature{core.Reservoir, core.Spillway, core.Furnace, core.Crusher} {
 		m.Cells[0].Feature = feature
 		for i, owner := range []int8{core.NoOwner, 0, 1} {
 			state := boardview.MapState{Map: &m, Owner: []int8{owner}, Count: []uint8{1}}
@@ -447,7 +447,7 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 			e.name.set("A long custom map title being edited")
 			e.name.focused = true
 		}
-		if holes, factories, ok := paceCapture(c.mode); ok {
+		if holes, furnaces, ok := paceCapture(c.mode); ok {
 			e.m = core.NewMap(13, 11)
 			if c.mode == "pace-instant" {
 				e.m = core.NewMap(4, 4) // only a tiny board can be instant
@@ -456,9 +456,9 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 				e.m.Cells[6*11+r].Terrain = core.Hole
 			}
 			for i := range e.m.Cells {
-				if factories > 0 && e.m.Capacity(i) >= 3 && e.m.Cells[i].Terrain == core.Floor {
-					e.m.Cells[i].Feature = core.Factory
-					factories--
+				if furnaces > 0 && e.m.Capacity(i) >= 3 && e.m.Cells[i].Terrain == core.Floor {
+					e.m.Cells[i].Feature = core.Furnace
+					furnaces--
 				}
 			}
 			e.changed()
@@ -775,8 +775,8 @@ func TestCaptureMaps(t *testing.T) {
 	}
 }
 
-// paceCapture gives each pace strip capture its middle-column Holes and Factories; Instant uses a 4×4 board.
-func paceCapture(mode string) (holes, factories int, ok bool) {
+// paceCapture gives each pace strip capture its middle-column Holes and Furnaces; Instant uses a 4×4 board.
+func paceCapture(mode string) (holes, furnaces int, ok bool) {
 	switch mode {
 	case "pace-slow":
 		return 5, 0, true

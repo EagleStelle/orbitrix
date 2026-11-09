@@ -16,7 +16,7 @@ func TestPaceFit(t *testing.T) {
 	if os.Getenv("ORBITRIX_PACE") != "1" {
 		t.Skip("set ORBITRIX_PACE=1 to measure game lengths")
 	}
-	pieces := []core.MapCell{{Terrain: core.Hole}, {Terrain: core.BreakableFloor}, {Feature: core.Spillway}, {Feature: core.Crusher}, {Feature: core.Factory}, {Feature: core.Reservoir}}
+	pieces := []core.MapCell{{Terrain: core.Hole}, {Terrain: core.BreakableFloor}, {Feature: core.Spillway}, {Feature: core.Crusher}, {Feature: core.Furnace}, {Feature: core.Reservoir}}
 	for _, size := range []int{9, 15} {
 		empty := paceMoves(core.NewMap(size, size))
 		t.Logf("%d×%d empty: %.0f moves", size, size, empty)

@@ -24,13 +24,13 @@ func TestBotsOnCustomMaps(t *testing.T) {
 	spillways := core.NewMap(5, 5)
 	spillways.Name = "Spillways"
 	spillways.Cells[12].Feature, spillways.Cells[0].Feature = core.Spillway, core.Spillway
-	factories := core.NewMap(5, 5)
-	factories.Name = "Factories and Crushers"
-	factories.Cells[12].Feature, factories.Cells[2].Feature, factories.Cells[22].Feature = core.Factory, core.Factory, core.Crusher
+	furnaces := core.NewMap(5, 5)
+	furnaces.Name = "Furnaces and Crushers"
+	furnaces.Cells[12].Feature, furnaces.Cells[2].Feature, furnaces.Cells[22].Feature = core.Furnace, core.Furnace, core.Crusher
 	reservoirs := core.NewMap(5, 5)
 	reservoirs.Name = "Reservoirs"
 	reservoirs.Cells[12].Feature, reservoirs.Cells[7].Feature, reservoirs.Cells[2].Feature = core.Reservoir, core.Reservoir, core.Reservoir
-	for _, m := range append(core.StarterMaps(), barriers, portals, holes, landfills, floors, spillways, factories, reservoirs) {
+	for _, m := range append(core.StarterMaps(), barriers, portals, holes, landfills, floors, spillways, furnaces, reservoirs) {
 		t.Run(m.Name, func(t *testing.T) {
 			g, err := core.NewGameWithMap(m, 3)
 			if err != nil {
@@ -94,10 +94,10 @@ func TestSlowestValidMapEnds(t *testing.T) {
 	}
 }
 
-// deviceMap has Factories, Crushers and a Latch whose Gate changes capacities.
+// deviceMap has Furnaces, Crushers and a Latch whose Gate changes capacities.
 func deviceMap() core.MapDefinition {
 	m := core.NewMap(5, 5)
-	m.Cells[12].Feature, m.Cells[2].Feature = core.Factory, core.Factory
+	m.Cells[12].Feature, m.Cells[2].Feature = core.Furnace, core.Furnace
 	m.Cells[10].Feature, m.Cells[22].Feature = core.Crusher, core.Crusher
 	m.Cells[6].Circuit, m.Cells[6].Group = core.Latch, 1
 	m.Edges = []core.MapEdge{{A: 16, B: 17, Kind: core.Gate, Group: 1}}

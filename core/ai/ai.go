@@ -74,8 +74,8 @@ type Bot struct {
 	rng  core.RNG
 	left int   // budget units left this move
 	boom int   // explosions not yet charged (under unitExplosions)
-	made int32 // orbs our working Factories make minus those our Crushers eat after any move
-	pops bool  // one of our working Factories explodes after any move
+	made int32 // orbs our working Furnaces make minus those our Crushers eat after any move
+	pops bool  // one of our working Furnaces explodes after any move
 
 	sim   core.Game
 	moves []int
@@ -185,13 +185,13 @@ func (b *Bot) tally(cell int) (t [core.MaxPlayers]int32, ok bool) {
 	t = b.g.Orbs
 	quiet := !b.primed(cell) && !b.pops
 	if m := b.g.Map; quiet && m != nil {
-		// A switch can change capacities; our working Factory gains the placed orb and then its own.
+		// A switch can change capacities; our working Furnace gains the placed orb and then its own.
 		f := m.Cells[cell]
 		quiet = !f.Circuit.IsSwitch() &&
-			!(f.Feature == core.Factory && works(b.g.Pressed[cell], b.me) && b.count(cell)+2 >= b.capacity(cell))
+			!(f.Feature == core.Furnace && works(b.g.Pressed[cell], b.me) && b.count(cell)+2 >= b.capacity(cell))
 	}
 	if quiet {
-		// Nothing explodes, so the outcome is known without simulating: our orb plus what our Factories and Crushers
+		// Nothing explodes, so the outcome is known without simulating: our orb plus what our Furnaces and Crushers
 		// do. shortcut: ignores cells left over capacity by a chain cut at core.MaxWaves, which resolve on the next
 		// move; harmless for scoring.
 		t[b.me] += 1 + b.made
@@ -204,13 +204,13 @@ func (b *Bot) tally(cell int) (t [core.MaxPlayers]int32, ok bool) {
 	return b.sim.Orbs, true
 }
 
-// works reports whether a Factory or Crusher in state acts after its holder p's next move.
+// works reports whether a Furnace or Crusher in state acts after its holder p's next move.
 func works(state uint8, p int8) bool {
 	_, w := core.MakerTurn(state, p)
 	return w
 }
 
-// production sets made and pops from the mover's Factories and Crushers that act after this move; the rest skip it.
+// production sets made and pops from the mover's Furnaces and Crushers that act after this move; the rest skip it.
 func (b *Bot) production() {
 	b.made, b.pops = 0, false
 	g := b.g
@@ -240,7 +240,7 @@ func wasted(g *core.Game, i int, p int8) bool {
 	return c+1 < cp && (works(g.Pressed[i], p) || c+2 < cp)
 }
 
-// pull orders p's search candidates on maps: claim empty Factories, which pay their holder an orb every move, and
+// pull orders p's search candidates on maps: claim empty Furnaces, which pay their holder an orb every move, and
 // leave wasted Crusher moves for last.
 func pull(g *core.Game, i int, p int8) int {
 	switch {
@@ -248,7 +248,7 @@ func pull(g *core.Game, i int, p int8) int {
 		return 0
 	case wasted(g, i, p):
 		return -100
-	case g.Map.Cells[i].Feature == core.Factory && g.Owner[i] == core.NoOwner:
+	case g.Map.Cells[i].Feature == core.Furnace && g.Owner[i] == core.NoOwner:
 		return 24
 	}
 	return 0

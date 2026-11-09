@@ -29,12 +29,12 @@ const (
 	Reservoir // takes one extra orb to explode, throws it along its arrow and makes a new one
 	Portal
 	Spillway // takes one extra orb to explode and loses it, like one sent into a Hole
-	Factory  // gains an orb after each of its owner's moves
+	Furnace  // gains an orb after each of its owner's moves
 	Crusher  // loses an orb after each of its owner's moves
 )
 
 // IsMaker reports whether f acts after its holder's moves.
-func (f Feature) IsMaker() bool { return f == Factory || f == Crusher }
+func (f Feature) IsMaker() bool { return f == Furnace || f == Crusher }
 
 const MaxMapGroups = MaxPlayers
 
@@ -42,7 +42,7 @@ const MaxMapGroups = MaxPlayers
 type Pace uint8
 
 const (
-	Instant Pace = iota // Factories end games within a few turns
+	Instant Pace = iota // Furnaces end games within a few turns
 	Fast
 	Normal
 	Slow
@@ -52,7 +52,7 @@ const (
 // PaceLimits are the game lengths, in thousandths of an empty board's, where Normal, Slow and Endless begin.
 var PaceLimits = [3]int{750, 1500, 2500}
 
-// instantMoves is the estimate under which Factories make a game instant: about five turns each for two players.
+// instantMoves is the estimate under which Furnaces make a game instant: about five turns each for two players.
 const instantMoves = 10
 
 // MapCell stores terrain, a passive feature or a circuit component. Link pairs,
@@ -447,8 +447,8 @@ func (m MapDefinition) Validate() []MapIssue {
 		switch capacity, f := m.Capacity(i), m.Cells[i].Feature; {
 		case capacity < 2:
 			issues = append(issues, MapIssue{Message: "Floor needs initial capacity of at least two", Cells: []int{i}})
-		case capacity < 3 && (f == Factory || f == Crusher):
-			issues = append(issues, MapIssue{Message: "Factories and Crushers need initial capacity of at least three", Cells: []int{i}})
+		case capacity < 3 && (f == Furnace || f == Crusher):
+			issues = append(issues, MapIssue{Message: "Furnaces and Crushers need initial capacity of at least three", Cells: []int{i}})
 		}
 	}
 	if first < 0 {
@@ -569,11 +569,11 @@ func (m MapDefinition) Validate() []MapIssue {
 	if _, _, pace := m.Estimate(); pace == Instant || pace == Endless {
 		issue := MapIssue{Message: "Too many Holes, Spillways and Crushers: games would never end"}
 		if pace == Instant {
-			issue.Message = "Too many Factories and Reservoirs: games would end almost at once"
+			issue.Message = "Too many Furnaces and Reservoirs: games would end almost at once"
 		}
 		for i, c := range m.Cells {
 			drains := c.Terrain == Hole || c.Feature == Spillway || c.Feature == Crusher
-			if pace == Instant && (c.Feature == Factory || c.Feature == Reservoir) || pace == Endless && drains {
+			if pace == Instant && (c.Feature == Furnace || c.Feature == Reservoir) || pace == Endless && drains {
 				issue.Cells = append(issue.Cells, i)
 			}
 		}
@@ -613,14 +613,14 @@ func (m MapDefinition) sealedByBreaking() []MapIssue {
 // Estimate predicts a game's average moves on the starting layout (0 when Endless), its length in thousandths of an
 // empty board's, and its pace. Bot games of 2 to 4 mixed seats fit it on 7×7 to 40×40 boards: an empty board lasts
 // about 0.75 moves per orb of room (what its Floor holds without exploding), and fills at the orb each move adds.
-// Each open Hole side, Spillway and Crusher loses part of it, the same on every board size. Factories add to it, each
-// a little less as they crowd, and less still beside a Hole, which they feed. More players make Factory maps longer,
-// since each Factory works only on its holder's turn. Reservoirs add to it too, less, as they make an orb only when
+// Each open Hole side, Spillway and Crusher loses part of it, the same on every board size. Furnaces add to it, each
+// a little less as they crowd, and less still beside a Hole, which they feed. More players make Furnace maps longer,
+// since each Furnace works only on its holder's turn. Reservoirs add to it too, less, as they make an orb only when
 // they explode. A Breakable Floor drains nothing, so it leaves the pace alone, but breaking into Void takes its room
 // and a route from each neighbor, about two thirds of the way into a game on average. Integers keep validation
 // identical on every device.
 func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
-	room, growth, factories, reservoirs, broken := 0, 1000, 0, 0, 0 // growth in thousandths of an empty board's
+	room, growth, furnaces, reservoirs, broken := 0, 1000, 0, 0, 0 // growth in thousandths of an empty board's
 	for i := range m.Cells {
 		if m.Cells[i].Terrain == Landfill {
 			room += 2 // a finite fill cost, not a permanent drain on growth
@@ -645,8 +645,8 @@ func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 			growth -= 35
 		case Crusher:
 			growth -= 80
-		case Factory:
-			factories++
+		case Furnace:
+			furnaces++
 			growth -= 30 * holes
 		case Reservoir:
 			if m.InitialOutlets(i) != 0 {
@@ -655,7 +655,7 @@ func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 		}
 	}
 	room -= broken * 2 / 3 // Breakable Floors break partway through a game
-	growth += 150 * 83 * factories / (83 + factories)
+	growth += 150 * 83 * furnaces / (83 + furnaces)
 	growth += 7600 * reservoirs / (300 + reservoirs)
 	length = math.MaxInt32
 	if growth > 0 {

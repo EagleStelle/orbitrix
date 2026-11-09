@@ -472,7 +472,7 @@ func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, g
 		for _, d := range [][2]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}} {
 			ui.Line(dst, x+d[0]*pocket.W/2, y+d[1]*pocket.H/2, x+d[0]*end, y+d[1]*end, width, sc.Dim)
 		}
-	case core.Factory:
+	case core.Furnace:
 		// Eight rays burst from the centre, where a new orb appears after each of its owner's moves.
 		for k := range 8 {
 			s, c := math.Sincos(float64(k) * math.Pi / 4)

@@ -32,13 +32,13 @@ func EncodeMap(m MapDefinition) ([]byte, error) {
 	payload = append(payload, byte(m.Cols), byte(m.Rows), byte(len(m.Name)))
 	payload = append(payload, m.Name...)
 	for _, c := range m.Cells {
-		// Keep legacy switch tags 3..5; Portal modes use 7..9, Spillway, Factory and Crusher 10..12, and bit 3
+		// Keep legacy switch tags 3..5; Portal modes use 7..9, Spillway, Furnace and Crusher 10..12, and bit 3
 		// stores the initial state.
 		component := byte(c.Feature)
 		switch c.Feature {
 		case Portal:
 			component = 7 + byte(c.PortalMode)
-		case Spillway, Factory, Crusher:
+		case Spillway, Furnace, Crusher:
 			component = 10 + byte(c.Feature-Spillway)
 		}
 		if c.Circuit != NoCircuit {

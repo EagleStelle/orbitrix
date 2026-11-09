@@ -18,9 +18,9 @@ Decisions that future changes have to respect, and why. How things work is in [a
   on their first explosion each move: per explosion, a chain that never settles (two colours recapturing each other
   until `MaxWaves`) would grow counts past their `uint8` range, and two Reservoirs could refill each other forever. Spillways add one to the threshold and
   one lost transfer into their own pit; a Spillway cannot also be a Link, so its targets fit `MaxConnections`.
-- Factories and Crushers act once per move, only for the mover, after the move's chain settles and before the turn
+- Furnaces and Crushers act once per move, only for the mover, after the move's chain settles and before the turn
   passes; a Pass runs neither. Ownership is the occupying orbs, never a separate field.
-  A Factory chain continues the move's wave numbering, and `Game.ProducedAt` tells playback where they acted.
+  A Furnace chain continues the move's wave numbering, and `Game.ProducedAt` tells playback where they acted.
   Each skips its first turn after changing hands or after a move leaves it empty. Emptiness is judged once the move
   settles, in core and in playback alike, so popping and being refilled by the same player keeps it working. That
   state lives in the cell's existing `Pressed` byte (holder+1, plus a working bit), so snapshots, the hash and the
@@ -39,7 +39,7 @@ Decisions that future changes have to respect, and why. How things work is in [a
   install their own replacement topology, and presentation replays explicit pressed/released and open/closed events
   at the same boundary. This prevents iteration order or animation timing from changing the rules.
 - Configured initial output states give every initially playable Floor capacity of at least two, including a Reservoir's or Spillway's extra orb, and
-  Breakable Walls require two initial Floor neighbors, keeping first placements non-explosive. Factories and
+  Breakable Walls require two initial Floor neighbors, keeping first placements non-explosive. Furnaces and
   Crushers need initial capacity three. Connectivity counts
   destroyed Breakable Walls and Gates whose controller shares a Floor group with either endpoint. Reachable Gates
   merge groups until no more circuits can connect them; permanently isolated Floor and circular Gate dependencies
@@ -47,16 +47,16 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - Holes and Spillways lose their orbs for good and never fill up; Crushers keep eating. Games end only when the board
   fills, so `MapDefinition.Estimate` predicts game length from a fit to bot games, and `Validate` refuses Instant
   and Endless. Each piece counts the same on every board size: the slowdown tracks how many there are, not their
-  share of the board. Factories offset the losses with diminishing returns, less beside a Hole, which they feed. Reservoirs do
+  share of the board. Furnaces offset the losses with diminishing returns, less beside a Hole, which they feed. Reservoirs do
   too, less, since they make an orb only when they explode. Breakable Floors drain nothing, so they leave the
   pace alone; breaking takes room, which only shortens the move count, and they break partway through a game. The
-  fit uses mixed 2–4 player lobbies of weak and strong bots: Factory maps run longer with more players and with
-  players who ignore Factories, and the editor can't know either. Instant is an absolute move count (Factories ending
-  games within about ten moves), not a share of an empty board, so short Factory games stay playable. It reads the
+  fit uses mixed 2–4 player lobbies of weak and strong bots: Furnace maps run longer with more players and with
+  players who ignore Furnaces, and the editor can't know either. Instant is an absolute move count (Furnaces ending
+  games within about ten moves), not a share of an empty board, so short Furnace games stay playable. It reads the
   starting layout only, in integers so every device validates alike. Fast and Slow stay playable.
 - Every map piece that adds, removes or delays orbs, or changes what counts as Floor or a Hole, needs its own term in
   `Estimate`, and in `Validate`'s Instant or Endless marking. Classify it first (a permanent drain like a Hole side,
-  a source like a Factory, a finite cost like filling a Landfill, or a delayed change like a Breakable Floor, weighed as
+  a source like a Furnace, a finite cost like filling a Landfill, or a delayed change like a Breakable Floor, weighed as
   what it becomes), then measure it with `TestPaceFit` (`ORBITRIX_PACE=1`) against Holes and an empty board, and set
   an integer weight per piece, never per share of the board. Guessed weights let validation pass maps whose games
   never end.
@@ -94,7 +94,7 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - Sovereign uses Tactician search on custom maps until its network can represent map topology; its existing
   rectangular pattern table cannot represent every map neighborhood or a fifth Link connection. Prodigy fully
   refreshes its network evaluation on custom maps so topology changes cannot leave cached features stale.
-- Bots see Factories and Crushers through exact outcomes and move order, not evaluation terms: Factory and Crusher
+- Bots see Furnaces and Crushers through exact outcomes and move order, not evaluation terms: Furnace and Crusher
   values in Tactician's and Voyager's evaluations made them weaker. The heuristic bots keep their personalities and
   only drop orbs a Crusher would eat.
 

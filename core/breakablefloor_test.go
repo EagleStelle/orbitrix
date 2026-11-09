@@ -97,7 +97,7 @@ func TestBreakableFloorValidationAndSharing(t *testing.T) {
 		})
 	}
 	m := breakableFloorMap()
-	m.Cells[12].Feature = Factory
+	m.Cells[12].Feature = Furnace
 	if !has(m, "Features need Floor", 12) {
 		t.Fatal("a feature on Breakable Floor must be refused")
 	}
