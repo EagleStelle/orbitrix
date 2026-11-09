@@ -16,6 +16,12 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - Map capacity is an explosion threshold; outgoing degree counts transfers. Reservoirs add one to the threshold
   without adding a transfer, so blasts preserve the reserve and total orbs. Spillways add one to the threshold and
   one lost transfer into their own pit; a Spillway cannot also be a Link, so its targets fit `MaxConnections`.
+- Factories and Crushers act once per move, only for the mover, after the move's chain settles and before the turn
+  passes; a Pass runs neither. Ownership is the occupying orbs, never a separate field.
+  A Factory chain continues the move's wave numbering, and `Game.ProducedAt` tells playback where they acted.
+  Each skips its first turn after changing hands or emptying. That state lives in the cell's existing `Pressed`
+  byte (holder+1, plus a working bit), so snapshots, the hash and the protocol carry it unchanged; a counter for a
+  longer grace would need a protocol change.
 - Latch responds to direct accepted placements and orb arrivals, never to exploding by itself. Latch stays
   pressed after its first input; Toggle flips on direct placement into an empty cell and once per receiving or
   exploding wave, regardless of arrival count. Direct placement into an occupied Toggle does not flip it by itself;
@@ -30,7 +36,8 @@ Decisions that future changes have to respect, and why. How things work is in [a
   install their own replacement topology, and presentation replays explicit pressed/released and open/closed events
   at the same boundary. This prevents iteration order or animation timing from changing the rules.
 - Configured initial output states give every initially playable Floor capacity of at least two, including a Reservoir's or Spillway's extra orb, and
-  Breakable Walls require two initial Floor neighbors, keeping first placements non-explosive. Connectivity counts
+  Breakable Walls require two initial Floor neighbors, keeping first placements non-explosive. Factories and
+  Crushers need initial capacity three. Connectivity counts
   destroyed Breakable Walls and Gates whose controller shares a Floor group with either endpoint. Reachable Gates
   merge groups until no more circuits can connect them; permanently isolated Floor and circular Gate dependencies
   remain invalid.

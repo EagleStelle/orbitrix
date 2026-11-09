@@ -28,7 +28,7 @@ func TestSpillwayReplayDropsItsExtraOrb(t *testing.T) {
 	if err != nil || len(waves) != 1 {
 		t.Fatalf("waves=%v err=%v", waves, err)
 	}
-	b.Start(12, 0, waves, nil)
+	b.Start(12, 0, waves, g.ProducedAt, nil)
 	b.falls = b.falls[:0]
 	for b.Playing {
 		b.Tick(nil)
@@ -55,7 +55,7 @@ func TestHoleReplayDropsWastedOrbs(t *testing.T) {
 		t.Fatalf("waves=%v err=%v", waves, err)
 	}
 	b.State.Events = g.TerrainEvents
-	b.Start(7, 0, waves, nil)
+	b.Start(7, 0, waves, g.ProducedAt, nil)
 	if got := b.dropIntoHoles(); got != sound.Fall || len(b.falls) != 1 {
 		t.Fatal("an orb sent into a Hole must fall with its cue")
 	}

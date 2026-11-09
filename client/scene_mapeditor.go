@@ -34,9 +34,11 @@ const (
 	brushPortal
 	brushHole
 	brushSpillway
+	brushFactory
+	brushCrusher
 )
 
-var editorTools = [...]string{"Floor", "Wall", "Void", "Breakable Wall", "Link", "Reservoir", "Latch", "Barrier", "Gate", "Erase", "Pan", "Toggle", "Hold", "Door", "Breakable Barrier", "Portal", "Hole", "Spillway"}
+var editorTools = [...]string{"Floor", "Wall", "Void", "Breakable Wall", "Link", "Reservoir", "Latch", "Barrier", "Gate", "Erase", "Pan", "Toggle", "Hold", "Door", "Breakable Barrier", "Portal", "Hole", "Spillway", "Factory", "Crusher"}
 var editorHelp = [...]string{
 	"Playable surface. Open routes set its capacity.", "Blocks explosions permanently.", "Empty space outside the playable board.", "Two nearby blasts turn it into floor.",
 	"Pair two distant cells to route explosions.", "Stores one extra orb before exploding.", "Reverses once; another switch rearms it.", "Blocks a route between two floor cells.",
@@ -45,13 +47,15 @@ var editorHelp = [...]string{
 	"Passes to its pair. Holds no orbs.",
 	"Counts as a route but swallows the orbs popping in.",
 	"Takes one extra orb to explode, then loses it.",
+	"Adds one orb after each move by its owner.",
+	"Removes one orb after each move by its owner.",
 }
 var editorGroups = [...]struct {
 	name  string
 	tools []int
 }{
 	{"Terrain", []int{brushFloor, brushVoid, brushHole, brushWall, brushBarrier, brushBreak, brushBreakBarrier}},
-	{"Devices", []int{brushLink, brushPortal, brushReservoir, brushSpillway}},
+	{"Devices", []int{brushLink, brushPortal, brushReservoir, brushSpillway, brushFactory, brushCrusher}},
 	{"Circuit", []int{brushLatch, brushToggle, brushHold, brushGate, brushDoor}},
 }
 var editorBrushes = [...]boardview.Brush{
@@ -63,6 +67,8 @@ var editorBrushes = [...]boardview.Brush{
 	{Feature: core.Portal, Edge: -1},
 	{Terrain: core.Hole, Edge: -1},
 	{Feature: core.Spillway, Edge: -1},
+	{Feature: core.Factory, Edge: -1},
+	{Feature: core.Crusher, Edge: -1},
 }
 
 type mapEditor struct {
@@ -443,7 +449,7 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 			}
 			e.portalCell = i
 		}
-	case brushReservoir, brushSpillway, brushLatch, brushToggle, brushHold, brushDoor:
+	case brushReservoir, brushSpillway, brushFactory, brushCrusher, brushLatch, brushToggle, brushHold, brushDoor:
 		if e.m.Cells[i].Terrain != core.Floor {
 			e.notify("Components need floor underneath.")
 			return false

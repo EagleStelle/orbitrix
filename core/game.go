@@ -31,7 +31,10 @@ type Game struct {
 	CircuitOn      [256]bool // polarity: outputs reverse their individual starting states
 	Pressed        []uint8
 	TerrainEvents  []TerrainEvent // events in the last recorded move
-	topology       *mapTopology   // immutable designs and bounded, shared connection tables
+	// ProducedAt counts the waves of the last recorded move before the mover's Factories and Crushers ran; -1 when
+	// the mover owned none.
+	ProducedAt int
+	topology   *mapTopology // immutable designs and bounded, shared connection tables
 
 	// Exploded counts the cell explosions in the last move: a deterministic measure of its cost, which the AI's
 	// budget charges for. It isn't part of the game state (not hashed or snapshotted).
@@ -63,7 +66,7 @@ func NewGame(cols, rows, players int) (*Game, error) {
 	if players > geo.Cells() {
 		return nil, fmt.Errorf("%d players on %d cells: each needs a free cell for their first move", players, geo.Cells())
 	}
-	g := &Game{Players: players, Winner: NoOwner}
+	g := &Game{Players: players, Winner: NoOwner, ProducedAt: -1}
 	g.setGeometry(geo)
 	for i := range g.Owner {
 		g.Owner[i] = NoOwner
@@ -96,7 +99,7 @@ func (g *Game) CopyFrom(src *Game) {
 	g.Durability = append(g.Durability[:0], src.Durability...)
 	g.EdgeDurability = append(g.EdgeDurability[:0], src.EdgeDurability...)
 	g.Pressed = append(g.Pressed[:0], src.Pressed...)
-	g.TerrainEvents = g.TerrainEvents[:0]
+	g.TerrainEvents, g.ProducedAt = g.TerrainEvents[:0], -1
 }
 
 // Clone returns an independent copy of g.
@@ -140,7 +143,7 @@ func (g *Game) LegalMoves(dst []int) []int {
 // instead, the cells still at or over capacity explode first in the next move's chain.
 func (g *Game) Apply(cell int) ([]Wave, error) {
 	g.waveCells, g.waveEnds, g.waves = g.waveCells[:0], g.waveEnds[:0], g.waves[:0]
-	g.TerrainEvents = g.TerrainEvents[:0]
+	g.TerrainEvents, g.ProducedAt = g.TerrainEvents[:0], -1
 	if err := g.play(cell, true); err != nil {
 		return nil, err
 	}
@@ -202,27 +205,98 @@ func (g *Game) play(cell int, record bool) error {
 	} else if g.Count[cell] >= g.Geo.Cap[cell] {
 		g.cur = append(g.cur, int16(cell))
 	}
-	g.resolve(record)
+	g.Exploded = 0
+	wave := g.resolve(record, 0)
+	if !g.Over() && g.Map != nil && len(g.topology.makers) != 0 {
+		g.produce(p, record, wave)
+	}
 	if !g.Over() {
 		g.advance()
 	}
 	return nil
 }
 
+// makerWorking marks a Factory's or Crusher's Pressed byte once it has worked for the holder in its low bits
+// (player+1). Any other holder, or 0 after it empties, makes it skip its next turn.
+const makerWorking uint8 = 16
+
+// MakerTurn returns a Factory's or Crusher's next state after its holder p moves, and whether it works now: it skips
+// its first turn after changing hands or emptying.
+func MakerTurn(state uint8, p int8) (uint8, bool) {
+	if state&^makerWorking != uint8(p+1) {
+		return uint8(p + 1), false
+	}
+	return uint8(p+1) | makerWorking, true
+}
+
+// MakerWorking reports whether a Factory or Crusher in state with this owner has started working for them.
+func MakerWorking(state uint8, owner int8) bool {
+	return owner != NoOwner && state == uint8(owner+1)|makerWorking
+}
+
+// produce runs the mover's Factories and Crushers once their move has settled, after each skips its first turn:
+// each Factory they own gains an orb and each Crusher loses one, turning neutral when empty. Factories that reach
+// capacity explode as a further chain numbered from wave.
+func (g *Game) produce(p int8, record bool, wave int) {
+	g.cur = g.cur[:0]
+	ran := false
+	for _, e := range g.topology.makers {
+		i := int(e)
+		if g.Owner[i] != p {
+			continue
+		}
+		ran = true
+		var works bool
+		if g.Pressed[i], works = MakerTurn(g.Pressed[i], p); !works {
+			continue
+		}
+		switch {
+		case g.Map.Cells[i].Feature == Crusher:
+			g.Count[i]--
+			g.Orbs[p]--
+			if g.Count[i] == 0 {
+				g.Owner[i], g.Pressed[i] = NoOwner, 0
+			}
+		case g.Count[i] < 255:
+			g.Count[i]++
+			g.Orbs[p]++
+			if g.Count[i] == g.Geo.Cap[i] {
+				g.cur = append(g.cur, e)
+			}
+		}
+	}
+	if !ran {
+		return
+	}
+	if record {
+		g.ProducedAt = wave
+	}
+	if g.unstable { // the move's chain hit the wave limit: its leftover cells explode with the Factories
+		g.cur = g.cur[:0]
+		for i, n := range g.Count {
+			if g.Geo.Playable(i) && n >= g.Geo.Cap[i] {
+				g.cur = append(g.cur, int16(i))
+			}
+		}
+	}
+	g.resolve(record, wave) // also ends the game if a Crusher took the mover's last orb
+}
+
 // waveLimit is MaxWaves, lowered by tests: a chain that never settles spreads to every cell and wins, so the
 // real limit is practically unreachable.
 var waveLimit = MaxWaves
 
-// resolve explodes g.cur wave by wave until the board is stable, a player wins or the wave limit is reached.
-func (g *Game) resolve(record bool) {
-	g.unstable, g.Exploded = false, 0
-	for wave := 0; ; wave++ {
+// resolve explodes g.cur wave by wave, numbering waves from first, until the board is stable, a player wins or the
+// wave limit is reached. It returns the next wave's number.
+func (g *Game) resolve(record bool, first int) int {
+	g.unstable = false
+	for wave := first; ; wave++ {
 		if g.checkWin() || len(g.cur) == 0 {
-			return
+			return wave
 		}
-		if wave == waveLimit {
+		if wave-first == waveLimit {
 			g.unstable = true
-			return
+			return wave
 		}
 		if record {
 			g.waveCells = append(g.waveCells, g.cur...)
@@ -258,6 +332,9 @@ func (g *Game) explode() {
 		switch {
 		case g.Count[e] == 0:
 			g.Owner[e] = NoOwner
+			if g.Pressed != nil && g.Map.Cells[e].Feature.IsMaker() {
+				g.Pressed[e] = 0 // whoever fills it next, its holder included, skips a first turn again
+			}
 		case g.Count[e] >= geo.Cap[e]:
 			g.next = append(g.next, e)
 		}
@@ -305,7 +382,8 @@ func (g *Game) checkWin() bool {
 	return winner != NoOwner
 }
 
-// advance passes the turn to the next alive player. The mover always has orbs, so the loop always ends.
+// advance passes the turn to the next alive player. A game that goes on always has another one: the mover may have
+// lost their last orb to a Crusher, but then at least two others have orbs or someone has yet to play.
 func (g *Game) advance() {
 	for i := 1; i <= g.Players; i++ {
 		if p := (g.Turn + i) % g.Players; g.Alive(p) {

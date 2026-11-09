@@ -341,7 +341,7 @@ func (d *demo) step(animate bool) {
 		return
 	}
 	if animate {
-		d.b.Start(cell, int8(p), waves, nil)
+		d.b.Start(cell, int8(p), waves, d.game.ProducedAt, nil)
 	}
 }
 

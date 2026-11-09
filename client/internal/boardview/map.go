@@ -130,7 +130,12 @@ func drawMapHoldFrame(dst *ebiten.Image, body ui.Rect, radius, width float64, in
 	}
 }
 
-func mapReservoirColor(sc *ui.Palette, state MapState, i int) color.RGBA {
+// mapOwnerInked reports whether a feature's art takes the ink of the player whose orbs occupy it.
+func mapOwnerInked(f core.Feature) bool {
+	return f == core.Reservoir || f == core.Spillway || f.IsMaker()
+}
+
+func mapOwnerInk(sc *ui.Palette, state MapState, i int) color.RGBA {
 	if i >= 0 && i < len(state.Owner) && i < len(state.Count) && state.Count[i] > 0 {
 		owner := int(state.Owner[i])
 		if owner >= 0 && owner < len(sc.Players) {
@@ -328,9 +333,17 @@ func mapArtWallVertex(state *MapState, gx, gy int, join uint8) (terrain [4]core.
 	return
 }
 
-func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, axes core.PortalAxes, r ui.Rect) {
+func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, axes core.PortalAxes, r ui.Rect, pressed bool) {
 	x, y := r.Cx(), r.Cy()
 	body, _, radius, _, width := mapDeviceGeometry(r)
+	if feature.IsMaker() {
+		// Hold's broken frame until it has worked for its holder; the full frame once it has.
+		if pressed {
+			ui.StrokeRound(dst, body, radius, width, sc.Dim)
+		} else {
+			drawMapHoldFrame(dst, body, radius, width, sc.Dim)
+		}
+	}
 	switch feature {
 	case core.Link, core.Portal:
 		drawPartnerMark(dst, sc, group, x, y, body.W/.72, feature == core.Portal, axes)
@@ -344,6 +357,21 @@ func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, g
 		for _, d := range [][2]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}} {
 			ui.Line(dst, x+d[0]*pocket.W/2, y+d[1]*pocket.H/2, x+d[0]*end, y+d[1]*end, width, sc.Dim)
 		}
+	case core.Factory:
+		// Eight rays burst from the centre, where a new orb appears after each of its owner's moves.
+		for k := range 8 {
+			s, c := math.Sincos(float64(k) * math.Pi / 4)
+			from, to := body.W*.10, body.W*.34
+			if k%2 == 1 {
+				from, to = body.W*.12, body.W*.26
+			}
+			ui.Line(dst, x+s*from, y-c*from, x+s*to, y-c*to, width, sc.Dim)
+		}
+	case core.Crusher:
+		// Two arrows press onto a flat line: an orb squashed after each of its owner's moves.
+		ui.Line(dst, x-body.W*.26, y, x+body.W*.26, y, width, sc.Dim)
+		ui.Chevron(dst, x, y-body.W*.18, body.W*.17, body.W*.08, width, sc.Dim)
+		ui.Chevron(dst, x, y+body.W*.18, body.W*.17, -body.W*.08, width, sc.Dim)
 	case core.Reservoir:
 		ui.StrokeRound( // A recessed square well seen from above; the inset is the reserve pocket.
 			dst, body, radius, width, sc.Dim)
@@ -565,8 +593,8 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		}
 		pressed := i < len(state.Pressed) && state.Pressed[i] != 0
 		featureScheme := *sc
-		if cfg.Feature == core.Reservoir || cfg.Feature == core.Spillway {
-			featureScheme.Dim = mapReservoirColor(sc, state, i)
+		if mapOwnerInked(cfg.Feature) {
+			featureScheme.Dim = mapOwnerInk(sc, state, i)
 		}
 		axes := core.BothAxes
 		if cfg.Feature == core.Portal {
@@ -575,7 +603,8 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 				axes = (axes<<1 | axes>>1) & core.BothAxes
 			}
 		}
-		drawMapFeature(dst, &featureScheme, cfg.Feature, cfg.Group, axes, r)
+		working := cfg.Feature.IsMaker() && i < len(state.Pressed) && i < len(state.Owner) && core.MakerWorking(state.Pressed[i], state.Owner[i])
+		drawMapFeature(dst, &featureScheme, cfg.Feature, cfg.Group, axes, r, working)
 		if cfg.Circuit.IsOutput() {
 			pressed = core.CircuitOpen(cfg.InitiallyOpen, state.CircuitOn[cfg.Group])
 		}
@@ -663,6 +692,6 @@ func DrawMapBrush(dst *ebiten.Image, sc *ui.Palette, brush Brush, r ui.Rect, gro
 	}
 	body, radius := mapTileGeometry(r)
 	ui.FillRound(dst, body, radius, sc.Tile)
-	drawMapFeature(dst, sc, brush.Feature, group, brush.PortalMode.Axes(), r)
+	drawMapFeature(dst, sc, brush.Feature, group, brush.PortalMode.Axes(), r, pressed)
 	drawMapCircuit(dst, sc, brush.Circuit, group, r, pressed)
 }

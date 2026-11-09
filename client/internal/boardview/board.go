@@ -72,13 +72,16 @@ type Board struct {
 	Orbs  *orbField
 
 	// Playback of the move in progress.
-	Waves   []core.Wave
-	Wave    int     // wave in flight
-	t, dur  float64 // ticks into it, and its length
-	Playing bool
-	tailCap float64 // see waveTicks
-	skipCap float64 // 0 until the player skips
-	Clock   float64 // ticks since the board was created
+	Waves     []core.Wave
+	Wave      int     // wave in flight
+	t, dur    float64 // ticks into it, and its length
+	Playing   bool
+	mover     int8
+	produceAt int // waves shown before the mover's Factories and Crushers run; -1 once they have
+	crushed   []int16
+	tailCap   float64 // see waveTicks
+	skipCap   float64 // 0 until the player skips
+	Clock     float64 // ticks since the board was created
 
 	burstStart, burstLen []float64
 	burstOwner           []int8
@@ -243,13 +246,15 @@ func (b *Board) Bounds() ui.Rect {
 	return ui.Rect{X: b.ox + g, Y: b.oy + g, W: float64(cols)*cell - 2*g, H: float64(rows)*cell - 2*g}
 }
 
-// start shows a move: mover's orb lands in cell, then waves (from core.Game.Apply) play out. snd may be nil.
-func (b *Board) Start(cell int, mover int8, waves []core.Wave, snd *sound.Sound) {
+// start shows a move: mover's orb lands in cell, then waves (from core.Game.Apply) play out, with the mover's
+// Factories and Crushers running after produceAt of them (core.Game.ProducedAt). snd may be nil.
+func (b *Board) Start(cell int, mover int8, waves []core.Wave, produceAt int, snd *sound.Sound) {
 	effects := b.State.terrainSounds(b.State.Place(cell, mover))
 	b.Waves, b.Wave, b.t, b.Playing = waves, -1, 0, true
+	b.mover, b.produceAt = mover, produceAt
 	b.tailCap, b.skipCap = tailCap(len(waves)), 0
-	b.next()
-	snd.Place(int(mover), effects|b.linkSound())
+	_, produced := b.next() // a Factory's orb made now shares the placement note
+	snd.Place(int(mover), effects|produced|b.linkSound())
 }
 
 // sync makes the view match g without animating.
@@ -258,8 +263,13 @@ func (b *Board) Sync(g *core.Game) {
 	b.falls = b.falls[:0]
 }
 
-// next launches the following wave, or ends playback.
-func (b *Board) next() {
+// next runs the mover's Factories and Crushers at once when their turn comes, then launches the following wave or
+// ends playback. It reports whether a Factory made an orb, and the cues of crushed ones.
+func (b *Board) next() (made bool, effects sound.Effects) {
+	if b.produceAt == b.Wave+1 {
+		b.produceAt = -1
+		made, effects = b.produce()
+	}
 	b.Wave++
 	if b.Wave >= len(b.Waves) {
 		b.Playing, b.t = false, 0
@@ -272,6 +282,7 @@ func (b *Board) next() {
 	for k, e := range w {
 		b.burstStart[e], b.burstLen[e], b.burstOwner[e] = b.Clock, l, b.State.from[k]
 	}
+	return
 }
 
 // fastForward plays the rest of the chain quickly.
@@ -296,23 +307,37 @@ func (b *Board) Tick(snd *sound.Sound) {
 		return
 	}
 	b.t++
-	advanced := false
+	advanced, made := false, false
 	var effects sound.Effects
 	for b.Playing && b.t >= b.dur {
 		b.t -= b.dur
 		effects |= b.dropIntoHoles()
 		effects |= b.State.terrainSounds(b.State.Land(b.Waves[b.Wave]))
-		b.next()
-		effects |= b.linkSound()
+		m, produced := b.next()
+		made, effects = made || m, effects|produced|b.linkSound()
 		advanced = true
 	}
 	if advanced {
-		if b.Playing {
+		switch {
+		case b.Playing:
 			snd.Wave(b.Wave, len(b.Waves[b.Wave]), effects)
-		} else {
+		case made: // a made orb sounds like a placed one
+			snd.Place(int(b.mover), effects)
+		default:
 			snd.Effect(effects)
 		}
 	}
+}
+
+// produce runs the mover's Factories and Crushers; each crushed orb shrinks and fades like one lost in a Hole.
+func (b *Board) produce() (made bool, effects sound.Effects) {
+	made, crushed := b.State.Produce(b.mover, b.crushed[:0])
+	b.crushed = crushed
+	for _, cell := range crushed {
+		b.falls = append(b.falls, fallingOrb{hole: cell, owner: b.mover, start: b.Clock})
+		effects |= sound.Fall
+	}
+	return made, effects
 }
 
 // draw renders the board on the mat at animation time tms (ms). The tiles of player turn light up in their ink;

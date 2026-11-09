@@ -44,7 +44,7 @@ func (v *view) sync(g *core.Game) {
 }
 
 func (v *view) Place(cell int, p int8) []core.TerrainEvent {
-	v.reservoirChanged(cell, p)
+	v.inkChanged(cell, p)
 	v.wave = 0
 	v.Owner[cell] = p
 	v.Count[cell]++
@@ -59,8 +59,11 @@ func (v *view) Launch(w core.Wave) {
 		v.from = append(v.from, v.Owner[e])
 		v.Count[e] -= uint8(len(v.Geo.Targets(int(e))))
 		if v.Count[e] == 0 {
-			v.reservoirChanged(int(e), core.NoOwner) // an emptied Spillway returns to neutral ink
+			v.inkChanged(int(e), core.NoOwner) // an emptied Spillway returns to neutral ink
 			v.Owner[e] = core.NoOwner
+			if v.Replay != nil && v.Replay.Map.Cells[e].Feature.IsMaker() {
+				v.Replay.Pressed[e] = 0
+			}
 		}
 	}
 }
@@ -69,7 +72,7 @@ func (v *view) Launch(w core.Wave) {
 func (v *view) Land(w core.Wave) []core.TerrainEvent {
 	for k, e := range w {
 		for _, n := range v.Geo.Neighbours(int(e)) {
-			v.reservoirChanged(int(n), v.from[k])
+			v.inkChanged(int(n), v.from[k])
 			v.Owner[n] = v.from[k]
 			v.Count[n]++
 		}
@@ -79,11 +82,40 @@ func (v *view) Land(w core.Wave) []core.TerrainEvent {
 	return events
 }
 
-func (v *view) reservoirChanged(cell int, owner int8) {
+// Produce runs the mover's Factories and Crushers as core.Game does after the move's first chain. It reports whether a
+// Factory made an orb and appends each Crusher that lost one to crushed.
+func (v *view) Produce(p int8, crushed []int16) (bool, []int16) {
+	made := false
+	for i, c := range v.Replay.Map.Cells {
+		if v.Owner[i] != p || !c.Feature.IsMaker() {
+			continue
+		}
+		var works bool
+		if v.Replay.Pressed[i], works = core.MakerTurn(v.Replay.Pressed[i], p); !works {
+			continue
+		}
+		v.revision++ // its frame closes once it works
+		switch {
+		case c.Feature == core.Crusher:
+			crushed = append(crushed, int16(i))
+			if v.Count[i] == 1 {
+				v.inkChanged(i, core.NoOwner)
+				v.Owner[i], v.Replay.Pressed[i] = core.NoOwner, 0
+			}
+			v.Count[i]--
+		case v.Count[i] < 255:
+			v.Count[i]++
+			made = true
+		}
+	}
+	return made, crushed
+}
+
+func (v *view) inkChanged(cell int, owner int8) {
 	if v.Replay == nil {
 		return
 	}
-	if f := v.Replay.Map.Cells[cell].Feature; (f == core.Reservoir || f == core.Spillway) && (v.Count[cell] == 0 || v.Owner[cell] != owner) {
+	if mapOwnerInked(v.Replay.Map.Cells[cell].Feature) && (v.Count[cell] == 0 || v.Owner[cell] != owner) {
 		v.revision++
 	}
 }

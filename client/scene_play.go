@@ -194,7 +194,7 @@ func (p *playScene) move(a *app, cell int) {
 		return
 	}
 	p.b.State.Events = p.game.TerrainEvents
-	p.b.Start(cell, int8(mover), waves, a.snd)
+	p.b.Start(cell, int8(mover), waves, p.game.ProducedAt, a.snd)
 	p.biggest = max(p.biggest, len(waves))
 	if len(waves) >= 2 {
 		p.chainOwner, p.chainHold = mover, 0

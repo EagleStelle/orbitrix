@@ -18,7 +18,10 @@ func TestBotsOnCustomMaps(t *testing.T) {
 	spillways := core.NewMap(5, 5)
 	spillways.Name = "Spillways"
 	spillways.Cells[12].Feature, spillways.Cells[0].Feature = core.Spillway, core.Spillway
-	for _, m := range append(core.StarterMaps(), barriers, portals, holes, spillways) {
+	factories := core.NewMap(5, 5)
+	factories.Name = "Factories and Crushers"
+	factories.Cells[12].Feature, factories.Cells[2].Feature, factories.Cells[22].Feature = core.Factory, core.Factory, core.Crusher
+	for _, m := range append(core.StarterMaps(), barriers, portals, holes, spillways, factories) {
 		t.Run(m.Name, func(t *testing.T) {
 			g, err := core.NewGameWithMap(m, 3)
 			if err != nil {

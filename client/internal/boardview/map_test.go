@@ -14,19 +14,19 @@ func TestReservoirColorFollowsDisplayedOccupancy(t *testing.T) {
 		state := MapState{Owner: []int8{0}, Count: []uint8{1}}
 		for owner := range core.MaxPlayers {
 			state.Owner[0] = int8(owner)
-			if got := mapReservoirColor(sc, state, 0); got != sc.Players[owner] {
+			if got := mapOwnerInk(sc, state, 0); got != sc.Players[owner] {
 				t.Fatalf("mode %d owner %d: reservoir ink %v", mode, owner, got)
 			}
 		}
 		state.Count[0] = 0
-		if got := mapReservoirColor(sc, state, 0); got != sc.Dim {
+		if got := mapOwnerInk(sc, state, 0); got != sc.Dim {
 			t.Fatal("empty reservoir retained ownership color")
 		}
 		state.Count[0], state.Owner[0] = 1, core.NoOwner
-		if got := mapReservoirColor(sc, state, 0); got != sc.Dim {
+		if got := mapOwnerInk(sc, state, 0); got != sc.Dim {
 			t.Fatal("unowned reservoir used a player color")
 		}
-		if got := mapReservoirColor(sc, MapState{}, 0); got != sc.Dim {
+		if got := mapOwnerInk(sc, MapState{}, 0); got != sc.Dim {
 			t.Fatal("editor reservoir is not neutral")
 		}
 	}

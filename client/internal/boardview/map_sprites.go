@@ -83,15 +83,15 @@ func renderMapSprite(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, key mapSprite
 		ui.StrokePath(dst, path, width*1.5, PartnerColor(sc, key.group))
 		ui.StrokePath(dst, path, width, ink)
 	case key.feature != core.NoFeature:
-		renderMapFeature(dst, sc, key.feature, key.group, key.portalAxes, r)
+		renderMapFeature(dst, sc, key.feature, key.group, key.portalAxes, r, key.pressed)
 	default:
 		renderMapCircuit(dst, sc, key.circuit, key.group, r, key.pressed)
 	}
 }
 
-func drawMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, axes core.PortalAxes, r ui.Rect) {
+func drawMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, axes core.PortalAxes, r ui.Rect, pressed bool) {
 	if feature != core.NoFeature {
-		drawMapSprite(dst, sc, r, mapSpriteKey{feature: feature, group: group, portalAxes: axes})
+		drawMapSprite(dst, sc, r, mapSpriteKey{feature: feature, group: group, portalAxes: axes, pressed: pressed})
 	}
 }
 

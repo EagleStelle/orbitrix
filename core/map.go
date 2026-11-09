@@ -26,7 +26,12 @@ const (
 	Reservoir
 	Portal
 	Spillway // a Reservoir whose extra orb is lost, like one sent into a Hole
+	Factory  // gains an orb after each of its owner's moves
+	Crusher  // loses an orb after each of its owner's moves
 )
+
+// IsMaker reports whether f acts after its holder's moves.
+func (f Feature) IsMaker() bool { return f == Factory || f == Crusher }
 
 const MaxMapGroups = MaxPlayers
 
@@ -109,7 +114,7 @@ func (m MapDefinition) ValidateStructure() error {
 		return fmt.Errorf("map has too many edges")
 	}
 	for i, c := range m.Cells {
-		if c.Terrain > Hole || c.Feature > Spillway || c.Circuit > Door {
+		if c.Terrain > Hole || c.Feature > Crusher || c.Circuit > Door {
 			return fmt.Errorf("map cell %d has unknown terrain or feature", i)
 		}
 		if c.Feature != NoFeature && c.Circuit != NoCircuit {
@@ -395,8 +400,11 @@ func (m MapDefinition) Validate() []MapIssue {
 		if first < 0 {
 			first = i
 		}
-		if m.Capacity(i) < 2 {
+		switch capacity, f := m.Capacity(i), m.Cells[i].Feature; {
+		case capacity < 2:
 			issues = append(issues, MapIssue{Message: "Floor needs initial capacity of at least two", Cells: []int{i}})
+		case capacity < 3 && (f == Factory || f == Crusher):
+			issues = append(issues, MapIssue{Message: "Factories and Crushers need initial capacity of at least three", Cells: []int{i}})
 		}
 	}
 	if first < 0 {
