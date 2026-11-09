@@ -69,6 +69,7 @@ func TestCrusherEmptiesToNeutralInk(t *testing.T) {
 	if made, crushed := v.Produce(0, nil); made || !slices.Equal(crushed, []int16{22}) {
 		t.Fatalf("made %v crushed %v", made, crushed)
 	}
+	v.settle()
 	if v.Count[22] != 0 || v.Owner[22] != core.NoOwner || v.Replay.Pressed[22] != 0 || v.revision == revision {
 		t.Fatal("an emptied Crusher must turn neutral, start over and redraw its ink")
 	}

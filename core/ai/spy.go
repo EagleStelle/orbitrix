@@ -69,7 +69,10 @@ func (b *Bot) spy() int {
 	best := math.Inf(-1)
 	for _, m := range cands {
 		if !b.primed(m) {
-			t, _ := b.tally(m) // can't fail: nothing explodes
+			t, ok := b.tally(m) // simulates only placements that change map devices
+			if !ok {
+				continue
+			}
 			s := lead(t) + b.spyPlace(m, danger, exposed) + b.uniform(-0.15, 0.15)
 			list = append(list, scored{s, m})
 			best = max(best, s)

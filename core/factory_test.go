@@ -69,6 +69,31 @@ func TestFactoryProducesForItsOwnerUntilItPops(t *testing.T) {
 	}
 }
 
+// A Factory or Crusher that pops empty and is refilled by its holder in the same move keeps working.
+func TestMakerRefilledByItsHolderKeepsWorking(t *testing.T) {
+	for f, want := range map[Feature]uint8{Factory: 3, Crusher: 1} {
+		m := NewMap(5, 5)
+		m.Cells[12].Feature = f
+		g, err := NewGameWithMap(m, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := g.Snapshot()
+		s.Played = 3
+		s.Count[12], s.Owner[12], s.Pressed[12] = 3, 0, 1|makerWorking
+		s.Count[7], s.Owner[7], s.Count[11], s.Owner[11] = 3, 0, 3, 0 // both pop back into the centre
+		s.Count[24], s.Owner[24] = 1, 1
+		if g, err = Restore(s); err != nil {
+			t.Fatal(err)
+		}
+		mustApply(t, g, 12) // pops; 7 and 11 refill it with two orbs, then it works for a
+		checkTallies(t, g)
+		if g.Count[12] != want || g.Owner[12] != 0 || !MakerWorking(g.Pressed[12], 0) || g.ProducedAt < 0 {
+			t.Fatalf("%v: %d orbs, owner %d, state %d", f, g.Count[12], g.Owner[12], g.Pressed[12])
+		}
+	}
+}
+
 func TestFactoryAndCrusherNeedCapacityThree(t *testing.T) {
 	for _, f := range []Feature{Factory, Crusher} {
 		for _, tc := range []struct {

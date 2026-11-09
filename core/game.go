@@ -207,8 +207,11 @@ func (g *Game) play(cell int, record bool) error {
 	}
 	g.Exploded = 0
 	wave := g.resolve(record, 0)
-	if !g.Over() && g.Map != nil && len(g.topology.makers) != 0 {
-		g.produce(p, record, wave)
+	if g.Map != nil && len(g.topology.makers) != 0 {
+		if !g.Over() {
+			g.produce(p, record, wave)
+		}
+		g.settleMakers()
 	}
 	if !g.Over() {
 		g.advance()
@@ -217,11 +220,11 @@ func (g *Game) play(cell int, record bool) error {
 }
 
 // makerWorking marks a Factory's or Crusher's Pressed byte once it has worked for the holder in its low bits
-// (player+1). Any other holder, or 0 after it empties, makes it skip its next turn.
+// (player+1). Any other holder, or 0 after a move leaves it empty, makes it skip its next turn.
 const makerWorking uint8 = 16
 
 // MakerTurn returns a Factory's or Crusher's next state after its holder p moves, and whether it works now: it skips
-// its first turn after changing hands or emptying.
+// its first turn after changing hands or after a move left it empty.
 func MakerTurn(state uint8, p int8) (uint8, bool) {
 	if state&^makerWorking != uint8(p+1) {
 		return uint8(p + 1), false
@@ -255,7 +258,7 @@ func (g *Game) produce(p int8, record bool, wave int) {
 			g.Count[i]--
 			g.Orbs[p]--
 			if g.Count[i] == 0 {
-				g.Owner[i], g.Pressed[i] = NoOwner, 0
+				g.Owner[i] = NoOwner
 			}
 		case g.Count[i] < 255:
 			g.Count[i]++
@@ -280,6 +283,17 @@ func (g *Game) produce(p int8, record bool, wave int) {
 		}
 	}
 	g.resolve(record, wave) // also ends the game if a Crusher took the mover's last orb
+}
+
+// settleMakers resets every Factory and Crusher the move left empty, so whoever fills it next, its last holder
+// included, skips a first turn. One that popped or was crushed empty and then refilled by its holder in the same move
+// keeps working; a different player's orbs already make it skip.
+func (g *Game) settleMakers() {
+	for _, e := range g.topology.makers {
+		if g.Count[e] == 0 {
+			g.Pressed[e] = 0
+		}
+	}
 }
 
 // waveLimit is MaxWaves, lowered by tests: a chain that never settles spreads to every cell and wins, so the
@@ -331,10 +345,7 @@ func (g *Game) explode() {
 		g.Orbs[p] -= int32(released)
 		switch {
 		case g.Count[e] == 0:
-			g.Owner[e] = NoOwner
-			if g.Pressed != nil && g.Map.Cells[e].Feature.IsMaker() {
-				g.Pressed[e] = 0 // whoever fills it next, its holder included, skips a first turn again
-			}
+			g.Owner[e] = NoOwner // a Factory or Crusher keeps its state until the move settles
 		case g.Count[e] >= geo.Cap[e]:
 			g.next = append(g.next, e)
 		}

@@ -209,6 +209,7 @@ func (b *Bot) shortlist(g *core.Game, k int) []scored {
 		case o == p:
 			bound = 20 + 10*c
 		}
+		bound += pull(g, i, p)
 		if len(list) == k && float64(bound+1) <= list[k-1].score {
 			continue
 		}
@@ -233,6 +234,7 @@ func (b *Bot) shortlist(g *core.Game, k int) []scored {
 		default:
 			score = 10 + 8*own - 25*threats + 12*(4-cp) // corners +24, edges +12
 		}
+		score += pull(g, i, p)
 		tie := float64((uint32(i)^salt)*0x9e3779b1>>22) / 1024 // Fibonacci hashing: [0, 1)
 		list = insertTop(list, scored{float64(score) + tie, i}, k)
 	}

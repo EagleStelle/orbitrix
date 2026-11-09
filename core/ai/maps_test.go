@@ -56,3 +56,93 @@ func TestBotsOnCustomMaps(t *testing.T) {
 		})
 	}
 }
+
+// The slowest Hole map that validation accepts must still end: a plain 9×9 game takes about 150 moves.
+func TestSlowestValidMapEnds(t *testing.T) {
+	m := core.NewMap(9, 9)
+	for k := range len(m.Cells) {
+		i := k * 37 % len(m.Cells)
+		m.Cells[i].Terrain = core.Hole
+		if len(m.Validate()) != 0 {
+			m.Cells[i].Terrain = core.Floor
+		}
+	}
+	if _, _, pace := m.Estimate(); pace != core.Slow {
+		t.Fatalf("pace %v", pace)
+	}
+	for seed := range uint64(4) {
+		g, err := core.NewGameWithMap(m, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var bots [2]Bot
+		for move := 0; !g.Over(); move++ {
+			if move == 1000 {
+				t.Fatalf("seed %d: no winner after %d moves", seed, move)
+			}
+			_, _ = g.Apply(bots[g.Turn].Choose(g, Spy, seed<<32|uint64(move), DefaultBudget))
+		}
+	}
+}
+
+// deviceMap has Factories, Crushers and a Latch whose Gate changes capacities.
+func deviceMap() core.MapDefinition {
+	m := core.NewMap(5, 5)
+	m.Cells[12].Feature, m.Cells[2].Feature = core.Factory, core.Factory
+	m.Cells[10].Feature, m.Cells[22].Feature = core.Crusher, core.Crusher
+	m.Cells[6].Circuit, m.Cells[6].Group = core.Latch, 1
+	m.Edges = []core.MapEdge{{A: 16, B: 17, Kind: core.Gate, Group: 1}}
+	return m
+}
+
+func TestTallyMatchesSimulation(t *testing.T) {
+	g, err := core.NewGameWithMap(deviceMap(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rng := core.NewRNG(7)
+	var b Bot
+	var sim core.Game
+	var legal []int
+	checked := 0
+	for ply := 0; ply < 300 && !g.Over(); ply++ {
+		b.g, b.geo, b.me, b.left = g, g.Geo, int8(g.Turn), 1<<30
+		b.production()
+		legal = g.LegalMoves(legal[:0])
+		for _, cell := range legal {
+			sim.CopyFrom(g)
+			_ = sim.Simulate(cell)
+			if got, ok := b.tally(cell); !ok || got != sim.Orbs {
+				t.Fatalf("ply %d cell %d: tally %v, simulation %v", ply, cell, got[:2], sim.Orbs[:2])
+			}
+			checked++
+		}
+		_, _ = g.Apply(legal[rng.Intn(len(legal))])
+	}
+	if checked < 500 {
+		t.Fatalf("only %d positions checked", checked)
+	}
+}
+
+func TestHeuristicBotsSkipWastedCrusherMoves(t *testing.T) {
+	g, err := core.NewGameWithMap(deviceMap(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rng := core.NewRNG(11)
+	var b Bot
+	var legal []int
+	for ply := 0; ply < 80 && !g.Over(); ply++ {
+		legal = g.LegalMoves(legal[:0])
+		other := false
+		for _, cell := range legal {
+			other = other || !wasted(g, cell, int8(g.Turn))
+		}
+		for _, s := range []Strategy{Mason, Warden, Gambler, Nomad, Raider, Spy} {
+			if cell := b.Choose(g, s, uint64(ply), DefaultBudget); other && wasted(g, cell, int8(g.Turn)) {
+				t.Fatalf("ply %d: %s fed Crusher %d", ply, s, cell)
+			}
+		}
+		_, _ = g.Apply(legal[rng.Intn(len(legal))])
+	}
+}

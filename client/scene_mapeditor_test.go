@@ -580,6 +580,40 @@ func TestEditorToolbarAcrossPlatforms(t *testing.T) {
 	}
 }
 
+func TestEditorPaceStrip(t *testing.T) {
+	for _, size := range [][2]float64{{320, 640}, {390, 844}, {568, 320}, {640, 360}, {760, 640}, {1040, 640}} {
+		a := withCutout(setupTestApp(size[0], size[1], 1, 2))
+		e := newMapEditor(a, newHome(), core.NewMap(9, 9), func(core.MapDefinition) error { return nil })
+		e.layout(a)
+		if !containsRect(a.safe(), e.paceR) || overlaps(e.paceR, e.canvas) || overlaps(e.paceR, e.dock) || e.paceR.W < e.canvas.W {
+			t.Fatalf("%v: pace strip %+v, canvas %+v, dock %+v", size, e.paceR, e.canvas, e.dock)
+		}
+		for _, r := range e.control {
+			if overlaps(e.paceR, r) {
+				t.Fatalf("%v: pace strip covers a control", size)
+			}
+		}
+		e.notify("Saved")
+		bar := e.snackbar()
+		bar.ticks = snackIn
+		if r, _, _ := bar.frame(a); r.Bottom() > e.paceR.Y-snackGap*a.u+1e-9 || overlaps(r, e.dock) || r.X < e.paceR.X-1e-9 || r.Right() > e.paceR.Right()+1e-9 {
+			t.Fatalf("%v: snackbar %+v must sit above the pace strip %+v, clear of the dock %+v", size, r, e.paceR, e.dock)
+		}
+	}
+	a := setupTestApp(1040, 640, 1, 2)
+	e := newMapEditor(a, newHome(), core.NewMap(9, 9), func(core.MapDefinition) error { return nil })
+	if e.pace != core.Normal || e.paceText != "~155 moves" {
+		t.Fatalf("empty 9×9: %v %q", e.pace, e.paceText)
+	}
+	for r := range 8 {
+		e.m.Cells[4*9+r].Terrain = core.Hole // 17 open sides
+	}
+	e.changed()
+	if e.pace != core.Endless || e.paceText != "∞" || len(e.issues) != 1 || !e.bad[4*9] {
+		t.Fatalf("Hole column: %v %q %v", e.pace, e.paceText, e.issues)
+	}
+}
+
 func TestEditorEraseHighlightMatchesRemoval(t *testing.T) {
 	for _, kind := range []core.EdgeKind{core.Barrier, core.Gate, core.BreakableBarrier} {
 		for _, vertical := range []bool{false, true} {
@@ -727,7 +761,7 @@ func TestEditorCompactSizingKeepsCanvasPrimary(t *testing.T) {
 				if e.field.Y != e.testB.Y {
 					t.Fatal("landscape header must fit one row")
 				}
-				if e.canvas.H < 200*a.u || e.dock.W > 152*a.u {
+				if e.canvas.H < 140*a.u || e.dock.W > 152*a.u { // the pace strip takes 56 px under the map
 					t.Fatal("landscape chrome crowds the map")
 				}
 			}

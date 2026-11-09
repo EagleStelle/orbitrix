@@ -19,9 +19,10 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - Factories and Crushers act once per move, only for the mover, after the move's chain settles and before the turn
   passes; a Pass runs neither. Ownership is the occupying orbs, never a separate field.
   A Factory chain continues the move's wave numbering, and `Game.ProducedAt` tells playback where they acted.
-  Each skips its first turn after changing hands or emptying. That state lives in the cell's existing `Pressed`
-  byte (holder+1, plus a working bit), so snapshots, the hash and the protocol carry it unchanged; a counter for a
-  longer grace would need a protocol change.
+  Each skips its first turn after changing hands or after a move leaves it empty. Emptiness is judged once the move
+  settles, in core and in playback alike, so popping and being refilled by the same player keeps it working. That
+  state lives in the cell's existing `Pressed` byte (holder+1, plus a working bit), so snapshots, the hash and the
+  protocol carry it unchanged; a counter for a longer grace would need a protocol change.
 - Latch responds to direct accepted placements and orb arrivals, never to exploding by itself. Latch stays
   pressed after its first input; Toggle flips on direct placement into an empty cell and once per receiving or
   exploding wave, regardless of arrival count. Direct placement into an occupied Toggle does not flip it by itself;
@@ -41,6 +42,14 @@ Decisions that future changes have to respect, and why. How things work is in [a
   destroyed Breakable Walls and Gates whose controller shares a Floor group with either endpoint. Reachable Gates
   merge groups until no more circuits can connect them; permanently isolated Floor and circular Gate dependencies
   remain invalid.
+- Holes and Spillways lose their orbs for good and never fill up; Crushers keep eating. Games end only when the board
+  fills, so `MapDefinition.Estimate` predicts game length from a fit to bot games, and `Validate` refuses Instant
+  and Endless. Each piece counts the same on every board size: the slowdown tracks how many there are, not their
+  share of the board. Factories offset the losses with diminishing returns, less beside a Hole, which they feed. The
+  fit uses mixed 2–4 player lobbies of weak and strong bots: Factory maps run longer with more players and with
+  players who ignore Factories, and the editor can't know either. Instant is an absolute move count (Factories ending
+  games within about ten moves), not a share of an empty board, so short Factory games stay playable. It reads the
+  starting layout only, in integers so every device validates alike. Fast and Slow stay playable.
 - Map files carry a bounded, versioned binary payload and checksum. QR links embed it in a URL fragment; there is
   no map lookup service. Invalid gameplay drafts remain portable, but malformed data is rejected.
 - Portable exports remain format 2 with `orbitrix-map2.` codes. The two-byte cell and six-byte edge layouts keep
@@ -71,6 +80,9 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - Sovereign uses Tactician search on custom maps until its network can represent map topology; its existing
   rectangular pattern table cannot represent every map neighborhood or a fifth Link connection. Prodigy fully
   refreshes its network evaluation on custom maps so topology changes cannot leave cached features stale.
+- Bots see Factories and Crushers through exact outcomes and move order, not evaluation terms: Factory and Crusher
+  values in Tactician's and Voyager's evaluations made them weaker. The heuristic bots keep their personalities and
+  only drop orbs a Crusher would eat.
 
 ## Client
 

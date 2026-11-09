@@ -94,6 +94,91 @@ func TestHoleValidation(t *testing.T) {
 	}
 }
 
+func TestEstimate(t *testing.T) {
+	marked := func(m MapDefinition) []int {
+		for _, issue := range m.Validate() {
+			if strings.HasPrefix(issue.Message, "Too many") {
+				return issue.Cells
+			}
+		}
+		return nil
+	}
+	// column puts Holes down the middle column from the top: 2*holes+1 open Floor sides.
+	column := func(size, holes int) MapDefinition {
+		m := NewMap(size, size)
+		for r := range holes {
+			m.Cells[size/2*size+r].Terrain = Hole
+		}
+		return m
+	}
+	for _, size := range []int{9, 40} {
+		empty, room := NewMap(size, size), 0
+		for i := range empty.Cells {
+			room += empty.Capacity(i) - 1
+		}
+		if moves, length, pace := empty.Estimate(); moves != room*3/4 || length != 1000 || pace != Normal {
+			t.Fatalf("%d×%d empty: %d moves %v, want %d Normal", size, size, moves, pace, room*3/4)
+		}
+		// The pace follows the number of Hole sides, whatever the board's size.
+		for holes, want := range map[int]Pace{3: Normal, 4: Slow, 6: Slow, 7: Endless} {
+			m := column(size, holes)
+			if _, _, pace := m.Estimate(); pace != want {
+				t.Fatalf("%d×%d, %d Holes: %v, want %v", size, size, holes, pace, want)
+			}
+			if cells := marked(m); (want == Endless) != (len(cells) == holes) {
+				t.Fatalf("%d×%d, %d Holes: marked %v", size, size, holes, cells)
+			}
+		}
+	}
+	// One piece in the open: a Hole drains four sides, then a Crusher, then a Spillway.
+	var last int
+	for _, cell := range []MapCell{{}, {Feature: Spillway}, {Feature: Crusher}, {Terrain: Hole}} {
+		m := NewMap(9, 9)
+		m.Cells[40] = cell
+		moves, _, _ := m.Estimate()
+		if moves <= last {
+			t.Fatalf("%+v: %d moves, not over %d", cell, moves, last)
+		}
+		last = moves
+	}
+	// Factories make up for Holes, less when a Hole is beside them.
+	endless := column(9, 7)
+	away, beside := endless.Clone(), endless.Clone()
+	away.Cells[10].Feature, beside.Cells[3*9].Feature = Factory, Factory
+	movesAway, _, paceAway := away.Estimate()
+	movesBeside, _, paceBeside := beside.Estimate()
+	if paceAway != Slow || paceBeside != Slow || movesAway >= movesBeside {
+		t.Fatalf("Factory away %d %v, beside %d %v", movesAway, paceAway, movesBeside, paceBeside)
+	}
+	// A 9×9 packed with Factories is fast, never instant; a 4×4 can be.
+	packed := NewMap(9, 9)
+	for c := 1; c < 8; c++ {
+		for r := 1; r < 8; r++ {
+			packed.Cells[c*9+r].Feature = Factory
+		}
+	}
+	if moves, _, pace := packed.Estimate(); pace != Fast || moves < 20 || marked(packed) != nil {
+		t.Fatalf("49 Factories on 9×9: %d moves %v", moves, pace)
+	}
+	tiny := NewMap(4, 4)
+	var edges []int // Factories need capacity three, so not the corners
+	for i := range tiny.Cells {
+		if tiny.Capacity(i) >= 3 {
+			edges = append(edges, i)
+		}
+	}
+	for _, i := range edges[:10] {
+		tiny.Cells[i].Feature = Factory
+	}
+	if moves, _, pace := tiny.Estimate(); pace != Fast || moves != 10 || marked(tiny) != nil {
+		t.Fatalf("10 Factories on 4×4: %d moves %v", moves, pace)
+	}
+	tiny.Cells[edges[10]].Feature = Factory
+	if moves, _, pace := tiny.Estimate(); pace != Instant || moves != 9 || !slices.Equal(marked(tiny), edges[:11]) {
+		t.Fatalf("11 Factories on 4×4: %d moves %v, marked %v", moves, pace, marked(tiny))
+	}
+}
+
 func TestHoleRandomPlayLosesOnlyHoleOrbs(t *testing.T) {
 	for name, m := range map[string]MapDefinition{"Hole": holeMap(), "Spillway": spillwayMap()} {
 		encoded, err := EncodeMap(m)

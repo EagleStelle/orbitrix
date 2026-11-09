@@ -104,6 +104,8 @@ func (e *mapEditor) layout(a *app) {
 			e.canvas = ui.Rect{X: work.X, Y: work.Y, W: work.W, H: max(16*u, top-work.Y-gap)}
 		}
 	}
+	e.canvas.H = max(16*u, e.canvas.H-56*u)
+	e.paceR = ui.Rect{X: e.canvas.X, Y: e.canvas.Bottom(), W: e.canvas.W, H: 56 * u}
 	infoH := 40 * u
 	if compact {
 		infoH = 32 * u
@@ -539,6 +541,7 @@ func (e *mapEditor) draw(dst *ebiten.Image, a *app) {
 			ui.StrokeRound(clip, r.Inset(1), k*.12, max(1, 2*u), sc.Ink)
 		}
 	}
+	e.drawPace(dst, a)
 	e.drawDock(dst, a)
 	if e.more {
 		e.drawOptions(dst, a)
@@ -556,6 +559,54 @@ func (e *mapEditor) draw(dst *ebiten.Image, a *app) {
 	if e.ask != nil {
 		e.ask.draw(dst, a)
 	}
+}
+
+var paceNames = [core.Endless + 1]string{"Instant", "Fast", "Normal", "Slow", "Endless"}
+
+// drawPace shows the estimated game length: five equal bands from Instant to Endless, a knob placed inside its band
+// on a log scale, and the average moves above it. Instant and Endless are issues, so they keep the danger ink.
+func (e *mapEditor) drawPace(dst *ebiten.Image, a *app) {
+	u, sc, r := a.u, a.sc, e.paceR
+	gap, trackH := 4*u, 10*u
+	labelY := r.Bottom() - 8*u
+	trackY := labelY - 18*u
+	segW := (r.W - 4*gap) / float64(len(paceNames))
+	var knob ui.Rect
+	for p := core.Instant; p <= core.Endless; p++ {
+		seg := ui.Rect{X: r.X + float64(p)*(segW+gap), Y: trackY - trackH/2, W: segW, H: trackH}
+		issue := p == core.Instant || p == core.Endless
+		fill, ink, face := sc.Tile, sc.Dim, a.f.Small
+		if issue {
+			fill, ink = ui.Mix(sc.Tile, sc.Danger, .35), sc.Danger
+		}
+		if p == e.pace {
+			knob, fill, ink, face = seg, sc.Ink, sc.Ink, a.f.SmallBold
+			if issue {
+				fill, ink = sc.Danger, sc.Danger
+			}
+		}
+		ui.FillPill(dst, seg, fill)
+		ui.DrawText(dst, paceNames[p], face, seg.Cx(), labelY, text.AlignCenter, ink)
+	}
+	// Lengths run from about 75 (a board packed with Factories) up; Instant is set by moves, so its knob stays centred.
+	limits := [...]float64{75, float64(core.PaceLimits[0]), float64(core.PaceLimits[1]), float64(core.PaceLimits[2]), 4 * float64(core.PaceLimits[2])}
+	t := .5
+	if e.pace != core.Instant {
+		lo, hi := limits[e.pace-1], limits[e.pace]
+		t = min(1, max(0, math.Log(float64(e.length)/lo)/math.Log(hi/lo)))
+	}
+	x := knob.X + trackH/2 + t*(knob.W-trackH)
+	ink, scale := sc.Ink, 1.0
+	if e.pace == core.Instant || e.pace == core.Endless {
+		ink = sc.Danger
+	}
+	if e.pace == core.Endless {
+		scale = 1.8 // ∞ is a small glyph
+	}
+	ui.FillCircle(dst, x, trackY, 7*u, sc.Ground)
+	ui.Ring(dst, x, trackY, 7*u, 2.5*u, ink)
+	half := ui.TextWidth(e.paceText, a.f.LabelBold) * scale / 2
+	ui.DrawScaledText(dst, e.paceText, a.f.LabelBold, min(r.Right()-half, max(r.X+half, x)), trackY-18*u, text.AlignCenter, scale, ink)
 }
 
 func (e *mapEditor) drawDock(dst *ebiten.Image, a *app) {

@@ -61,9 +61,6 @@ func (v *view) Launch(w core.Wave) {
 		if v.Count[e] == 0 {
 			v.inkChanged(int(e), core.NoOwner) // an emptied Spillway returns to neutral ink
 			v.Owner[e] = core.NoOwner
-			if v.Replay != nil && v.Replay.Map.Cells[e].Feature.IsMaker() {
-				v.Replay.Pressed[e] = 0
-			}
 		}
 	}
 }
@@ -100,7 +97,7 @@ func (v *view) Produce(p int8, crushed []int16) (bool, []int16) {
 			crushed = append(crushed, int16(i))
 			if v.Count[i] == 1 {
 				v.inkChanged(i, core.NoOwner)
-				v.Owner[i], v.Replay.Pressed[i] = core.NoOwner, 0
+				v.Owner[i] = core.NoOwner
 			}
 			v.Count[i]--
 		case v.Count[i] < 255:
@@ -109,6 +106,18 @@ func (v *view) Produce(p int8, crushed []int16) (bool, []int16) {
 		}
 	}
 	return made, crushed
+}
+
+// settle resets the Factories and Crushers the move left empty, as core.Game does once a move settles.
+func (v *view) settle() {
+	if v.Replay == nil {
+		return
+	}
+	for i, c := range v.Replay.Map.Cells {
+		if c.Feature.IsMaker() && v.Count[i] == 0 {
+			v.Replay.Pressed[i] = 0
+		}
+	}
 }
 
 func (v *view) inkChanged(cell int, owner int8) {

@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"unicode/utf8"
 )
@@ -34,6 +35,23 @@ const (
 func (f Feature) IsMaker() bool { return f == Factory || f == Crusher }
 
 const MaxMapGroups = MaxPlayers
+
+// Pace sorts a map's estimated game length against an empty board with the same room.
+type Pace uint8
+
+const (
+	Instant Pace = iota // Factories end games within a few turns
+	Fast
+	Normal
+	Slow
+	Endless // many games never end
+)
+
+// PaceLimits are the game lengths, in thousandths of an empty board's, where Normal, Slow and Endless begin.
+var PaceLimits = [3]int{750, 1500, 2500}
+
+// instantMoves is the estimate under which Factories make a game instant: about five turns each for two players.
+const instantMoves = 10
 
 // MapCell stores terrain, a passive feature or a circuit component. Link pairs,
 // Portal pairs and circuits have independent group namespaces.
@@ -262,20 +280,26 @@ func (m MapDefinition) InitialConnections(cell int, dst []int) []int {
 
 // Capacity is the initial explosion threshold, including a Reservoir's or Spillway's extra orb and adjacent Holes.
 func (m MapDefinition) Capacity(cell int) int {
+	n, _ := m.capacity(cell)
+	return n
+}
+
+// capacity also returns how many of the cell's routes end in a Hole.
+func (m MapDefinition) capacity(cell int) (n, holes int) {
 	if !m.initialFloor(cell) {
-		return 0
+		return 0, 0
 	}
 	var neighbors [5]int
-	n := len(m.InitialConnections(cell, neighbors[:0]))
+	n = len(m.InitialConnections(cell, neighbors[:0]))
 	for d := range 4 {
 		if j, _ := m.route(cell, d, nil, nil, nil, nil); j >= 0 && m.Cells[j].Terrain == Hole {
-			n++
+			holes++
 		}
 	}
 	if f := m.Cells[cell].Feature; f == Reservoir || f == Spillway {
 		n++
 	}
-	return n
+	return n + holes, holes
 }
 
 // Validate returns all actionable gameplay issues. Structurally sound drafts
@@ -508,7 +532,66 @@ func (m MapDefinition) Validate() []MapIssue {
 	if len(disconnected) > 0 {
 		issues = append(issues, MapIssue{Message: "All Floor must connect through breakable walls, breakable barriers or reachable Gates", Cells: disconnected})
 	}
+	if _, _, pace := m.Estimate(); pace == Instant || pace == Endless {
+		issue := MapIssue{Message: "Too many Holes, Spillways and Crushers: games would never end"}
+		if pace == Instant {
+			issue.Message = "Too many Factories: games would end almost at once"
+		}
+		for i, c := range m.Cells {
+			drains := c.Terrain == Hole || c.Feature == Spillway || c.Feature == Crusher
+			if pace == Instant && c.Feature == Factory || pace == Endless && drains {
+				issue.Cells = append(issue.Cells, i)
+			}
+		}
+		issues = append(issues, issue)
+	}
 	return issues
+}
+
+// Estimate predicts a game's average moves on the starting layout (0 when Endless), its length in thousandths of an
+// empty board's, and its pace. Bot games of 2 to 4 mixed seats fit it on 7×7 to 40×40 boards: an empty board lasts
+// about 0.75 moves per orb of room (what its Floor holds without exploding), and fills at the orb each move adds.
+// Each open Hole side, Spillway and Crusher loses part of it, the same on every board size. Factories add to it, each
+// a little less as they crowd, and less still beside a Hole, which they feed. More players make Factory maps longer,
+// since each Factory works only on its holder's turn. Integers keep validation identical on every device.
+func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
+	room, growth, factories := 0, 1000, 0 // growth in thousandths of an empty board's
+	for i := range m.Cells {
+		capacity, holes := m.capacity(i)
+		if capacity == 0 {
+			continue
+		}
+		room += capacity - 1
+		growth -= 45 * holes
+		switch m.Cells[i].Feature {
+		case Spillway:
+			growth -= 35
+		case Crusher:
+			growth -= 80
+		case Factory:
+			factories++
+			growth -= 30 * holes
+		}
+	}
+	growth += 150 * 83 * factories / (83 + factories)
+	length = math.MaxInt32
+	if growth > 0 {
+		length = 1_000_000 / growth
+		moves = room * 750 / growth
+	}
+	switch {
+	case length >= PaceLimits[2]:
+		return 0, length, Endless
+	case length >= PaceLimits[1]:
+		pace = Slow
+	case moves < instantMoves && length < 1000:
+		pace = Instant
+	case length >= PaceLimits[0]:
+		pace = Normal
+	default:
+		pace = Fast
+	}
+	return moves, length, pace
 }
 
 // StarterMaps demonstrates the editor's mechanics without requiring a download.

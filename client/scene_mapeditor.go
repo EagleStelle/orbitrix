@@ -4,6 +4,7 @@ import (
 	"image"
 	"math"
 	"slices"
+	"strconv"
 
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
@@ -98,6 +99,9 @@ type mapEditor struct {
 	nameEdits, autosave            int
 	ask                            *askDialog
 	issues                         []core.MapIssue
+	length                         int       // estimated game length, in thousandths of an empty board's
+	pace                           core.Pace // its band on the pace strip
+	paceText                       string    // average moves above the strip's knob
 	bad                            [core.MaxSize * core.MaxSize]bool
 	badEdges                       []bool
 	capacity                       []uint8
@@ -106,6 +110,7 @@ type mapEditor struct {
 	snack                          snackbar
 
 	canvas, field, saveB, testB, toolB, dock, info, capacityB, previewB ui.Rect
+	paceR                                                               ui.Rect
 	control                                                             [7]ui.Rect
 	dims                                                                [4]ui.Rect
 	tabs                                                                [3]ui.Rect
@@ -152,6 +157,11 @@ func newMapEditor(a *app, back scene, m core.MapDefinition, save func(core.MapDe
 }
 func (e *mapEditor) validate() {
 	e.issues = e.m.Validate()
+	moves, length, pace := e.m.Estimate()
+	e.length, e.pace, e.paceText = length, pace, "∞"
+	if pace != core.Endless {
+		e.paceText = "~" + strconv.Itoa(moves) + " moves" // an estimate, not a count
+	}
 	e.note = ""
 	e.snack = snackbar{}
 	clear(e.bad[:])
@@ -965,6 +975,7 @@ func (e *mapEditor) snackbar() *snackbar {
 	if e.snack.message != message || e.snack.timeout != timeout {
 		e.snack = snackbar{message: message, timeout: timeout}
 	}
+	e.snack.avoid, e.snack.span = e.paceR, e.paceR // above the pace strip, over the map, clear of the dock
 	if e.snack.expired() {
 		return nil
 	}

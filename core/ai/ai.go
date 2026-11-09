@@ -72,8 +72,10 @@ type Bot struct {
 	geo  *core.Geometry
 	me   int8
 	rng  core.RNG
-	left int // budget units left this move
-	boom int // explosions not yet charged (under unitExplosions)
+	left int   // budget units left this move
+	boom int   // explosions not yet charged (under unitExplosions)
+	made int32 // orbs our working Factories make minus those our Crushers eat after any move
+	pops bool  // one of our working Factories explodes after any move
 
 	sim   core.Game
 	moves []int
@@ -136,6 +138,15 @@ func (b *Bot) Choose(g *core.Game, s Strategy, seed uint64, budget int) int {
 	case Jester:
 		return b.jester()
 	}
+	b.production()
+	if g.Map != nil {
+		// The heuristic bots keep their personalities but stop feeding Crushers.
+		if kept := slices.DeleteFunc(b.moves, func(m int) bool { return wasted(g, m, b.me) }); len(kept) > 0 {
+			b.moves = kept
+		} else {
+			b.moves = g.LegalMoves(b.moves[:0])
+		}
+	}
 	fragile := b.fragileOpening()
 	// Keep one simulation for checking an opening counterattack after the strategy spends its budget.
 	reserve := 0
@@ -172,10 +183,18 @@ func (b *Bot) Choose(g *core.Game, s Strategy, seed uint64, budget int) int {
 // a failed simulation (None).
 func (b *Bot) tally(cell int) (t [core.MaxPlayers]int32, ok bool) {
 	t = b.g.Orbs
-	if !b.primed(cell) {
-		// Nothing explodes, so the outcome is known without simulating. shortcut: ignores cells left over capacity
-		// by a chain cut at core.MaxWaves, which resolve on the next move; harmless for scoring.
-		t[b.me]++
+	quiet := !b.primed(cell) && !b.pops
+	if m := b.g.Map; quiet && m != nil {
+		// A switch can change capacities; our working Factory gains the placed orb and then its own.
+		f := m.Cells[cell]
+		quiet = !f.Circuit.IsSwitch() &&
+			!(f.Feature == core.Factory && works(b.g.Pressed[cell], b.me) && b.count(cell)+2 >= b.capacity(cell))
+	}
+	if quiet {
+		// Nothing explodes, so the outcome is known without simulating: our orb plus what our Factories and Crushers
+		// do. shortcut: ignores cells left over capacity by a chain cut at core.MaxWaves, which resolve on the next
+		// move; harmless for scoring.
+		t[b.me] += 1 + b.made
 		return t, true
 	}
 	if b.left <= 0 {
@@ -183,6 +202,56 @@ func (b *Bot) tally(cell int) (t [core.MaxPlayers]int32, ok bool) {
 	}
 	b.play(&b.sim, b.g, cell)
 	return b.sim.Orbs, true
+}
+
+// works reports whether a Factory or Crusher in state acts after its holder p's next move.
+func works(state uint8, p int8) bool {
+	_, w := core.MakerTurn(state, p)
+	return w
+}
+
+// production sets made and pops from the mover's Factories and Crushers that act after this move; the rest skip it.
+func (b *Bot) production() {
+	b.made, b.pops = 0, false
+	g := b.g
+	if g.Map == nil {
+		return
+	}
+	for i, c := range g.Map.Cells {
+		if !c.Feature.IsMaker() || g.Owner[i] != b.me || !works(g.Pressed[i], b.me) {
+			continue
+		}
+		if c.Feature == core.Crusher {
+			b.made--
+		} else {
+			b.made++
+			b.pops = b.pops || g.Count[i]+1 >= g.Geo.Cap[i]
+		}
+	}
+}
+
+// wasted reports p's quiet orb on a Crusher: once working it eats one per move, so placements never fill it. One that
+// skips this move can still be primed by p's next orb.
+func wasted(g *core.Game, i int, p int8) bool {
+	if g.Map == nil || g.Map.Cells[i].Feature != core.Crusher {
+		return false
+	}
+	c, cp := int(g.Count[i]), int(g.Geo.Cap[i])
+	return c+1 < cp && (works(g.Pressed[i], p) || c+2 < cp)
+}
+
+// pull orders p's search candidates on maps: claim empty Factories, which pay their holder an orb every move, and
+// leave wasted Crusher moves for last.
+func pull(g *core.Game, i int, p int8) int {
+	switch {
+	case g.Map == nil:
+		return 0
+	case wasted(g, i, p):
+		return -100
+	case g.Map.Cells[i].Feature == core.Factory && g.Owner[i] == core.NoOwner:
+		return 24
+	}
+	return 0
 }
 
 // play copies parent into child and plays cell there, charging the budget for the work.

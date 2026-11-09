@@ -66,6 +66,11 @@ var mapCaptureCases = []mapCaptureCase{
 	{"circuit-door-landscape", 568, 320, true, false, false, "", brushDoor},
 	{"editor-place-edge", 1040, 640, false, false, false, "erase-edge", brushGate},
 	{"editor-erase-floor", 390, 844, true, false, false, "erase-floor", brushErase},
+	{"pace-slow-desktop", 1040, 640, false, false, false, "pace-slow", brushHole},
+	{"pace-endless-mobile-dark", 390, 844, true, false, false, "pace-endless", brushHole},
+	{"pace-endless-desktop", 1040, 640, false, false, false, "pace-endless", brushHole},
+	{"pace-instant-landscape", 568, 320, false, false, false, "pace-instant", brushFactory},
+	{"pace-fast-small", 320, 640, false, false, false, "pace-fast", brushFactory},
 	{"editor-overflow-end", 320, 640, true, false, false, "overflow-end", brushHold},
 	{"wall-corners-light", 1250, 700, false, false, false, "wall-corners", brushFloor},
 	{"wall-corners-dark", 1250, 700, true, false, false, "wall-corners", brushFloor},
@@ -406,6 +411,25 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 			e.name.set("A long custom map title being edited")
 			e.name.focused = true
 		}
+		if holes, factories, ok := paceCapture(c.mode); ok {
+			e.m = core.NewMap(13, 11)
+			if c.mode == "pace-instant" {
+				e.m = core.NewMap(4, 4) // only a tiny board can be instant
+			}
+			for r := range holes {
+				e.m.Cells[6*11+r].Terrain = core.Hole
+			}
+			for i := range e.m.Cells {
+				if factories > 0 && e.m.Capacity(i) >= 3 && e.m.Cells[i].Terrain == core.Floor {
+					e.m.Cells[i].Feature = core.Factory
+					factories--
+				}
+			}
+			e.changed()
+			if len(e.issues) > 0 {
+				e.snack = snackbar{message: e.issues[0].Message, ticks: snackIn} // fully shown
+			}
+		}
 		if c.mode == "issue" {
 			e.m.Cells[3*m.Rows+3].Feature = core.Link
 			e.m.Cells[3*m.Rows+3].Group = 12
@@ -644,4 +668,19 @@ func TestCaptureMaps(t *testing.T) {
 	for name, d := range g.timings {
 		t.Logf("%s: warm render + GPU readback %v/frame", name, d)
 	}
+}
+
+// paceCapture gives each pace strip capture its middle-column Holes and Factories; Instant uses a 4×4 board.
+func paceCapture(mode string) (holes, factories int, ok bool) {
+	switch mode {
+	case "pace-slow":
+		return 5, 0, true
+	case "pace-endless":
+		return 8, 0, true
+	case "pace-fast":
+		return 0, 8, true
+	case "pace-instant":
+		return 0, 11, true
+	}
+	return 0, 0, false
 }

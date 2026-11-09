@@ -144,6 +144,7 @@ func (t *tactic) candidates(n *core.Game, player int8, level, limit int) []score
 		if n.Orbs[player] <= 8 && c+1 < cp {
 			score -= 12 * enemies
 		}
+		score += pull(n, i, player)
 		dst = insertTop(dst, scored{float64(score), i}, limit)
 	}
 	t.b.levels[level] = dst

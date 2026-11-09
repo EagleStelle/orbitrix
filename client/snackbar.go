@@ -17,11 +17,16 @@ type snackbar struct {
 	ticks         int
 	timeout, age  int     // timeout 0 keeps the snackbar visible until its owner dismisses it
 	avoid         ui.Rect // a fixed action row to keep clear, or zero
+	span          ui.Rect // the column to centre in, or zero for the safe area
 }
 
 func (s *snackbar) frame(a *app) (bar ui.Rect, buttons [2]ui.Rect, opacity float64) {
 	v, u := a.safe(), a.u
 	w := min(v.W-32*u, 560*u)
+	cx := v.Cx()
+	if s.span.W > 0 {
+		w, cx = min(w, s.span.W), s.span.Cx()
+	}
 	limit := v.Bottom()
 	if s.avoid.H > 0 {
 		limit = min(limit, s.avoid.Y)
@@ -30,7 +35,7 @@ func (s *snackbar) frame(a *app) (bar ui.Rect, buttons [2]ui.Rect, opacity float
 	if s.actions == [2]string{} && s.more == "" {
 		height = max(height, float64(len(wrap(s.message, a.f.Small, max(1, w-48*u))))*18*u+24*u)
 	}
-	bar = ui.Rect{X: v.Cx() - w/2, Y: limit - height - snackGap*u, W: w, H: height}
+	bar = ui.Rect{X: cx - w/2, Y: limit - height - snackGap*u, W: w, H: height}
 	buttons[1] = ui.Rect{X: bar.Right() - 104*u, Y: bar.Cy() - 20*u, W: 96 * u, H: 40 * u}
 	buttons[0] = ui.Rect{X: buttons[1].X - 68*u, Y: buttons[1].Y, W: 64 * u, H: 40 * u}
 	p := min(1, float64(s.ticks)/snackIn)

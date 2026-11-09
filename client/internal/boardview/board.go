@@ -273,6 +273,7 @@ func (b *Board) next() (made bool, effects sound.Effects) {
 	b.Wave++
 	if b.Wave >= len(b.Waves) {
 		b.Playing, b.t = false, 0
+		b.State.settle()
 		return
 	}
 	w := b.Waves[b.Wave]
