@@ -41,7 +41,7 @@ func newMapTopology(m *MapDefinition) *mapTopology {
 		if c.Circuit.IsSwitch() {
 			t.switches = append(t.switches, int16(i))
 		}
-		if c.Terrain == BreakableWall || c.Terrain == Landfill || c.Terrain == BreakableFloor {
+		if c.Terrain == BreakableWall || c.Terrain == Landfill || c.Terrain == BreakableFloor || c.Terrain == Sinkhole {
 			t.walls = append(t.walls, int16(i))
 		}
 		if c.Feature.IsMaker() {

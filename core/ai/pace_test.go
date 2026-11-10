@@ -16,9 +16,10 @@ func TestPaceFit(t *testing.T) {
 	if os.Getenv("ORBITRIX_PACE") != "1" {
 		t.Skip("set ORBITRIX_PACE=1 to measure game lengths")
 	}
-	pieces := []core.MapCell{{Terrain: core.Hole}, {Terrain: core.BreakableFloor}, {Feature: core.Spillway}, {Feature: core.Crusher}, {Feature: core.Furnace}, {Feature: core.Reservoir}}
+	pieces := []core.MapCell{{Terrain: core.Hole}, {Terrain: core.Landfill}, {Terrain: core.Sinkhole}, {Terrain: core.BreakableFloor}, {Feature: core.Spillway}, {Feature: core.Crusher}, {Feature: core.Furnace}, {Feature: core.Reservoir}}
 	for _, size := range []int{9, 15} {
 		empty := paceMoves(core.NewMap(size, size))
+		emptyMoves, _, _ := core.NewMap(size, size).Estimate()
 		t.Logf("%d×%d empty: %.0f moves", size, size, empty)
 		for _, piece := range pieces {
 			for k := 1; k <= 4; k++ {
@@ -26,8 +27,8 @@ func TestPaceFit(t *testing.T) {
 				if len(m.Validate()) != 0 {
 					break // Endless or Instant from here on
 				}
-				_, length, pace := m.Estimate()
-				t.Logf("%d×%d %d×%+v: played %.0f‰ of empty, estimate %d‰ %v", size, size, k, piece, 1000*paceMoves(m)/empty, length, pace)
+				moves, length, pace := m.Estimate()
+				t.Logf("%d×%d %d×%+v: played %.0f‰ of empty, estimate %d‰ %v, moves %d‰", size, size, k, piece, 1000*paceMoves(m)/empty, length, pace, moves*1000/emptyMoves)
 			}
 		}
 	}

@@ -100,6 +100,7 @@ type Board struct {
 	burstOwner           []int8
 	falls                []fallingOrb
 	landfillDurability   []uint8
+	landfillTarget       []uint8 // orbs each Landfill takes to fill, worked out from the map design as core does
 
 	// Layout in device pixels.
 	area   ui.Rect
@@ -134,6 +135,14 @@ func New(g *core.Game) *Board {
 		State: NewView(g), Orbs: newOrbField(g.Geo),
 		burstStart: make([]float64, n), burstLen: make([]float64, n), burstOwner: make([]int8, n),
 		landfillDurability: append([]uint8(nil), g.Durability...),
+	}
+	if g.Map != nil {
+		b.landfillTarget = make([]uint8, n)
+		for i, c := range g.Map.Cells {
+			if c.Terrain == core.Landfill {
+				b.landfillTarget[i] = uint8(g.Map.FillTarget(i))
+			}
+		}
 	}
 	b.tri.Filter = ebiten.FilterLinear
 	s := 2*burstSrcR + 4
@@ -265,12 +274,23 @@ func (b *Board) Bounds() ui.Rect {
 // Furnaces and Crushers running after produceAt of them (core.Game.ProducedAt). snd may be nil.
 func (b *Board) Start(cell int, mover int8, waves []core.Wave, produceAt int, snd *sound.Sound) {
 	effects := b.State.terrainSounds(b.State.Place(cell, mover))
+	b.dropTaken() // a Sinkhole this placement filled
 	b.Waves, b.Wave, b.t, b.Playing = waves, -1, 0, true
 	b.settling = false
 	b.mover, b.produceAt = mover, produceAt
 	b.tailCap, b.skipCap = tailCap(len(waves)), 0
 	_, produced := b.next() // a Furnace's orb made now shares the placement note
 	snd.Place(int(mover), effects|produced|b.linkSound())
+}
+
+// dropTaken drops the orbs on the cells the last terrain step took away: a broken floor or a collapsed Sinkhole.
+// shortcut: a whole stack falls as one orb from its centre; drop each from its orbit spot if stacks should read as
+// several.
+func (b *Board) dropTaken() {
+	for _, o := range b.State.dropped {
+		o.start = b.Clock
+		b.falls = append(b.falls, o)
+	}
 }
 
 // sync makes the view match g without animating.
@@ -341,12 +361,7 @@ func (b *Board) Tick(snd *sound.Sound) {
 		fallStart := len(b.falls)
 		effects |= b.dropIntoHoles()
 		effects |= b.State.terrainSounds(b.State.Land(b.Waves[b.Wave]))
-		// shortcut: a broken floor's whole stack falls as one orb from its centre; drop each from its orbit spot if
-		// stacks should read as several.
-		for _, o := range b.State.dropped {
-			o.start = b.Clock
-			b.falls = append(b.falls, o)
-		}
+		b.dropTaken()
 		for i := fallStart; i < len(b.falls); i++ {
 			if o := &b.falls[i]; o.landfill {
 				o.remaining, o.slot = b.State.Replay.Durability[o.hole], b.landfillSlot(o.hole, i)
@@ -394,7 +409,7 @@ func (b *Board) settleFalls() (effects sound.Effects) {
 
 // landfillSlot counts the orbs already resting on, or falling to, Landfill hole's bottom ahead of fall before.
 func (b *Board) landfillSlot(hole int16, before int) uint8 {
-	n := 2 - int(b.landfillDurability[hole])
+	n := int(b.landfillTarget[hole]) - int(b.landfillDurability[hole])
 	for _, o := range b.falls[:before] {
 		if o.landfill && o.hole == hole {
 			n++
@@ -486,8 +501,10 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 		}
 	}
 	for i, d := range b.landfillDurability {
-		if d == 1 && b.State.Replay != nil && b.State.Replay.Map.Cells[i].Terrain == core.Landfill {
-			b.landfillOrb(i, core.NoOwner, 1, tms, 0)
+		if d > 0 && b.State.Replay != nil && b.State.Replay.Map.Cells[i].Terrain == core.Landfill {
+			for slot := range b.landfillTarget[i] - d {
+				b.landfillOrb(i, core.NoOwner, 1, slot)
+			}
 		}
 	}
 	b.flush(dst, b.OrbImg)
@@ -512,7 +529,7 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 
 	// Orbs lost in Holes, under the orbs in flight to the targets of the wave being shown.
 	for _, o := range b.falls {
-		b.queueFall(o, tms)
+		b.queueFall(o)
 	}
 	if b.Playing && !b.settling {
 		f := min(1, b.t/b.dur)
@@ -577,12 +594,12 @@ func (b *Board) dropIntoHoles() sound.Effects {
 }
 
 // landfillOrb queues an orb on its way down to Landfill i's bottom (depth 0 to 1) or resting there (depth 1): it shrinks
-// to the bottom's size, turns neutral and eases into its slot on the bottom's slow orbit.
-func (b *Board) landfillOrb(i int, owner int8, depth, tms float64, slot uint8) {
+// to the bottom's size, turns neutral and eases from the centre to the spot where it stays.
+func (b *Board) landfillOrb(i int, owner int8, depth float64, slot uint8) {
 	sc, s := b.Palette, b.OrbSize
 	x, y := b.Centre(i)
-	dx, dy := b.Orbs.drift(i, tms, landfillDrift*b.base*b.k*depth, slot)
-	x, y = x+dx, y+dy
+	dx, dy := b.Orbs.rest(i, slot)
+	x, y = x+dx*b.base*b.k*depth, y+dy*b.base*b.k*depth
 	h := b.OrbDrawSize / 2 * (1 - (1-landfillOrbScale)*depth)
 	fill := sc.Tile
 	if owner >= 0 {
@@ -597,7 +614,7 @@ func (b *Board) landfillOrb(i int, owner int8, depth, tms float64, slot uint8) {
 
 // queueFall queues an orb lost in a Hole: from the centre it drops away, shrinking, darkening into the pit and
 // fading together, faster as it falls.
-func (b *Board) queueFall(o fallingOrb, tms float64) {
+func (b *Board) queueFall(o fallingOrb) {
 	f := min(1, (b.Clock-o.start)/fallTicks)
 	depth := f * f // accelerates like a fall
 	alpha := 1 - depth
@@ -608,7 +625,7 @@ func (b *Board) queueFall(o fallingOrb, tms float64) {
 		fill = sc.Players[o.owner]
 	}
 	if o.landfill {
-		b.landfillOrb(int(o.hole), o.owner, depth, tms, o.slot)
+		b.landfillOrb(int(o.hole), o.owner, depth, o.slot)
 		return
 	}
 	b.quad(x, y, h, 0, s, ui.Mix(sc.Ground, sc.Pit, .9*depth), alpha)

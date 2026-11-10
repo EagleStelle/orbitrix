@@ -198,6 +198,8 @@ func (g *Game) play(cell int, record bool) error {
 			g.Geo = g.mapGeometry()
 			topologyChanged = true
 		}
+		// A Sinkhole this placement fills collapses before the first wave is chosen.
+		topologyChanged = g.collapseSinkholes(-1, record) || topologyChanged
 	}
 
 	g.cur = g.cur[:0]

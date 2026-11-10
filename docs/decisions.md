@@ -64,6 +64,15 @@ Decisions that future changes have to respect, and why. How things work is in [a
   closes. Validation therefore assumes every one broken, walls standing: each cell that is or can become Floor keeps
   a route, and the other Floor still connects. A cell left with none would hold orbs nobody can explode or capture,
   and a split board can leave players who never meet, so neither game could end.
+- A Sinkhole never explodes: it collapses wherever a Floor would explode, including when a Gate, Door or broken floor
+  drops its capacity, so it can never enter the next wave. Validation treats every Sinkhole as gone for
+  connectivity, for the same split-board reason, but needs no sealed-cell check: the Hole it becomes is still a
+  route. Bots fill them early, so `Estimate` weighs each as the Hole it becomes.
+- Map format 2 stores terrain in three bits, and Sinkhole (7) fills the last value. Further terrain needs a format
+  change, not another value.
+- A Landfill's fill target is its capacity as Floor in the starting layout, fixed when the game starts, so core,
+  client and every peer work it out from the design and `Durability` counts it down with no wire field. A target
+  that followed later Gate, Door or wall changes would need its own state on the wire.
 - Map files carry a bounded, versioned binary payload and checksum. QR links embed it in a URL fragment; there is
   no map lookup service. Invalid gameplay drafts remain portable, but malformed data is rejected.
 - Portable exports remain format 2 with `orbitrix-map2.` codes. The two-byte cell and six-byte edge layouts keep

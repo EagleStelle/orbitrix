@@ -16,8 +16,9 @@ const (
 	Void
 	BreakableWall
 	Hole
-	Landfill       // absorbs two incoming orbs, then becomes empty Floor
+	Landfill       // absorbs its FillTarget in incoming orbs, then becomes empty Floor
 	BreakableFloor // Floor until its second explosion breaks it into Void, which takes its orbs
+	Sinkhole       // Floor that never explodes: filled to capacity, it collapses into a Hole that takes its orbs
 )
 
 // Feature is an optional mechanic attached to a Floor cell.
@@ -134,7 +135,7 @@ func (m MapDefinition) ValidateStructure() error {
 		return fmt.Errorf("map has too many edges")
 	}
 	for i, c := range m.Cells {
-		if c.Terrain > BreakableFloor || c.Feature > Crusher || c.Circuit > Door {
+		if c.Terrain > Sinkhole || c.Feature > Crusher || c.Circuit > Door {
 			return fmt.Errorf("map cell %d has unknown terrain or feature", i)
 		}
 		if c.Feature != NoFeature && c.Circuit != NoCircuit {
@@ -163,9 +164,13 @@ func (m MapDefinition) adjacent(a, b int) bool {
 	return max(dc, -dc)+max(dr, -dr) == 1
 }
 
-// floor includes Breakable Floor, which plays as Floor until it breaks.
+// floor includes Breakable Floor and Sinkhole, which play as Floor until they break or collapse.
 func (m MapDefinition) floor(i int) bool {
-	return i >= 0 && i < len(m.Cells) && (m.Cells[i].Terrain == Floor || m.Cells[i].Terrain == BreakableFloor)
+	if i < 0 || i >= len(m.Cells) {
+		return false
+	}
+	t := m.Cells[i].Terrain
+	return t == Floor || t == BreakableFloor || t == Sinkhole
 }
 
 // EdgeFits reports whether a Barrier or Gate may join adjacent cells a and b: Floor on both sides, or Floor
@@ -322,6 +327,18 @@ func (m MapDefinition) capacity(cell int) (n, holes int) {
 	return n + holes, holes
 }
 
+// FillTarget is how many orbs Landfill cell absorbs before it becomes Floor: the capacity it would have as Floor in
+// the starting layout, its routes into Floor, Holes and other Landfills.
+func (m MapDefinition) FillTarget(cell int) int {
+	n := 0
+	for d := range 4 {
+		if j, _ := m.route(cell, d, nil, nil, nil, nil); m.initialFloor(j) || j >= 0 && (m.Cells[j].Terrain == Hole || m.Cells[j].Terrain == Landfill) {
+			n++
+		}
+	}
+	return n
+}
+
 // Validate returns all actionable gameplay issues. Structurally sound drafts
 // may be saved and shared even when they contain these issues.
 func (m MapDefinition) Validate() []MapIssue {
@@ -365,6 +382,9 @@ func (m MapDefinition) Validate() []MapIssue {
 			if neighbors < 2 {
 				issues = append(issues, MapIssue{Message: "Breakable Wall needs at least two neighboring Floor cells", Cells: []int{i}})
 			}
+		}
+		if c.Terrain == Landfill && m.FillTarget(i) < 2 { // the Floor it becomes would explode on its first orb
+			issues = append(issues, MapIssue{Message: "Landfill needs initial capacity of at least two", Cells: []int{i}})
 		}
 	}
 	seenEdges := make(map[[2]int]int, len(m.Edges))
@@ -457,14 +477,14 @@ func (m MapDefinition) Validate() []MapIssue {
 	if slices.ContainsFunc(m.Cells, func(c MapCell) bool { return c.Terrain == BreakableFloor }) {
 		issues = append(issues, m.sealedByBreaking()...)
 	}
-	// Destructible terrain can join regions later without changing starting capacities. Breakable Floor can only
-	// split them, so the board must hold together without it.
+	// Destructible terrain can join regions later without changing starting capacities. Breakable Floors and
+	// Sinkholes can only split them, so the board must hold together without them.
 	future := m.Clone()
 	for i, c := range future.Cells {
 		switch c.Terrain {
 		case BreakableWall, Landfill:
 			future.Cells[i].Terrain = Floor
-		case BreakableFloor:
+		case BreakableFloor, Sinkhole:
 			future.Cells[i].Terrain = Void
 		}
 	}
@@ -564,15 +584,15 @@ func (m MapDefinition) Validate() []MapIssue {
 		}
 	}
 	if len(disconnected) > 0 {
-		issues = append(issues, MapIssue{Message: "All Floor must connect through Landfills, breakable walls, breakable barriers or reachable Gates, never only Breakable Floor", Cells: disconnected})
+		issues = append(issues, MapIssue{Message: "All Floor must connect through Landfills, breakable walls, breakable barriers or reachable Gates, never only Breakable Floors or Sinkholes", Cells: disconnected})
 	}
 	if _, _, pace := m.Estimate(); pace == Instant || pace == Endless {
-		issue := MapIssue{Message: "Too many Holes, Spillways and Crushers: games would never end"}
+		issue := MapIssue{Message: "Too many Holes, Sinkholes, Spillways and Crushers: games would never end"}
 		if pace == Instant {
 			issue.Message = "Too many Furnaces and Reservoirs: games would end almost at once"
 		}
 		for i, c := range m.Cells {
-			drains := c.Terrain == Hole || c.Feature == Spillway || c.Feature == Crusher
+			drains := c.Terrain == Hole || c.Terrain == Sinkhole || c.Feature == Spillway || c.Feature == Crusher
 			if pace == Instant && (c.Feature == Furnace || c.Feature == Reservoir) || pace == Endless && drains {
 				issue.Cells = append(issue.Cells, i)
 			}
@@ -616,26 +636,38 @@ func (m MapDefinition) sealedByBreaking() []MapIssue {
 // Each open Hole side, Spillway and Crusher loses part of it, the same on every board size. Furnaces add to it, each
 // a little less as they crowd, and less still beside a Hole, which they feed. More players make Furnace maps longer,
 // since each Furnace works only on its holder's turn. Reservoirs add to it too, less, as they make an orb only when
-// they explode. A Breakable Floor drains nothing, so it leaves the pace alone, but breaking into Void takes its room
+// they explode. A Landfill drains nothing: filling it costs about a move per orb, then its Floor adds room. A Sinkhole
+// collapses early in a game and slows it like the Hole it becomes, so it counts as one.
+// A Breakable Floor drains nothing, so it leaves the pace alone, but breaking into Void takes its room
 // and a route from each neighbor, about two thirds of the way into a game on average. Integers keep validation
 // identical on every device.
 func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 	room, growth, furnaces, reservoirs, broken := 0, 1000, 0, 0, 0 // growth in thousandths of an empty board's
 	for i := range m.Cells {
 		if m.Cells[i].Terrain == Landfill {
-			room += 2 // a finite fill cost, not a permanent drain on growth
+			// A finite cost, not a drain on growth: the orbs it absorbs, about a move each, and the Floor it becomes.
+			room += 2 * m.FillTarget(i)
+		}
+		if m.Cells[i].Terrain == Sinkhole {
+			continue // weighed as the Hole it soon becomes, through its neighbors' routes into it
 		}
 		capacity, holes := m.capacity(i)
 		if capacity == 0 {
 			continue
 		}
+		var near [5]int
+		connections := m.InitialConnections(i, near[:0])
+		for _, j := range connections {
+			if m.Cells[j].Terrain == Sinkhole {
+				holes++
+			}
+		}
 		room += capacity - 1
 		growth -= 45 * holes
 		if m.Cells[i].Terrain == BreakableFloor {
 			broken += capacity - 1 // its own room, and one route from each neighbor that outlasts it
-			var near [5]int
-			for _, j := range m.InitialConnections(i, near[:0]) {
-				if m.Cells[j].Terrain != BreakableFloor {
+			for _, j := range connections {
+				if t := m.Cells[j].Terrain; t != BreakableFloor && t != Sinkhole {
 					broken++
 				}
 			}

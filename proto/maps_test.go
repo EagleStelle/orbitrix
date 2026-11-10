@@ -18,6 +18,7 @@ func TestMapMessagesRoundTrip(t *testing.T) {
 	portals.Cells[16].PortalMode, portals.Cells[32].PortalMode = core.PortalVertical, core.PortalVertical
 	landfills := core.NewMap(7, 7)
 	landfills.Cells[24].Terrain = core.Landfill
+	landfills.Cells[0].Terrain = core.Sinkhole
 	for _, m := range append(core.StarterMaps(), circuit, portals, landfills) {
 		g, err := core.NewGameWithMap(m, 2)
 		if err != nil {
@@ -69,7 +70,7 @@ func TestPartialLandfillSurvivesResync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, remaining := range []uint8{2, 1, 0} {
+	for _, remaining := range []uint8{4, 3, 2, 1, 0} { // its fill target is 4, its capacity as Floor
 		s := g.Snapshot()
 		s.Durability[12] = remaining
 		g, err = core.Restore(s)

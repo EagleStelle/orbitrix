@@ -169,6 +169,8 @@ func mapArtTerrain(state *MapState, i int) core.Terrain {
 			return core.Floor
 		case core.BreakableFloor:
 			return core.Void
+		case core.Sinkhole:
+			return core.Hole
 		}
 	}
 	return t
@@ -226,9 +228,10 @@ func mapArtWallColor(sc *ui.Palette, terrain core.Terrain) color.RGBA {
 	return sc.Dim
 }
 
-// mapArtFloorColor shifts Breakable Floor toward Dim, the reverse of Breakable Wall's shift toward Tile.
+// mapArtFloorColor shifts Breakable Floor and Sinkhole, Floor that won't last, toward Dim, the reverse of Breakable
+// Wall's shift toward Tile.
 func mapArtFloorColor(sc *ui.Palette, terrain core.Terrain) color.RGBA {
-	if terrain == core.BreakableFloor {
+	if terrain == core.BreakableFloor || terrain == core.Sinkhole {
 		return ui.Mix(sc.Tile, sc.Dim, 0.12)
 	}
 	return sc.Tile
@@ -296,9 +299,40 @@ func (s pitStep) geometry() (inset, radius float64) {
 
 func (s pitStep) ink(sc *ui.Palette) color.RGBA { return ui.Mix(sc.Tile, sc.Pit, s.depth) }
 
+// drawSinkhole marks a standing Sinkhole: a ragged hole torn through the floor to the dark it collapses into.
+func drawSinkhole(dst *ebiten.Image, sc *ui.Palette, r ui.Rect) {
+	drawMapSprite(dst, sc, r, mapSpriteKey{terrain: core.Sinkhole})
+}
+
+// sinkholeTear is the hole's outline: twelve points alternating long and short, unevenly spaced, as fractions of the
+// cell from its centre, clockwise from the top.
+var sinkholeTear = func() (points [12][2]float64) {
+	for i := range points {
+		a := float64(i)*math.Pi/6 + [12]float64{0, .12, -.08, .1, -.05, .14, -.1, .06, -.12, .09, -.04, .11}[i]
+		rad := [2]float64{.29, .15}[i%2] * (1 + [12]float64{0, .1, -.12, .05, .08, -.1, .12, -.06, -.04, .1, .06, -.08}[i])
+		points[i] = [2]float64{rad * math.Sin(a), -rad * math.Cos(a)}
+	}
+	return
+}()
+
+func renderSinkhole(dst *ebiten.Image, r ui.Rect, ink color.RGBA) {
+	p := &mapPath
+	p.Reset()
+	for i, q := range sinkholeTear {
+		x, y := float32(r.Cx()+q[0]*r.W), float32(r.Cy()+q[1]*r.W)
+		if i == 0 {
+			p.MoveTo(x, y)
+		} else {
+			p.LineTo(x, y)
+		}
+	}
+	p.Close()
+	ui.FillPath(dst, p, ink)
+}
+
 const (
 	landfillOrbScale = .7  // an orb on a Landfill bottom, smaller for being below the board
-	landfillDrift    = .06 // its orbit radius, as a fraction of the cell, inside the bottom
+	landfillScatter  = .06 // how far from the centre, as a fraction of the cell, a later orb comes to rest
 )
 
 // landfillOrbInk is the neutral fill an orb takes on a Landfill bottom.
@@ -716,7 +750,10 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 			ui.FillRound(dst, body, radius, mapArtFloorColor(sc, t))
 		}
 		if t == core.BreakableFloor {
-			drawMapSprite(dst, sc, r, mapSpriteKey{cracks: true, durability: durability}) // cut through to the mat, as Void will be
+			drawMapSprite(dst, sc, r, mapSpriteKey{terrain: t, cracks: true, durability: durability})
+		}
+		if t == core.Sinkhole {
+			drawSinkhole(dst, sc, r)
 		}
 		pressed := i < len(state.Pressed) && state.Pressed[i] != 0
 		featureScheme := *sc
@@ -825,7 +862,10 @@ func DrawMapBrush(dst *ebiten.Image, sc *ui.Palette, brush Brush, r ui.Rect, gro
 	body, radius := mapTileGeometry(r)
 	ui.FillRound(dst, body, radius, mapArtFloorColor(sc, brush.Terrain))
 	if brush.Terrain == core.BreakableFloor {
-		drawMapSprite(dst, sc, r, mapSpriteKey{cracks: true, durability: 2})
+		drawMapSprite(dst, sc, r, mapSpriteKey{terrain: brush.Terrain, cracks: true, durability: 2})
+	}
+	if brush.Terrain == core.Sinkhole {
+		drawSinkhole(dst, sc, r)
 	}
 	drawMapFeature(dst, sc, brush.Feature, group, brush.PortalMode.Axes(), 1, r, pressed)
 	drawMapCircuit(dst, sc, brush.Circuit, group, r, pressed)

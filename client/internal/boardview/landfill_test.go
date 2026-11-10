@@ -162,15 +162,14 @@ func TestLandfillFallShrinksAndSettlesOnBottom(t *testing.T) {
 	centre := func() (float64, float64) {
 		return float64(b.Verts[4].DstX+b.Verts[7].DstX) / 2, float64(b.Verts[4].DstY+b.Verts[6].DstY) / 2
 	}
-	const tms = 1234
 	previous := float32(1000)
 	for _, clock := range []float64{0, fallTicks / 2, fallTicks} {
 		b.Clock = clock
 		b.Verts, b.idx = b.Verts[:0], b.idx[:0]
-		b.queueFall(o, tms)
+		b.queueFall(o)
 		cx, cy := centre()
-		if d := math.Hypot(cx-x, cy-y); clock == 0 && d > .001 || d > 1.2*landfillDrift*80+.001 {
-			t.Fatal("the fall must start at the centre and stay on the bottom")
+		if d := math.Hypot(cx-x, cy-y); d > .001 {
+			t.Fatal("the first orb must fall straight into the centre")
 		}
 		width := b.Verts[5].DstX - b.Verts[4].DstX
 		if width >= previous {
@@ -185,22 +184,34 @@ func TestLandfillFallShrinksAndSettlesOnBottom(t *testing.T) {
 	if v := b.Verts[4]; v.ColorR != float32(ink.R)/255 || v.ColorG != float32(ink.G)/255 || v.ColorB != float32(ink.B)/255 || v.ColorA != 1 {
 		t.Fatal("the settled orb lost its neutral fill or faded away")
 	}
-	// Landing hands over to the resting orb without a jump, and the resting orb keeps moving.
+	// Landing hands over to the resting orb without a jump.
 	fx, fy := centre()
 	b.Verts, b.idx = b.Verts[:0], b.idx[:0]
-	b.landfillOrb(12, core.NoOwner, 1, tms, 0)
+	b.landfillOrb(12, core.NoOwner, 1, 0)
 	if rx, ry := centre(); math.Abs(rx-fx) > .001 || math.Abs(ry-fy) > .001 {
 		t.Fatal("the orb jumped when it came to rest")
 	}
-	b.Verts, b.idx = b.Verts[:0], b.idx[:0]
-	b.landfillOrb(12, core.NoOwner, 1, tms+1000, 0)
-	if rx, ry := centre(); math.Hypot(rx-fx, ry-fy) < .5 {
-		t.Fatal("the resting orb stopped moving")
-	}
-	b.Verts, b.idx = b.Verts[:0], b.idx[:0]
-	b.landfillOrb(12, core.NoOwner, 1, tms, 1)
-	if rx, ry := centre(); math.Hypot(rx-fx, ry-fy) < landfillDrift*80 {
-		t.Fatal("the filling orb landed on top of the resting one")
+	// A later orb falls from the centre to a spot of its own beside the first, and stays there.
+	for slot := uint8(1); slot <= 3; slot++ {
+		o.slot = slot
+		b.Clock = 0
+		b.Verts, b.idx = b.Verts[:0], b.idx[:0]
+		b.queueFall(o)
+		if cx, cy := centre(); math.Hypot(cx-x, cy-y) > .001 {
+			t.Fatal("a later orb must start its fall from the centre")
+		}
+		b.Clock = fallTicks
+		b.Verts, b.idx = b.Verts[:0], b.idx[:0]
+		b.queueFall(o)
+		lx, ly := centre()
+		if d := math.Hypot(lx-x, ly-y); d < landfillScatter*80/2-.001 || d > landfillScatter*80+.001 {
+			t.Fatalf("slot %d landed %.1f px from the centre", slot, d)
+		}
+		b.Verts, b.idx = b.Verts[:0], b.idx[:0]
+		b.landfillOrb(12, core.NoOwner, 1, slot)
+		if rx, ry := centre(); math.Abs(rx-lx) > .001 || math.Abs(ry-ly) > .001 {
+			t.Fatal("a resting orb must keep still where it landed")
+		}
 	}
 }
 
@@ -321,5 +332,45 @@ func TestLandfillRandomReplayConservation(t *testing.T) {
 	}
 	if lost == 0 {
 		t.Fatal("random play never filled a Landfill")
+	}
+}
+
+func TestLandfillOverfillLandsOnItsBottom(t *testing.T) {
+	m := core.NewMap(5, 5)
+	m.Cells[12].Terrain = core.Landfill
+	g, err := core.NewGameWithMap(m, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Durability[12] = 1 // three of its four orbs already rest on the bottom
+	// 6 pops 7 and 11 together, so two orbs arrive where one finishes the fill.
+	for _, i := range []int{6, 7, 11} {
+		g.Count[i], g.Owner[i] = 3, 0
+	}
+	g.Orbs[0] = 9
+	b := New(g)
+	waves, err := g.Apply(6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.State.Events = g.TerrainEvents
+	b.Start(6, 0, waves, g.ProducedAt, nil)
+	for b.Playing && !b.settling {
+		b.Tick(nil)
+	}
+	var landing []fallingOrb
+	for _, o := range b.falls {
+		if o.hole == 12 && o.landfill {
+			landing = append(landing, o)
+		}
+	}
+	if len(landing) != 2 || landing[0].slot != 3 || landing[0].remaining != 0 {
+		t.Fatalf("both arrivals must fall onto the bottom, the first into its last free place: %v", b.falls)
+	}
+	for ticks := 0; b.Playing && ticks < 200; ticks++ {
+		b.Tick(nil)
+	}
+	if b.Playing || b.landfillDurability[12] != 0 || !slices.Equal(b.State.Count, g.Count) || !slices.Equal(b.State.Replay.Durability, g.Durability) {
+		t.Fatal("overfilled Landfill replay differs from the resolved game")
 	}
 }

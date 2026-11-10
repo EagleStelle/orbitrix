@@ -50,6 +50,10 @@ var mapCaptureCases = []mapCaptureCase{
 	{"breakfloor-mobile-dark", 390, 844, true, true, false, "", brushBreakFloor},
 	{"breakfloor-game-desktop", 1040, 640, false, false, false, "game", brushBreakFloor},
 	{"breakfloor-game-mobile-dark", 390, 844, true, true, false, "game", brushBreakFloor},
+	{"sinkhole-desktop", 1040, 640, false, false, false, "", brushSinkhole},
+	{"sinkhole-mobile-dark", 390, 844, true, true, false, "", brushSinkhole},
+	{"sinkhole-game-desktop", 1040, 640, false, false, false, "game", brushSinkhole},
+	{"sinkhole-game-mobile-dark", 390, 844, true, true, false, "game", brushSinkhole},
 	{"portal-desktop", 1040, 640, false, false, false, "", brushPortal},
 	{"portal-mobile", 390, 844, true, true, false, "", brushPortal},
 	{"portal-landscape", 568, 320, false, false, false, "", brushPortal},
@@ -381,6 +385,12 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 			m.Cells[cell] = core.MapCell{Terrain: core.BreakableFloor}
 		}
 	}
+	if c.tool == brushSinkhole {
+		m.Name = "Sinkhole"
+		for _, cell := range []int{5*m.Rows + 8, 6*m.Rows + 8, 7*m.Rows + 8} {
+			m.Cells[cell] = core.MapCell{Terrain: core.Sinkhole}
+		}
+	}
 	if issues := m.Validate(); len(issues) > 0 {
 		g.err = &captureMapError{issues[0].Message}
 		return
@@ -398,6 +408,9 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		}
 		if c.tool == brushBreakFloor {
 			game.ReplayTerrain([]core.TerrainEvent{{Cell: 6*m.Rows + 8, Durability: 1}, {Cell: 7*m.Rows + 8, Durability: 0}})
+		}
+		if c.tool == brushSinkhole {
+			game.ReplayTerrain([]core.TerrainEvent{{Cell: 7*m.Rows + 8}}) // one has collapsed
 		}
 		if c.preview {
 			for i, cfg := range m.Cells {
@@ -562,7 +575,7 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 				return
 			}
 			game.Count[1], game.Owner[1], game.Orbs[0] = 2, 0, 2
-			remaining := uint8(2)
+			remaining := game.Durability[4]
 			if c.mode == "landfill-close" {
 				remaining = 1
 				game.Durability[4] = remaining
@@ -605,13 +618,13 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		}
 	} else if c.mode == "landfills" {
 		ui.DrawText(out, "Landfill fills into Floor", a.f.Title, 30, 36, text.AlignStart, a.sc.Ink)
-		for i, remaining := range []uint8{2, 1, 0} {
+		for i, remaining := range []uint8{4, 2, 0} {
 			m := core.NewMap(3, 3)
 			m.Cells[4].Terrain = core.Landfill
 			state := boardview.MapState{Map: &m, Durability: make([]uint8, 9)}
 			state.Durability[4] = remaining
 			boardview.DrawMapArt(out, a.sc, state, boardview.MapTransform{X: 30 + float64(i)*340, Y: 90, Cell: 90}, true, c.marks)
-			ui.DrawText(out, []string{"Empty", "One orb", "Floor"}[i], a.f.LabelBold, 165+float64(i)*340, 390, text.AlignCenter, a.sc.Ink)
+			ui.DrawText(out, []string{"Empty", "Half full", "Floor"}[i], a.f.LabelBold, 165+float64(i)*340, 390, text.AlignCenter, a.sc.Ink)
 		}
 		for i, size := range []float64{64, 32, 24} {
 			boardview.DrawMapBrush(out, a.sc, boardview.Brush{Terrain: core.Landfill, Edge: -1}, ui.Rect{X: 30 + float64(i)*100, Y: 420, W: size, H: size}, 0, false, c.marks)

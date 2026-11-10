@@ -206,8 +206,6 @@ func TestMapCodecRejectsInvalidContents(t *testing.T) {
 	for name, b := range map[string][]byte{
 		"short dimensions":             mapTestEnvelope([]byte{3, 3}, 2),
 		"invalid dimensions":           mutated(func(b []byte) { b[0] = 255 }),
-		"unknown terrain":              mutated(func(b []byte) { b[3] = 15 }),
-		"reserved terrain bit":         mutated(func(b []byte) { b[3] = byte(BreakableFloor) + 1 }),
 		"unknown feature":              mutated(func(b []byte) { b[3] = 15<<4 | byte(Floor) }),
 		"initial state without output": mutated(func(b []byte) { b[3] = 8 }),
 		"incorrect edge count":         mutated(func(b []byte) { b[len(b)-1] = 1 }),
@@ -221,6 +219,12 @@ func TestMapCodecRejectsInvalidContents(t *testing.T) {
 	}
 	if _, err := DecodeMap(mapTestEnvelope(payload, len(payload))); err != nil {
 		t.Fatalf("valid contents rejected: %v", err)
+	}
+	// Format 2's three terrain bits are all in use, so further terrain can only come from a format change.
+	unknown := NewMap(3, 3)
+	unknown.Cells[0].Terrain = Sinkhole + 1
+	if _, err := EncodeMap(unknown); err == nil || unknown.ValidateStructure() == nil {
+		t.Fatal("accepted terrain beyond Sinkhole")
 	}
 }
 

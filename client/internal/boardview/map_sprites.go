@@ -37,7 +37,9 @@ func drawMapSprite(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, key mapSpriteKe
 		case key.corner != 0:
 			renderMapWallCorner(dst, r, mapArtWallColor(sc, key.terrain), int(key.corner-1))
 		case key.cracks:
-			renderMapCracks(dst, r, key.durability, sc.Ground)
+			renderMapCracks(dst, r, key.durability, crackInk(sc, key.terrain))
+		case key.terrain == core.Sinkhole:
+			renderSinkhole(dst, r, sc.Pit)
 		default:
 			renderMapSprite(dst, sc, r, key)
 		}
@@ -63,7 +65,9 @@ func drawMapSprite(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, key mapSpriteKe
 	if key.corner != 0 {
 		ui.Tint(&op.ColorScale, mapArtWallColor(sc, key.terrain))
 	} else if key.cracks {
-		ui.Tint(&op.ColorScale, sc.Ground)
+		ui.Tint(&op.ColorScale, crackInk(sc, key.terrain))
+	} else if key.terrain == core.Sinkhole {
+		ui.Tint(&op.ColorScale, sc.Pit)
 	}
 	dst.DrawImage(img, &op)
 }
@@ -74,13 +78,12 @@ func renderMapSprite(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, key mapSprite
 		renderMapWallCorner(dst, r, ui.PureWhite, int(key.corner-1))
 	case key.cracks:
 		renderMapCracks(dst, r, key.durability, ui.PureWhite)
+	case key.terrain == core.Sinkhole:
+		renderSinkhole(dst, r, ui.PureWhite)
 	case key.lock:
 		_, inner, _, _, width := mapDeviceGeometry(r)
 		path := mapDoorLockPath(inner, width, false)
-		ink := ui.Palettes[ui.Dark].Tile
-		if ui.Luminance(sc.Tile) < .25 {
-			ink = ui.Palettes[ui.Light].Tile
-		}
+		ink := otherTheme(sc).Tile
 		ui.StrokePath(dst, path, width*1.5, PartnerColor(sc, key.group))
 		ui.StrokePath(dst, path, width, ink)
 	case key.feature != core.NoFeature:
@@ -88,6 +91,22 @@ func renderMapSprite(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, key mapSprite
 	default:
 		renderMapCircuit(dst, sc, key.circuit, key.group, r, key.pressed)
 	}
+}
+
+// otherTheme is the palette of the theme not in use, light in dark mode and dark in light mode.
+func otherTheme(sc *ui.Palette) *ui.Palette {
+	if ui.Luminance(sc.Tile) < .25 {
+		return &ui.Palettes[ui.Light]
+	}
+	return &ui.Palettes[ui.Dark]
+}
+
+// crackInk cuts Breakable Wall's fracture through to the mat, and Breakable Floor's in the other theme's mat.
+func crackInk(sc *ui.Palette, t core.Terrain) color.RGBA {
+	if t == core.BreakableFloor {
+		return otherTheme(sc).Ground
+	}
+	return sc.Ground
 }
 
 func drawMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, group uint8, axes core.PortalAxes, arrow uint8, r ui.Rect, pressed bool) {

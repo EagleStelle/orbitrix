@@ -39,8 +39,13 @@ func NewGameWithMap(m MapDefinition, players int) (*Game, error) {
 	g.topology = newMapTopology(&m)
 	g.Durability, g.Pressed = make([]uint8, len(m.Cells)), make([]uint8, len(m.Cells))
 	for i, c := range m.Cells {
-		if c.Terrain == BreakableWall || c.Terrain == Landfill || c.Terrain == BreakableFloor {
+		switch c.Terrain {
+		case BreakableWall, BreakableFloor:
 			g.Durability[i] = 2
+		case Landfill:
+			g.Durability[i] = uint8(m.FillTarget(i)) // fixed now; later Gates and walls don't move it
+		case Sinkhole:
+			g.Durability[i] = 1 // standing; 0 once it has collapsed
 		}
 	}
 	g.EdgeDurability = make([]uint8, len(m.Edges))
@@ -68,7 +73,9 @@ func (g *Game) TerrainAt(i int) Terrain {
 		return Floor
 	case t == BreakableFloor && g.Durability[i] == 0:
 		return Void
-	case t == BreakableFloor:
+	case t == Sinkhole && g.Durability[i] == 0:
+		return Hole
+	case t == BreakableFloor || t == Sinkhole:
 		return Floor
 	}
 	return t
@@ -246,6 +253,8 @@ func (g *Game) terrainWave(wave int, record bool) {
 	circuitsChanged := g.circuitInputs(wave, record)
 	if changed || circuitsChanged {
 		g.Geo = g.mapGeometry()
+	}
+	if g.collapseSinkholes(wave, record) || changed || circuitsChanged {
 		g.next = g.next[:0]
 		for i, c := range g.Count {
 			if g.Geo.Playable(i) && c >= g.Geo.Cap[i] {
@@ -253,6 +262,32 @@ func (g *Game) terrainWave(wave int, record bool) {
 			}
 		}
 	}
+}
+
+// collapseSinkholes turns every standing Sinkhole at capacity into a Hole, where a Floor would explode instead: its
+// orbs are lost. It rebuilds the topology until none is left, since a collapse can close a Portal axis and lower
+// another's capacity. It reports whether any collapsed.
+func (g *Game) collapseSinkholes(wave int, record bool) bool {
+	collapsed := false
+	for again := true; again; {
+		again = false
+		for _, e := range g.topology.walls {
+			i := int(e)
+			if g.Map.Cells[i].Terrain != Sinkhole || g.Durability[i] == 0 || !g.Geo.Playable(i) || g.Count[i] < g.Geo.Cap[i] {
+				continue
+			}
+			g.Orbs[g.Owner[i]] -= int32(g.Count[i])
+			g.Count[i], g.Owner[i], g.Durability[i] = 0, NoOwner, 0
+			if record {
+				g.TerrainEvents = append(g.TerrainEvents, TerrainEvent{Wave: wave, Cell: i})
+			}
+			again, collapsed = true, true
+		}
+		if again {
+			g.Geo = g.mapGeometry()
+		}
+	}
+	return collapsed
 }
 
 // ReplayTerrain applies recorded presentation events to a separate replay state.

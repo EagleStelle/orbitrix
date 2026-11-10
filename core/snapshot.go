@@ -75,7 +75,8 @@ func Restore(s Snapshot) (*Game, error) {
 			} else if c.Feature == Reservoir {
 				pressedOK = s.Pressed[i]&^(ReservoirMade|3) == 0 // its arrow's clockwise step and made flag
 			}
-			if s.Durability[i] > 2 || c.Terrain != BreakableWall && c.Terrain != Landfill && c.Terrain != BreakableFloor && s.Durability[i] != 0 || !pressedOK {
+			// g is fresh from NewGameWithMap, so its durability is each cell's starting value and the most it can hold.
+			if s.Durability[i] > g.Durability[i] || !pressedOK {
 				return nil, fmt.Errorf("restore: invalid terrain state at cell %d", i)
 			}
 			if c.Circuit == Hold && (s.Pressed[i] != 0) != (s.Count[i] > 0) {
@@ -123,6 +124,8 @@ func Restore(s Snapshot) (*Game, error) {
 			return nil, fmt.Errorf("restore: orbs on blocked cell %d", i)
 		case g.Map == nil && g.Geo.Playable(i) && c >= 2*g.Geo.Cap[i]:
 			return nil, fmt.Errorf("restore: cell %d has %d orbs, capacity %d", i, c, g.Geo.Cap[i])
+		case g.Map != nil && g.Map.Cells[i].Terrain == Sinkhole && g.Geo.Playable(i) && c >= g.Geo.Cap[i]:
+			return nil, fmt.Errorf("restore: Sinkhole %d holds %d orbs, capacity %d", i, c, g.Geo.Cap[i])
 		}
 		if o != NoOwner {
 			g.Orbs[o] += int32(c)
