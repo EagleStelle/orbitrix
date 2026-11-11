@@ -196,7 +196,7 @@ func (b *Bot) expandNet(tree []puctNode, node int32, g *core.Game, w []float32, 
 	p := int8(g.Turn)
 	list := b.list[:0]
 	for i, o := range g.Owner {
-		if g.Geo.Playable(i) && (o == core.NoOwner || o == p) {
+		if g.Placeable(i) && (o == core.NoOwner || o == p) {
 			list = insertTop(list, scored{float64(logit[i]), i}, k)
 		}
 	}

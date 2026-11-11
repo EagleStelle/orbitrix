@@ -30,6 +30,7 @@ type Game struct {
 	EdgeDurability []uint8   // indexed by Map.Edges; only BreakableBarrier uses durability
 	CircuitOn      [256]bool // polarity: outputs reverse their individual starting states
 	Pressed        []uint8
+	Boxes          []uint8        // BoxHere and CrateFloor bits per cell; empty on maps without Boxes
 	TerrainEvents  []TerrainEvent // events in the last recorded move
 	// ProducedAt counts the waves of the last recorded move before the mover's Furnaces and Crushers ran; -1 when
 	// the mover owned none.
@@ -51,6 +52,10 @@ type Game struct {
 	waveCells []int16 // every recorded wave, back to back
 	waveEnds  []int32 // end of each wave in waveCells
 	waves     []Wave
+	pushes    []boxPush // orbs this wave sent into Boxes
+	boxMoves  []boxMove
+	boxAt     []int16 // each pushed Box's index in boxMoves, -1 otherwise
+	claims    []uint8
 }
 
 // NewGame returns an empty cols×rows board for players players, player 0 to move.
@@ -99,6 +104,7 @@ func (g *Game) CopyFrom(src *Game) {
 	g.Durability = append(g.Durability[:0], src.Durability...)
 	g.EdgeDurability = append(g.EdgeDurability[:0], src.EdgeDurability...)
 	g.Pressed = append(g.Pressed[:0], src.Pressed...)
+	g.Boxes = append(g.Boxes[:0], src.Boxes...)
 	g.TerrainEvents, g.ProducedAt = g.TerrainEvents[:0], -1
 }
 
@@ -118,8 +124,13 @@ func (g *Game) Alive(p int) bool { return g.Orbs[p] > 0 || g.Played&(1<<p) == 0 
 // Legal reports whether the current player may place an orb in cell: the game isn't over and the cell is
 // empty or already theirs.
 func (g *Game) Legal(cell int) bool {
-	return !g.Over() && g.Geo.Playable(cell) && g.Count[cell] < 255 &&
+	return !g.Over() && g.Placeable(cell) && g.Count[cell] < 255 &&
 		(g.Owner[cell] == NoOwner || g.Owner[cell] == int8(g.Turn))
+}
+
+// Placeable reports whether cell i can take an orb at all: playable, and no Box stands on it.
+func (g *Game) Placeable(i int) bool {
+	return g.Geo.Playable(i) && (len(g.Boxes) == 0 || g.Boxes[i]&BoxHere == 0)
 }
 
 // LegalMoves appends the current player's legal cells to dst and returns it.
@@ -129,7 +140,7 @@ func (g *Game) LegalMoves(dst []int) []int {
 	}
 	p := int8(g.Turn)
 	for i, o := range g.Owner {
-		if g.Geo.Playable(i) && g.Count[i] < 255 && (o == NoOwner || o == p) {
+		if g.Placeable(i) && g.Count[i] < 255 && (o == NoOwner || o == p) {
 			dst = append(dst, i)
 		}
 	}

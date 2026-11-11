@@ -17,6 +17,11 @@ type TerrainEvent struct {
 	Switch     bool
 	Pressed    bool
 	Open       bool
+	// Box marks a Box's move from Cell to To; Shove is where the orbs it pushed off To went, -1 for none. Dir and
+	// ShoveDir are the directions they set off in, -1 on a diagonal (see Game.BoxRoute).
+	Box           bool
+	To, Shove     int
+	Dir, ShoveDir int8
 }
 
 // NewGameWithMap starts a match from a private copy of a playable design.
@@ -47,6 +52,12 @@ func NewGameWithMap(m MapDefinition, players int) (*Game, error) {
 		case Sinkhole:
 			g.Durability[i] = 1 // standing; 0 once it has collapsed
 		}
+		if c.Feature == Box {
+			if g.Boxes == nil {
+				g.Boxes = make([]uint8, len(m.Cells))
+			}
+			g.Boxes[i] = BoxHere
+		}
 	}
 	g.EdgeDurability = make([]uint8, len(m.Edges))
 	for i, e := range m.Edges {
@@ -67,6 +78,9 @@ func (g *Game) TerrainAt(i int) Terrain {
 	t := c.Terrain
 	if c.Circuit == Door && !CircuitOpen(c.InitiallyOpen, g.CircuitOn[c.Group]) {
 		return Wall
+	}
+	if len(g.Boxes) != 0 && g.Boxes[i]&CrateFloor != 0 {
+		return Floor
 	}
 	switch {
 	case (t == BreakableWall || t == Landfill) && g.Durability[i] == 0:
@@ -114,8 +128,14 @@ func (g *Game) mapGeometry() *Geometry {
 		blocked[4*e.A+d], blocked[4*e.B+(d^1)] = 1, 1
 	}
 	geo.PortalAxes = m.portalAxes(t.pairs, blocked[:], func(i int) bool { return g.TerrainAt(i) == Floor || g.TerrainAt(i) == Landfill }, 0)
+	if len(g.Boxes) != 0 {
+		geo.Blocked, geo.Dirs = slices.Clone(blocked[:4*n]), make([]int8, n*MaxConnections)
+		for i := range geo.Dirs {
+			geo.Dirs[i] = -1
+		}
+	}
 	for i, c := range m.Cells {
-		if g.TerrainAt(i) != Floor || c.Feature == Portal {
+		if g.TerrainAt(i) != Floor || c.Feature == Portal || c.Feature == Spring {
 			continue
 		}
 		var holes [5]int16
@@ -123,7 +143,7 @@ func (g *Game) mapGeometry() *Geometry {
 		nholes, outlets := 0, uint8(0)
 		for d := range 4 {
 			var scratch [4 * MaxMapGroups]int16
-			j, path := m.route(i, d, t.pairs, blocked[:], geo.PortalAxes, scratch[:0])
+			j, arrive, path := m.travel(i, d, t.pairs, blocked[:], geo.PortalAxes, scratch[:0])
 			if j >= 0 && (g.TerrainAt(j) == Hole || g.TerrainAt(j) == Landfill) {
 				holes[nholes] = int16(j)
 				holePaths[nholes] = slices.Clone(path)
@@ -132,6 +152,9 @@ func (g *Game) mapGeometry() *Geometry {
 			if j >= 0 && g.TerrainAt(j) == Floor {
 				slot := MaxConnections*i + int(geo.Degree[i])
 				geo.Nbr[slot] = int16(j)
+				if geo.Dirs != nil {
+					geo.Dirs[slot] = int8(arrive)
+				}
 				if len(path) != 0 {
 					if geo.PortalRoutes == nil {
 						geo.PortalRoutes = make([][]int16, n*MaxConnections)
@@ -182,7 +205,13 @@ func (g *Game) mapGeometry() *Geometry {
 
 func (g *Game) terrainWave(wave int, record bool) {
 	var damage [MaxSize * MaxSize]uint8
-	changed := false
+	changed, boxed := false, false
+	if len(g.Boxes) != 0 {
+		g.collectPushes()
+		if boxed = len(g.pushes) != 0; boxed {
+			changed = g.moveBoxes(wave, record)
+		}
+	}
 	if len(g.topology.walls) != 0 {
 		for _, e := range g.cur {
 			i := int(e)
@@ -214,6 +243,9 @@ func (g *Game) terrainWave(wave int, record bool) {
 					if g.Count[i] > 0 && g.Map.Cells[i].Terrain == BreakableFloor { // its orbs fall into the new Void
 						g.Orbs[g.Owner[i]] -= int32(g.Count[i])
 						g.Count[i], g.Owner[i] = 0, NoOwner
+					}
+					if len(g.Boxes) != 0 && g.Map.Cells[i].Terrain == BreakableFloor {
+						g.Boxes[i] &^= BoxHere // one that bounced onto it this wave falls too
 					}
 				} else {
 					g.Durability[i] -= d
@@ -254,7 +286,7 @@ func (g *Game) terrainWave(wave int, record bool) {
 	if changed || circuitsChanged {
 		g.Geo = g.mapGeometry()
 	}
-	if g.collapseSinkholes(wave, record) || changed || circuitsChanged {
+	if g.collapseSinkholes(wave, record) || changed || circuitsChanged || boxed {
 		g.next = g.next[:0]
 		for i, c := range g.Count {
 			if g.Geo.Playable(i) && c >= g.Geo.Cap[i] {
@@ -309,9 +341,21 @@ func (g *Game) ReplayTerrain(events []TerrainEvent) {
 			if e.Pressed {
 				g.Pressed[e.Cell] = 1
 			}
+		case e.Box:
+			g.Boxes[e.Cell] &^= BoxHere
+			if t := g.TerrainAt(e.To); t == Hole || t == Landfill {
+				g.Boxes[e.To] |= CrateFloor
+				g.Durability[e.To] = 0
+				changed = true
+			} else {
+				g.Boxes[e.To] |= BoxHere
+			}
 		default:
 			changed = changed || g.Durability[e.Cell] != 0 && e.Durability == 0
 			g.Durability[e.Cell] = e.Durability
+			if len(g.Boxes) != 0 && e.Durability == 0 && g.Map.Cells[e.Cell].Terrain == BreakableFloor {
+				g.Boxes[e.Cell] &^= BoxHere
+			}
 		}
 	}
 	if changed {

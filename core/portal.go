@@ -55,7 +55,9 @@ func (m MapDefinition) portalAxes(pairs []int16, blocked []uint8, floor func(int
 		for d := range 4 {
 			next := m.neighbor(i, d)
 			open := next >= 0
-			if open && floor != nil {
+			if open && m.Cells[next].Feature == Spring {
+				open = false // a Spring closes the axis, as a Hole does
+			} else if open && floor != nil {
 				open = floor(next)
 			} else if open {
 				open = m.floor(next) && (m.Cells[next].Circuit != Door || m.Cells[next].InitiallyOpen) || m.Cells[next].Terrain == Landfill

@@ -29,7 +29,7 @@ const (
 	tileTint      = 0.3  // how much of the player's ink their tiles take on their turn
 	burstSrcR     = 64   // radius of the burst ring source image
 	fallTicks     = 20   // an orb sent into a Hole drops from its centre and vanishes
-	landfillHold  = 15   // a filled Landfill shows its full bottom this long before it becomes Floor
+	landTicks     = 4    // an orb or Box filling its pit shows on the bottom this long, landed, before the pit is Floor
 )
 
 // fallingOrb drops into a pit; in a Landfill it settles on the bottom instead of fading away.
@@ -40,12 +40,13 @@ type fallingOrb struct {
 	landfill  bool
 	remaining uint8 // Landfill state once this fall reaches the bottom
 	slot      uint8 // its place on the bottom's orbit, so orbs sharing a bottom stay apart
+	box       bool  // a Box sinking into the pit it fills
 }
 
-// ticks is how long the orb is shown: its fall, plus the pause on a bottom it fills.
+// ticks is how long the orb or Box is shown: its fall, and for one filling its pit a moment on the bottom.
 func (o fallingOrb) ticks() float64 {
-	if o.landfill && o.remaining == 0 {
-		return fallTicks + landfillHold
+	if o.box || o.landfill && o.remaining == 0 {
+		return fallTicks + landTicks
 	}
 	return fallTicks
 }
@@ -100,7 +101,11 @@ type Board struct {
 	burstOwner           []int8
 	falls                []fallingOrb
 	landfillDurability   []uint8
-	landfillTarget       []uint8 // orbs each Landfill takes to fill, worked out from the map design as core does
+	landfillTarget       []uint8    // orbs each Landfill takes to fill, worked out from the map design as core does
+	shownBoxes           []uint8    // Replay.Boxes for the map layer: a pit a Box fills shows as Floor once it has sunk in
+	slides               []boxSlide // what the wave in flight moves
+	routes               []int16    // their Portal and Spring hops
+	moving               []uint8    // per cell, what moves there in the wave in flight; nil without Boxes or Springs
 
 	// Layout in device pixels.
 	area   ui.Rect
@@ -135,12 +140,16 @@ func New(g *core.Game) *Board {
 		State: NewView(g), Orbs: newOrbField(g.Geo),
 		burstStart: make([]float64, n), burstLen: make([]float64, n), burstOwner: make([]int8, n),
 		landfillDurability: append([]uint8(nil), g.Durability...),
+		shownBoxes:         append([]uint8(nil), g.Boxes...),
 	}
 	if g.Map != nil {
 		b.landfillTarget = make([]uint8, n)
 		for i, c := range g.Map.Cells {
 			if c.Terrain == core.Landfill {
 				b.landfillTarget[i] = uint8(g.Map.FillTarget(i))
+			}
+			if (c.Feature == core.Box || c.Feature == core.Spring) && b.moving == nil {
+				b.moving, b.routes = make([]uint8, n), make([]int16, 0, 16)
 			}
 		}
 	}
@@ -299,6 +308,9 @@ func (b *Board) Sync(g *core.Game) {
 	b.falls = b.falls[:0]
 	b.settling = false
 	b.landfillDurability = append(b.landfillDurability[:0], g.Durability...)
+	b.shownBoxes = append(b.shownBoxes[:0], g.Boxes...)
+	b.slides = b.slides[:0]
+	clear(b.moving)
 }
 
 // next runs the mover's Furnaces and Crushers at once when their turn comes, then launches the following wave or
@@ -312,6 +324,7 @@ func (b *Board) next() (made bool, effects sound.Effects) {
 	if b.Wave >= len(b.Waves) {
 		b.Playing, b.t = false, 0
 		b.State.settle()
+		b.planSlides()
 		return
 	}
 	w := b.Waves[b.Wave]
@@ -321,6 +334,7 @@ func (b *Board) next() (made bool, effects sound.Effects) {
 	for k, e := range w {
 		b.burstStart[e], b.burstLen[e], b.burstOwner[e] = b.Clock, l, b.State.from[k]
 	}
+	b.planSlides()
 	return
 }
 
@@ -328,7 +342,7 @@ func (b *Board) next() (made bool, effects sound.Effects) {
 func (b *Board) FastForward() {
 	if b.settling {
 		for i := range b.falls {
-			if b.falls[i].landfill {
+			if b.falls[i].landfill || b.falls[i].box {
 				b.falls[i].start = b.Clock - b.falls[i].ticks()
 			}
 		}
@@ -360,7 +374,9 @@ func (b *Board) Tick(snd *sound.Sound) {
 		b.t -= b.dur
 		fallStart := len(b.falls)
 		effects |= b.dropIntoHoles()
-		effects |= b.State.terrainSounds(b.State.Land(b.Waves[b.Wave]))
+		events := b.State.Land(b.Waves[b.Wave])
+		effects |= b.State.terrainSounds(events)
+		b.boxesLanded(events)
 		b.dropTaken()
 		for i := fallStart; i < len(b.falls); i++ {
 			if o := &b.falls[i]; o.landfill {
@@ -395,11 +411,13 @@ func (b *Board) settleFalls() (effects sound.Effects) {
 	for _, o := range b.falls {
 		if b.Clock-o.start < o.ticks() {
 			live = append(live, o)
+		} else if o.box {
+			effects |= b.boxSunk(o.hole)
 		} else if o.landfill && o.remaining < b.landfillDurability[o.hole] {
 			b.landfillDurability[o.hole] = o.remaining
 			b.State.revision++
 			if o.remaining == 0 {
-				effects = sound.LandfillFull
+				effects |= sound.LandfillFull
 			}
 		}
 	}
@@ -418,9 +436,10 @@ func (b *Board) landfillSlot(hole int16, before int) uint8 {
 	return uint8(min(n, 3))
 }
 
+// landfillFalling reports whether an orb or Box is still falling into a pit it fills, which holds playback.
 func (b *Board) landfillFalling() bool {
 	for _, o := range b.falls {
-		if o.landfill {
+		if o.landfill || o.box {
 			return true
 		}
 	}
@@ -466,13 +485,20 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 			if b.State.Replay.Map.Cells[i].Terrain == core.Landfill && b.landfillDurability[i] > 0 {
 				terrain = core.Landfill
 			}
+			if terrain == core.Floor && i < len(b.shownBoxes) && b.State.Replay.Boxes[i]&^b.shownBoxes[i]&core.CrateFloor != 0 {
+				terrain = core.Hole // a Box is still sinking into it; a Landfill stays one above
+			}
 			switch terrain {
 			case core.Void, core.Hole, core.Landfill: // the map layer draws the pit
 				continue
 			case core.Wall, core.BreakableWall:
 				c = sc.TileHi
 			case core.Floor:
-				c = mapArtFloorColor(sc, b.State.Replay.Map.Cells[i].Terrain)
+				design := b.State.Replay.Map.Cells[i].Terrain
+				if boxes := b.State.Replay.Boxes; len(boxes) != 0 && boxes[i]&core.CrateFloor != 0 {
+					design = core.Floor // a filled pit, plain Floor even where a Sinkhole stood
+				}
+				c = mapArtFloorColor(sc, design)
 			}
 		}
 		if turn >= 0 && int(o) == turn {
@@ -485,6 +511,8 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 	if b.State.Replay != nil {
 		b.drawMapLayer(dst, sc)
 	}
+	b.drawBoxes(dst, sc)
+	f := b.flight()
 
 	// Orbs, rim then fill (then mark) for each, in one batch.
 	for i, n := range b.State.Count {
@@ -492,6 +520,9 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 			continue
 		}
 		cx, cy := b.Centre(i)
+		if b.moving != nil && b.moving[i]&slidStack != 0 {
+			cx, cy = b.slideAt(i, true, f) // shoved along with its Box
+		}
 		owner := int(b.State.Owner[i])
 		if !b.State.Geo.Playable(i) {
 			owner = int(core.NoOwner) // presentation only; the saved owner regains control on reopening
@@ -502,8 +533,13 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 	}
 	for i, d := range b.landfillDurability {
 		if d > 0 && b.State.Replay != nil && b.State.Replay.Map.Cells[i].Terrain == core.Landfill {
-			for slot := range b.landfillTarget[i] - d {
-				b.landfillOrb(i, core.NoOwner, 1, slot)
+			// Resting orbs glide into the bigger clump as more fall in.
+			n := int(b.landfillTarget[i] - d)
+			falling, depth := b.landfillFalls(i)
+			for slot := range n {
+				x0, y0 := b.landfillSpot(i, slot, n)
+				x1, y1 := b.landfillSpot(i, slot, n+falling)
+				b.landfillOrb(i, core.NoOwner, 1, x0+(x1-x0)*depth, y0+(y1-y0)*depth)
 			}
 		}
 	}
@@ -529,19 +565,20 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 
 	// Orbs lost in Holes, under the orbs in flight to the targets of the wave being shown.
 	for _, o := range b.falls {
-		b.queueFall(o)
+		if !o.box {
+			b.queueFall(o)
+		}
 	}
 	if b.Playing && !b.settling {
-		f := min(1, b.t/b.dur)
 		for k, e := range b.Waves[b.Wave] {
-			for connection := range b.State.Geo.Targets(int(e)) {
-				x, y := b.flightPosition(int(e), connection, f)
+			for connection, target := range b.State.Geo.Targets(int(e)) {
+				x, y := b.flightPosition(int(e), connection, b.bounce(int(target), f))
 				b.Orb(x, y, int(b.State.from[k]))
 			}
 			if outlets := b.State.Geo.Outlets; outlets != nil && outlets[e] != 0 {
 				// A Reservoir's extra orb trails the one flying the way its arrow points.
 				slot, _ := b.State.Geo.Outlet(int(e), b.State.Replay.Pressed[e])
-				x, y := b.flightPosition(int(e), slot, f*.8)
+				x, y := b.flightPosition(int(e), slot, b.bounce(int(b.State.Geo.Targets(int(e))[slot]), f*.8))
 				b.Orb(x, y, int(b.State.from[k]))
 			}
 		}
@@ -559,16 +596,20 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 }
 
 func (b *Board) flightPosition(cell, connection int, fraction float64) (float64, float64) {
-	path := b.State.Geo.PortalPath(cell, connection)
-	segments := len(path)/2 + 1
+	return b.along(cell, int(b.State.Geo.Targets(cell)[connection]), b.State.Geo.PortalPath(cell, connection), fraction)
+}
+
+// along returns the point fraction of the way from cell start to cell end through hops, entry/exit pairs: a Portal
+// jumps from its entry to its exit, a Spring (its own pair) turns.
+func (b *Board) along(start, end int, hops []int16, fraction float64) (float64, float64) {
+	segments := len(hops)/2 + 1
 	progress := min(1, fraction) * float64(segments)
 	segment := min(int(progress), segments-1)
-	start, end := cell, int(b.State.Geo.Targets(cell)[connection])
 	if segment > 0 {
-		start = int(path[2*segment-1])
+		start = int(hops[2*segment-1])
 	}
 	if segment < segments-1 {
-		end = int(path[2*segment])
+		end = int(hops[2*segment])
 	}
 	sx, sy := b.Centre(start)
 	ex, ey := b.Centre(end)
@@ -593,14 +634,80 @@ func (b *Board) dropIntoHoles() sound.Effects {
 	return effects
 }
 
-// landfillOrb queues an orb on its way down to Landfill i's bottom (depth 0 to 1) or resting there (depth 1): it shrinks
-// to the bottom's size, turns neutral and eases from the centre to the spot where it stays.
-func (b *Board) landfillOrb(i int, owner int8, depth float64, slot uint8) {
+// landfillLayouts place 1 to 4 orbs resting on a Landfill bottom, in resting radii from its centre: a centred clump
+// 1.4 radii apart, overlapping as orbs on Floor do. Quarter turns keep each inside the square bottom.
+var landfillLayouts = [4][][2]float64{
+	{{0, 0}},
+	{{-.495, -.495}, {.495, .495}},
+	{{.5715, .5715}, {-.7808, .2092}, {.2092, -.7808}},
+	{{-.7, -.7}, {.7, -.7}, {.7, .7}, {-.7, .7}},
+}
+
+// landfillRest is the radius (device px) of an orb resting on a Landfill bottom: landfillOrbScale of an orb's, or less
+// where a layout of landfillLayouts wouldn't fit inside the bottom, the darkest square.
+func (b *Board) landfillRest() float64 {
+	bottom := landfillSteps[len(landfillSteps)-1].scale
+	cell := b.base * b.k
+	half, corner := cell*(.5-TileGutter)*bottom, cell*TileRadius*bottom
+	fits := func(r float64) bool {
+		for _, layout := range landfillLayouts {
+			for _, p := range layout {
+				x, y := math.Abs(p[0])*r, math.Abs(p[1])*r
+				cx, cy := x-(half-corner), y-(half-corner)
+				if x+r > half || y+r > half || cx > 0 && cy > 0 && math.Hypot(cx, cy)+r > corner {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	lo, hi := 0.0, orbRadius(b.base)*b.k*landfillOrbScale
+	if fits(hi) {
+		return hi
+	}
+	for range 24 {
+		if mid := (lo + hi) / 2; fits(mid) {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return lo
+}
+
+// landfillSpot is where (device px from Landfill i's centre) the orb in slot rests while count orbs rest there. The
+// cell's seed turns the layout a quarter turn or more, so every frame and replay agrees.
+func (b *Board) landfillSpot(i int, slot, count int) (float64, float64) {
+	count = min(max(count, slot+1), len(landfillLayouts))
+	p := landfillLayouts[count-1][min(slot, count-1)]
+	x, y := p[0], p[1]
+	for range b.Orbs.seed[i*orbSlots] & 3 {
+		x, y = -y, x
+	}
+	r := b.landfillRest()
+	return x * r, y * r
+}
+
+// landfillFalls returns how many orbs are falling into Landfill i and how far down they are (0 to 1; 1 with none).
+func (b *Board) landfillFalls(i int) (n int, depth float64) {
+	depth = 1
+	for _, o := range b.falls {
+		if o.landfill && int(o.hole) == i {
+			f := min(1, (b.Clock-o.start)/fallTicks)
+			n, depth = n+1, min(depth, f*f)
+		}
+	}
+	return n, depth
+}
+
+// landfillOrb queues an orb on its way down to Landfill i's bottom (depth 0 to 1) or resting there (depth 1), at
+// (dx, dy) from its centre: it shrinks to the bottom's size and turns neutral.
+func (b *Board) landfillOrb(i int, owner int8, depth, dx, dy float64) {
 	sc, s := b.Palette, b.OrbSize
 	x, y := b.Centre(i)
-	dx, dy := b.Orbs.rest(i, slot)
-	x, y = x+dx*b.base*b.k*depth, y+dy*b.base*b.k*depth
-	h := b.OrbDrawSize / 2 * (1 - (1-landfillOrbScale)*depth)
+	x, y = x+dx, y+dy
+	h := b.OrbDrawSize / 2 * (1 - (1-b.landfillRest()/(orbRadius(b.base)*b.k))*depth)
+
 	fill := sc.Tile
 	if owner >= 0 {
 		fill = sc.Players[owner]
@@ -625,7 +732,10 @@ func (b *Board) queueFall(o fallingOrb) {
 		fill = sc.Players[o.owner]
 	}
 	if o.landfill {
-		b.landfillOrb(int(o.hole), o.owner, depth, o.slot)
+		// It eases from the centre to its spot in the clump all the falling and resting orbs make.
+		n, _ := b.landfillFalls(int(o.hole))
+		x, y := b.landfillSpot(int(o.hole), int(o.slot), int(b.landfillTarget[o.hole]-b.landfillDurability[o.hole])+n)
+		b.landfillOrb(int(o.hole), o.owner, depth, x*depth, y*depth)
 		return
 	}
 	b.quad(x, y, h, 0, s, ui.Mix(sc.Ground, sc.Pit, .9*depth), alpha)
@@ -665,7 +775,7 @@ func (b *Board) drawMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 
 func (b *Board) renderMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 	g := b.State.Replay
-	DrawMapArt(dst, sc, MapState{Map: g.Map, Durability: g.Durability, EdgeDurability: g.EdgeDurability, Pressed: g.Pressed, CircuitOn: g.CircuitOn, Owner: b.State.Owner, Count: b.State.Count, PortalAxes: g.Geo.PortalAxes, Outlets: g.Geo.Outlets, LandfillDurability: b.landfillDurability},
+	DrawMapArt(dst, sc, MapState{Map: g.Map, Durability: g.Durability, EdgeDurability: g.EdgeDurability, Pressed: g.Pressed, CircuitOn: g.CircuitOn, Owner: b.State.Owner, Count: b.State.Count, PortalAxes: g.Geo.PortalAxes, Outlets: g.Geo.Outlets, LandfillDurability: b.landfillDurability, Boxes: b.shownBoxes, Moving: true},
 		MapTransform{Cell: b.base * b.k, Turned: b.Turned}, false, b.marks)
 }
 

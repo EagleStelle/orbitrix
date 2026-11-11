@@ -16,7 +16,9 @@ func TestPaceFit(t *testing.T) {
 	if os.Getenv("ORBITRIX_PACE") != "1" {
 		t.Skip("set ORBITRIX_PACE=1 to measure game lengths")
 	}
-	pieces := []core.MapCell{{Terrain: core.Hole}, {Terrain: core.Landfill}, {Terrain: core.Sinkhole}, {Terrain: core.BreakableFloor}, {Feature: core.Spillway}, {Feature: core.Crusher}, {Feature: core.Furnace}, {Feature: core.Reservoir}}
+	// A second cell goes just above the first: a Spring's Wall, or a Box over the Hole it can fill.
+	pieces := [][]core.MapCell{{{Terrain: core.Hole}}, {{Terrain: core.Landfill}}, {{Terrain: core.Sinkhole}}, {{Terrain: core.BreakableFloor}}, {{Feature: core.Spillway}}, {{Feature: core.Crusher}}, {{Feature: core.Furnace}}, {{Feature: core.Reservoir}},
+		{{Feature: core.Box}}, {{Terrain: core.Hole}, {Feature: core.Box}}, {{Feature: core.Spring}, {Terrain: core.Wall}}, {{Terrain: core.Wall}}}
 	for _, size := range []int{9, 15} {
 		empty := paceMoves(core.NewMap(size, size))
 		emptyMoves, _, _ := core.NewMap(size, size).Estimate()
@@ -34,8 +36,9 @@ func TestPaceFit(t *testing.T) {
 	}
 }
 
-// spreadPieces places k copies of piece on interior cells with no other piece in their 3×3 neighborhood.
-func spreadPieces(size, k int, piece core.MapCell) core.MapDefinition {
+// spreadPieces places k copies of piece on interior cells with no other piece in their 3×3 neighborhood, a second
+// cell of it just above the first.
+func spreadPieces(size, k int, piece []core.MapCell) core.MapDefinition {
 	m := core.NewMap(size, size)
 	for j := 0; k > 0 && j < 10*len(m.Cells); j++ {
 		i := j * 37 % len(m.Cells)
@@ -50,7 +53,10 @@ func spreadPieces(size, k int, piece core.MapCell) core.MapDefinition {
 			}
 		}
 		if free {
-			m.Cells[i] = piece
+			m.Cells[i] = piece[0]
+			if len(piece) > 1 {
+				m.Cells[i-1] = piece[1]
+			}
 			k--
 		}
 	}

@@ -70,6 +70,15 @@ Decisions that future changes have to respect, and why. How things work is in [a
   route. Bots fill them early, so `Estimate` weighs each as the Hole it becomes.
 - Map format 2 stores terrain in three bits, and Sinkhole (7) fills the last value. Further terrain needs a format
   change, not another value.
+- Boxes move once per wave, after its transfers, against the Boxes and terrain the wave began with; a cell two moves
+  claim, or one taking orbs back, stops both. That keeps the result independent of cell order and every peer and
+  search copy identical. `explode` must not check for Boxes per orb: a call in its inner loop slows classic boards even
+  when it never runs, so the pushes are found after the wave. Box positions can't be derived from the design, so
+  they are the one map state with its own snapshot field (`Boxes`), added inside protocol 3 like the other unreleased
+  map fields.
+- Box and Spring take component tags 13 and 14; 15 is the last free one in format 2.
+- `Estimate` assumes every Box reaches a Hole: the measured weight came from Boxes beside Holes, so maps that keep
+  them apart run longer than estimated.
 - A Landfill's fill target is its capacity as Floor in the starting layout, fixed when the game starts, so core,
   client and every peer work it out from the design and `Durability` counts it down with no wire field. A target
   that followed later Gate, Door or wall changes would need its own state on the wire.

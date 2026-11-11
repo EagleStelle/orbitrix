@@ -15,6 +15,7 @@ type Snapshot struct {
 	EdgeDurability      []uint8
 	CircuitOn           []uint8
 	Pressed             []uint8
+	Boxes               []uint8
 }
 
 // Snapshot returns a copy of g's state that shares no memory with g.
@@ -30,6 +31,7 @@ func (g *Game) Snapshot() Snapshot {
 		s.Durability = append([]uint8(nil), g.Durability...)
 		s.EdgeDurability = append([]uint8(nil), g.EdgeDurability...)
 		s.Pressed = append([]uint8(nil), g.Pressed...)
+		s.Boxes = append([]uint8(nil), g.Boxes...)
 		for i, on := range g.CircuitOn {
 			if on {
 				s.CircuitOn = append(s.CircuitOn, uint8(i))
@@ -79,7 +81,8 @@ func Restore(s Snapshot) (*Game, error) {
 			if s.Durability[i] > g.Durability[i] || !pressedOK {
 				return nil, fmt.Errorf("restore: invalid terrain state at cell %d", i)
 			}
-			if c.Circuit == Hold && (s.Pressed[i] != 0) != (s.Count[i] > 0) {
+			boxed := len(s.Boxes) == n && s.Boxes[i]&BoxHere != 0
+			if c.Circuit == Hold && (s.Pressed[i] != 0) != (s.Count[i] > 0 || boxed) {
 				return nil, fmt.Errorf("restore: Hold switch state differs from occupancy")
 			}
 			if c.Circuit.IsOutput() {
@@ -95,8 +98,11 @@ func Restore(s Snapshot) (*Game, error) {
 		copy(g.Durability, s.Durability)
 		copy(g.EdgeDurability, s.EdgeDurability)
 		copy(g.Pressed, s.Pressed)
+		if err := g.restoreBoxes(s.Boxes, s.Count); err != nil {
+			return nil, err
+		}
 		g.Geo = g.mapGeometry()
-	} else if len(s.Durability)+len(s.EdgeDurability)+len(s.Pressed)+len(s.CircuitOn) != 0 {
+	} else if len(s.Durability)+len(s.EdgeDurability)+len(s.Pressed)+len(s.CircuitOn)+len(s.Boxes) != 0 {
 		return nil, fmt.Errorf("restore: terrain state without map")
 	}
 	switch {
@@ -164,6 +170,9 @@ func (g *Game) Hash() uint64 {
 			}
 			for _, v := range []uint8{uint8(c.Terrain), uint8(c.Feature), uint8(c.Circuit), c.Group, initial, uint8(c.PortalMode), g.Durability[i], g.Pressed[i]} {
 				h = (h ^ uint64(v)) * prime
+			}
+			if len(g.Boxes) != 0 {
+				h = (h ^ uint64(g.Boxes[i])) * prime
 			}
 		}
 		// Edge order and endpoint direction do not change a map's gameplay.

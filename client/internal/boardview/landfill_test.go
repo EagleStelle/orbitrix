@@ -43,15 +43,13 @@ func TestLandfillReplayFillsOnLanding(t *testing.T) {
 		if b.landfillDurability[12] != durability {
 			t.Fatal("the opening filled before the orb reached its bottom")
 		}
-		for range fallTicks {
+		for range fallTicks + landTicks - 1 {
 			b.Tick(nil)
 		}
 		if durability == 1 && (b.landfillDurability[12] != 1 || !b.settling) {
-			t.Fatal("the filling orb must rest on the bottom a moment before Floor appears")
+			t.Fatal("the opening became Floor before the filling orb reached its bottom")
 		}
-		for range landfillHold {
-			b.Tick(nil)
-		}
+		b.Tick(nil)
 		if b.landfillDurability[12] != g.Durability[12] || len(b.falls) != 0 {
 			t.Fatal("the Landfill did not settle after its fall")
 		}
@@ -94,7 +92,7 @@ func TestCompletingLandfillSettlesBeforeNextWaveOrTurn(t *testing.T) {
 			for !b.settling && b.Playing {
 				b.Tick(nil)
 			}
-			waitingTicks := fallTicks + landfillHold - 1
+			waitingTicks := fallTicks + landTicks - 1
 			if skip {
 				waitingTicks = 3
 			}
@@ -177,7 +175,7 @@ func TestLandfillFallShrinksAndSettlesOnBottom(t *testing.T) {
 		}
 		previous = width
 	}
-	if math.Abs(float64(previous)-40*landfillOrbScale) > .001 {
+	if math.Abs(float64(previous)-40*b.landfillRest()/orbRadius(80)) > .001 {
 		t.Fatal("the orb did not settle at the smaller bottom position")
 	}
 	ink := landfillOrbInk(b.Palette)
@@ -187,11 +185,11 @@ func TestLandfillFallShrinksAndSettlesOnBottom(t *testing.T) {
 	// Landing hands over to the resting orb without a jump.
 	fx, fy := centre()
 	b.Verts, b.idx = b.Verts[:0], b.idx[:0]
-	b.landfillOrb(12, core.NoOwner, 1, 0)
+	b.landfillOrb(12, core.NoOwner, 1, 0, 0)
 	if rx, ry := centre(); math.Abs(rx-fx) > .001 || math.Abs(ry-fy) > .001 {
 		t.Fatal("the orb jumped when it came to rest")
 	}
-	// A later orb falls from the centre to a spot of its own beside the first, and stays there.
+	// A later orb falls from the centre to its spot in the clump, and stays there.
 	for slot := uint8(1); slot <= 3; slot++ {
 		o.slot = slot
 		b.Clock = 0
@@ -204,11 +202,12 @@ func TestLandfillFallShrinksAndSettlesOnBottom(t *testing.T) {
 		b.Verts, b.idx = b.Verts[:0], b.idx[:0]
 		b.queueFall(o)
 		lx, ly := centre()
-		if d := math.Hypot(lx-x, ly-y); d < landfillScatter*80/2-.001 || d > landfillScatter*80+.001 {
-			t.Fatalf("slot %d landed %.1f px from the centre", slot, d)
+		sx, sy := b.landfillSpot(12, int(slot), int(slot)+1)
+		if math.Abs(lx-x-sx) > .001 || math.Abs(ly-y-sy) > .001 {
+			t.Fatalf("slot %d landed at %.1f, %.1f from the centre, want %.1f, %.1f", slot, lx-x, ly-y, sx, sy)
 		}
 		b.Verts, b.idx = b.Verts[:0], b.idx[:0]
-		b.landfillOrb(12, core.NoOwner, 1, slot)
+		b.landfillOrb(12, core.NoOwner, 1, sx, sy)
 		if rx, ry := centre(); math.Abs(rx-lx) > .001 || math.Abs(ry-ly) > .001 {
 			t.Fatal("a resting orb must keep still where it landed")
 		}
@@ -372,5 +371,32 @@ func TestLandfillOverfillLandsOnItsBottom(t *testing.T) {
 	}
 	if b.Playing || b.landfillDurability[12] != 0 || !slices.Equal(b.State.Count, g.Count) || !slices.Equal(b.State.Replay.Durability, g.Durability) {
 		t.Fatal("overfilled Landfill replay differs from the resolved game")
+	}
+}
+
+// Orbs resting on a Landfill bottom form a centred clump, overlapping 1.4 radii apart as on Floor, inside the bottom,
+// on any cell size.
+func TestLandfillRestSpacing(t *testing.T) {
+	for _, base := range []float64{24, 40, 80} {
+		b := &Board{base: base, k: 1.5, Orbs: &orbField{seed: make([]uint32, orbSlots)}}
+		r, half := b.landfillRest(), base*b.k*(.5-TileGutter)*landfillSteps[len(landfillSteps)-1].scale
+		for count := 1; count <= 4; count++ {
+			var sx, sy float64
+			for slot := range count {
+				x, y := b.landfillSpot(0, slot, count)
+				sx, sy = sx+x, sy+y
+				if math.Abs(x)+r > half+1e-9 || math.Abs(y)+r > half+1e-9 {
+					t.Fatalf("base %v, %d orbs: slot %d leaves the bottom", base, count, slot)
+				}
+				if slot > 0 {
+					if px, py := b.landfillSpot(0, slot-1, count); math.Abs(math.Hypot(x-px, y-py)-1.4*r) > .01*r {
+						t.Fatalf("base %v, %d orbs: slots %d and %d don't overlap as on Floor", base, count, slot-1, slot)
+					}
+				}
+			}
+			if math.Hypot(sx, sy) > .01*r {
+				t.Fatalf("base %v: %d orbs aren't centred", base, count)
+			}
+		}
 	}
 }

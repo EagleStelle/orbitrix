@@ -9,6 +9,7 @@ const topologyCacheSize = 64 // bounded tables shared by all search copies
 type topologyKey struct {
 	circuit     uint16
 	broken      [(MaxSize*MaxSize + 63) / 64]uint64
+	crates      [(MaxSize*MaxSize + 63) / 64]uint64 // Holes, Landfills and Sinkholes filled by a Box
 	brokenEdges [(2*MaxSize*(MaxSize-1) + 63) / 64]uint64
 }
 
@@ -70,6 +71,11 @@ func (g *Game) topologyKey() (key topologyKey) {
 	for _, i := range g.topology.walls {
 		if g.Durability[i] == 0 {
 			key.broken[i/64] |= 1 << (i % 64)
+		}
+	}
+	for i, b := range g.Boxes {
+		if b&CrateFloor != 0 {
+			key.crates[i/64] |= 1 << (i % 64)
 		}
 	}
 	for _, i := range g.topology.barriers {

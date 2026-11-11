@@ -32,6 +32,8 @@ const (
 	Spillway // takes one extra orb to explode and loses it, like one sent into a Hole
 	Furnace  // gains an orb after each of its owner's moves
 	Crusher  // loses an orb after each of its owner's moves
+	Box      // marks where a crate starts; explosions push it, and the first Hole or Landfill it enters becomes Floor
+	Spring   // takes no orbs: what arrives leaves through the side facing away from its one Wall
 )
 
 // IsMaker reports whether f acts after its holder's moves.
@@ -111,7 +113,7 @@ func (m MapDefinition) Clone() MapDefinition {
 func (m MapDefinition) FloorCount() int {
 	n := 0
 	for i := range m.Cells {
-		if m.initialFloor(i) {
+		if m.initialFloor(i) && m.Cells[i].Feature != Box {
 			n++
 		}
 	}
@@ -135,7 +137,7 @@ func (m MapDefinition) ValidateStructure() error {
 		return fmt.Errorf("map has too many edges")
 	}
 	for i, c := range m.Cells {
-		if c.Terrain > Sinkhole || c.Feature > Crusher || c.Circuit > Door {
+		if c.Terrain > Sinkhole || c.Feature > Spring || c.Circuit > Door {
 			return fmt.Errorf("map cell %d has unknown terrain or feature", i)
 		}
 		if c.Feature != NoFeature && c.Circuit != NoCircuit {
@@ -181,8 +183,45 @@ func (m MapDefinition) EdgeFits(a, b int) bool {
 	return floor(a) && (floor(b) || hole(b)) || hole(a) && floor(b)
 }
 
+// initialFloor includes a Box's cell: neighbors route into it, and it is Floor once the Box moves on.
 func (m MapDefinition) initialFloor(i int) bool {
-	return m.floor(i) && m.Cells[i].Feature != Portal && (m.Cells[i].Circuit != Door || m.Cells[i].InitiallyOpen)
+	return m.floor(i) && m.Cells[i].Feature != Portal && m.Cells[i].Feature != Spring && (m.Cells[i].Circuit != Door || m.Cells[i].InitiallyOpen)
+}
+
+// SpringFacing is the direction (left, right, up, down) a Spring launches toward, away from the one orthogonal Wall
+// or permanent Barrier behind it; -1 without exactly one.
+func (m MapDefinition) SpringFacing(cell int) int {
+	facing := -1
+	for d := range 4 {
+		j := m.neighbor(cell, d)
+		if j >= 0 && (m.Cells[j].Terrain == Wall || slices.ContainsFunc(m.Edges, func(e MapEdge) bool {
+			return e.Kind == Barrier && (e.A == cell && e.B == j || e.B == cell && e.A == j)
+		})) {
+			if facing >= 0 {
+				return -1
+			}
+			facing = d ^ 1
+		}
+	}
+	return facing
+}
+
+// springFits reports whether a Spring has one Wall or Barrier behind it and, in front with no edge between, a cell that takes
+// orbs: Floor without a Portal, Spring or Door, a Hole or a Landfill.
+func (m MapDefinition) springFits(cell int) bool {
+	facing := m.SpringFacing(cell)
+	front := -1
+	if facing >= 0 {
+		front = m.neighbor(cell, facing)
+	}
+	if front < 0 {
+		return false
+	}
+	f := m.Cells[front]
+	if !m.floor(front) && f.Terrain != Hole && f.Terrain != Landfill || f.Feature == Portal || f.Feature == Spring || f.Circuit == Door {
+		return false
+	}
+	return !slices.ContainsFunc(m.Edges, func(e MapEdge) bool { return e.A == cell && e.B == front || e.B == cell && e.A == front })
 }
 
 func (m MapDefinition) neighbor(cell, direction int) int {
@@ -230,22 +269,39 @@ func (m MapDefinition) routeBlocked(cell, direction int, blocked []uint8) bool {
 	return false
 }
 
-// route follows a cardinal move through Portal pairs without changing direction.
-// A nonnil path collects entry/exit pairs for presentation; nil avoids draft allocations.
+// route follows a cardinal move through Portal pairs without changing direction, and through Springs, which turn
+// it to face away from their Wall. A nonnil path collects entry/exit pairs for presentation (a Spring is its own
+// pair); nil avoids draft allocations.
 func (m MapDefinition) route(cell, direction int, pairs []int16, blocked []uint8, axes []PortalAxes, path []int16) (int, []int16) {
+	j, _, path := m.travel(cell, direction, pairs, blocked, axes, path)
+	return j, path
+}
+
+// travel is route that also returns the direction the move arrives in.
+func (m MapDefinition) travel(cell, direction int, pairs []int16, blocked []uint8, axes []PortalAxes, path []int16) (int, int, []int16) {
 	for hops := 0; hops <= len(m.Cells); hops++ {
 		next := m.neighbor(cell, direction)
 		if next < 0 || m.routeBlocked(cell, direction, blocked) {
-			return -1, path
+			return -1, direction, path
+		}
+		if m.Cells[next].Feature == Spring {
+			if direction = m.SpringFacing(next); direction < 0 {
+				return -1, direction, path
+			}
+			if path != nil {
+				path = append(path, int16(next), int16(next))
+			}
+			cell = next
+			continue
 		}
 		if m.Cells[next].Feature != Portal {
-			return next, path
+			return next, direction, path
 		}
 		if axes == nil {
 			axes = m.InitialPortalAxes()
 		}
 		if axes[next]&PortalAxes(1<<(direction/2)) == 0 {
-			return -1, path
+			return -1, direction, path
 		}
 		pair := -1
 		if pairs != nil {
@@ -254,14 +310,14 @@ func (m MapDefinition) route(cell, direction int, pairs []int16, blocked []uint8
 			pair = m.partner(next)
 		}
 		if pair < 0 {
-			return -1, path
+			return -1, direction, path
 		}
 		if path != nil {
 			path = append(path, int16(next), int16(pair))
 		}
 		cell = pair
 	}
-	return -1, path // A Portal-only loop has no landing cell.
+	return -1, direction, path // A Portal-only loop has no landing cell.
 }
 
 // InitialOutlets returns a cell's open Floor routes at the start, bit d for direction d (left, right, up, down), as
@@ -382,6 +438,9 @@ func (m MapDefinition) Validate() []MapIssue {
 			if neighbors < 2 {
 				issues = append(issues, MapIssue{Message: "Breakable Wall needs at least two neighboring Floor cells", Cells: []int{i}})
 			}
+		}
+		if c.Feature == Spring && c.Terrain == Floor && !m.springFits(i) {
+			issues = append(issues, MapIssue{Message: "A Spring needs exactly one Wall or Barrier beside it and no solid objects in front", Cells: []int{i}})
 		}
 		if c.Terrain == Landfill && m.FillTarget(i) < 2 { // the Floor it becomes would explode on its first orb
 			issues = append(issues, MapIssue{Message: "Landfill needs initial capacity of at least two", Cells: []int{i}})
@@ -579,7 +638,7 @@ func (m MapDefinition) Validate() []MapIssue {
 	}
 	var disconnected []int
 	for i, c := range m.Cells {
-		if (c.Terrain == Floor || c.Terrain == Landfill) && c.Feature != Portal && regions[i] != ref {
+		if (c.Terrain == Floor || c.Terrain == Landfill) && c.Feature != Portal && c.Feature != Spring && regions[i] != ref {
 			disconnected = append(disconnected, i)
 		}
 	}
@@ -639,11 +698,20 @@ func (m MapDefinition) sealedByBreaking() []MapIssue {
 // they explode. A Landfill drains nothing: filling it costs about a move per orb, then its Floor adds room. A Sinkhole
 // collapses early in a game and slows it like the Hole it becomes, so it counts as one.
 // A Breakable Floor drains nothing, so it leaves the pace alone, but breaking into Void takes its room
-// and a route from each neighbor, about two thirds of the way into a game on average. Integers keep validation
+// and a route from each neighbor, about two thirds of the way into a game on average. Each Box fills a Hole (or a
+// collapsed Sinkhole) early in a game, assuming it reaches one, so the Holes Boxes can fill drain only for a while.
+// Boxes and Springs otherwise drain and add nothing; a Spring takes its own cell's room. Integers keep validation
 // identical on every device.
 func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 	room, growth, furnaces, reservoirs, broken := 0, 1000, 0, 0, 0 // growth in thousandths of an empty board's
+	pits, pitSides, boxes := 0, 0, 0
 	for i := range m.Cells {
+		switch {
+		case m.Cells[i].Terrain == Hole || m.Cells[i].Terrain == Sinkhole:
+			pits++
+		case m.Cells[i].Feature == Box:
+			boxes++
+		}
 		if m.Cells[i].Terrain == Landfill {
 			// A finite cost, not a drain on growth: the orbs it absorbs, about a move each, and the Floor it becomes.
 			room += 2 * m.FillTarget(i)
@@ -664,6 +732,7 @@ func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 		}
 		room += capacity - 1
 		growth -= 45 * holes
+		pitSides += holes
 		if m.Cells[i].Terrain == BreakableFloor {
 			broken += capacity - 1 // its own room, and one route from each neighbor that outlasts it
 			for _, j := range connections {
@@ -687,6 +756,8 @@ func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 		}
 	}
 	room -= broken * 2 / 3 // Breakable Floors break partway through a game
+	// A Hole a Box fills costs 17 a side over its game instead of 45, spread over the Holes it might be.
+	growth += (45 - 17) * pitSides * min(boxes, pits) / max(1, pits)
 	growth += 150 * 83 * furnaces / (83 + furnaces)
 	growth += 7600 * reservoirs / (300 + reservoirs)
 	length = math.MaxInt32

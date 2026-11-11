@@ -54,6 +54,12 @@ var mapCaptureCases = []mapCaptureCase{
 	{"sinkhole-mobile-dark", 390, 844, true, true, false, "", brushSinkhole},
 	{"sinkhole-game-desktop", 1040, 640, false, false, false, "game", brushSinkhole},
 	{"sinkhole-game-mobile-dark", 390, 844, true, true, false, "game", brushSinkhole},
+	{"box-desktop", 1040, 640, false, false, false, "", brushBox},
+	{"box-mobile-dark", 390, 844, true, false, false, "", brushSpring},
+	{"box-game-desktop", 1040, 640, false, false, false, "game", brushBox},
+	{"box-game-mobile-dark", 390, 844, true, true, false, "game", brushBox},
+	{"box-art-light", 1040, 700, false, false, false, "boxes", brushBox},
+	{"box-art-dark", 1040, 700, true, false, false, "boxes", brushBox},
 	{"portal-desktop", 1040, 640, false, false, false, "", brushPortal},
 	{"portal-mobile", 390, 844, true, true, false, "", brushPortal},
 	{"portal-landscape", 568, 320, false, false, false, "", brushPortal},
@@ -391,6 +397,15 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 			m.Cells[cell] = core.MapCell{Terrain: core.Sinkhole}
 		}
 	}
+	if c.tool == brushBox || c.tool == brushSpring {
+		m.Name = "Crates"
+		m.Cells[7*m.Rows+8].Terrain = core.Hole
+		for _, cell := range []int{6*m.Rows + 8, 5*m.Rows + 9, 12*m.Rows + 2} {
+			m.Cells[cell] = core.MapCell{Feature: core.Box}
+		}
+		m.Cells[12*m.Rows+6].Terrain, m.Cells[11*m.Rows+6].Feature = core.Wall, core.Spring // faces left
+		m.Cells[7*m.Rows+10].Terrain, m.Cells[7*m.Rows+9].Feature = core.Wall, core.Spring  // faces up, onto the Hole
+	}
 	if issues := m.Validate(); len(issues) > 0 {
 		g.err = &captureMapError{issues[0].Message}
 		return
@@ -411,6 +426,9 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		}
 		if c.tool == brushSinkhole {
 			game.ReplayTerrain([]core.TerrainEvent{{Cell: 7*m.Rows + 8}}) // one has collapsed
+		}
+		if c.tool == brushBox {
+			game.ReplayTerrain([]core.TerrainEvent{{Box: true, Cell: 6*m.Rows + 8, To: 7*m.Rows + 8}}) // one has filled the Hole
 		}
 		if c.preview {
 			for i, cfg := range m.Cells {
@@ -438,7 +456,7 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		lib := &mapsScene{back: newHome(), selected: 1, store: store}
 		lib.refresh()
 		s = lib
-	case "art", "wall-corners", "door-orbs", "barriers", "portals", "landfills", "landfill-joins", "landfill-fall", "landfill-close":
+	case "art", "wall-corners", "door-orbs", "barriers", "portals", "landfills", "landfill-joins", "landfill-fall", "landfill-close", "boxes":
 	default:
 		if c.mode == "large" {
 			m = resizeMap(m, 40, 40)
@@ -668,6 +686,8 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		if err := drawDoorOrbStates(out, a, c.preview); err != nil {
 			g.err = err
 		}
+	} else if c.mode == "boxes" {
+		drawBoxArt(out, a, c.marks)
 	} else if c.mode == "art" {
 		drawArtStates(out, a)
 	} else {
@@ -801,4 +821,29 @@ func paceCapture(mode string) (holes, furnaces int, ok bool) {
 		return 0, 11, true
 	}
 	return 0, 0, false
+}
+
+// drawBoxArt shows Box and Spring at palette and map sizes, then a small map with Springs facing each way, Boxes, a
+// Hole and a Hole a Box has filled.
+func drawBoxArt(dst *ebiten.Image, a *app, marks bool) {
+	for i, feature := range []core.Feature{core.Box, core.Spring} {
+		x := 30 + float64(i)*520
+		ui.DrawText(dst, []string{"Box", "Spring"}[i], a.f.Heading, x, 30, text.AlignStart, a.sc.Ink)
+		boardview.DrawMapBrush(dst, a.sc, boardview.Brush{Feature: feature, Edge: -1}, ui.Rect{X: x, Y: 70, W: 160, H: 160}, 0, false, marks)
+		for j, size := range []float64{80, 48, 32, 24} {
+			boardview.DrawMapBrush(dst, a.sc, boardview.Brush{Feature: feature, Edge: -1}, ui.Rect{X: x + 180 + float64(j)*90, Y: 110, W: size, H: size}, 0, false, marks)
+		}
+	}
+	m := core.NewMap(7, 5)
+	at := func(c, r int) int { return c*5 + r }
+	for _, pair := range [][2]int{{at(1, 4), at(1, 3)}, {at(3, 0), at(3, 1)}, {at(6, 2), at(5, 2)}, {at(0, 0), at(1, 0)}, {at(6, 3), at(5, 3)}} {
+		m.Cells[pair[0]].Terrain, m.Cells[pair[1]].Feature = core.Wall, core.Spring
+	}
+	m.Cells[at(2, 2)].Feature, m.Cells[at(4, 3)].Feature = core.Box, core.Box
+	m.Cells[at(4, 0)].Terrain, m.Cells[at(5, 4)].Terrain = core.Hole, core.Hole
+	m.Cells[at(0, 3)].Feature = core.Spring                                                                                  // behind a Barrier, facing down
+	m.Edges = []core.MapEdge{{A: at(2, 3), B: at(2, 4), Kind: core.Barrier}, {A: at(0, 2), B: at(0, 3), Kind: core.Barrier}} // one meets a mount's corner
+	boxes := make([]uint8, len(m.Cells))
+	boxes[at(5, 4)] = core.CrateFloor
+	boardview.DrawMapArt(dst, a.sc, boardview.MapState{Map: &m, Boxes: boxes}, boardview.MapTransform{X: 30, Y: 260, Cell: 84}, true, marks)
 }

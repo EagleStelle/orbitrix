@@ -13,6 +13,12 @@ func (v *view) terrainSounds(events []core.TerrainEvent) (effects sound.Effects)
 		if e.Cell < 0 { // Gates already have their controller's cue.
 			continue
 		}
+		if e.Box { // its slide knocked at launch; filling a pit, it falls in, and levels it as it lands (Board.boxSunk)
+			if v.Replay.Boxes[e.To] == core.CrateFloor {
+				effects |= sound.Fall
+			}
+			continue
+		}
 		if !e.Switch {
 			if !e.Edge && (v.Replay.Map.Cells[e.Cell].Terrain == core.Landfill || v.Replay.Map.Cells[e.Cell].Terrain == core.Sinkhole) {
 				effects |= sound.Fall
@@ -45,18 +51,34 @@ func (v *view) terrainSounds(events []core.TerrainEvent) (effects sound.Effects)
 	return
 }
 
+// linkSound is the cue of the wave just launched: a chime for orbs or Boxes crossing a Link or Portal, and the Box and
+// Spring cues.
 func (b *Board) linkSound() sound.Effects {
-	if b.Playing && !b.settling && b.State.Replay != nil {
-		for _, cell := range b.Waves[b.Wave] {
-			if b.State.Replay.Map.Cells[cell].Feature == core.Link {
-				return sound.Link
+	if !b.Playing || b.settling || b.State.Replay == nil {
+		return 0
+	}
+	effects := b.boxSounds()
+	cells := b.State.Replay.Map.Cells
+	portal := func(hops []int16) bool {
+		for _, cell := range hops {
+			if cells[cell].Feature == core.Portal {
+				return true
 			}
-			for connection := range b.State.Geo.Targets(int(cell)) {
-				if len(b.State.Geo.PortalPath(int(cell), connection)) != 0 {
-					return sound.Link
-				}
+		}
+		return false
+	}
+	if portal(b.routes) {
+		return effects | sound.Link
+	}
+	for _, cell := range b.Waves[b.Wave] {
+		if cells[cell].Feature == core.Link {
+			return effects | sound.Link
+		}
+		for connection := range b.State.Geo.Targets(int(cell)) {
+			if portal(b.State.Geo.PortalPath(int(cell), connection)) {
+				return effects | sound.Link
 			}
 		}
 	}
-	return 0
+	return effects
 }

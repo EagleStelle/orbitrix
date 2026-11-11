@@ -221,11 +221,11 @@ func (b *Bot) corners(j, k, i int) bool {
 	return false
 }
 
-// quiet reports whether exploding i can't chain or capture, because no neighbour is an enemy's or primed. Its outcome
-// is then known without simulating: one more orb, nothing taken.
+// quiet reports whether exploding i can't chain or capture, because no neighbour is an enemy's, primed or a Box (whose
+// push can shove orbs anywhere). Its outcome is then known without simulating: one more orb, nothing taken.
 func (b *Bot) quiet(i int) bool {
 	for _, j := range b.nbrs(i) {
-		if b.enemy(int(j)) || b.primed(int(j)) {
+		if b.enemy(int(j)) || b.primed(int(j)) || len(b.g.Boxes) != 0 && b.g.Boxes[j]&core.BoxHere != 0 {
 			return false
 		}
 	}

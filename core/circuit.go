@@ -56,7 +56,7 @@ func (g *Game) circuitInputs(wave int, record bool) bool {
 			}
 		case Hold:
 			pressed = 0
-			if g.Count[i] > 0 {
+			if g.Count[i] > 0 || len(g.Boxes) != 0 && g.Boxes[i]&BoxHere != 0 {
 				pressed = 1
 			}
 		}

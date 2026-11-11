@@ -225,18 +225,6 @@ func (f *orbField) update(i, count, capacity int, tms, cell float64) [][2]float6
 	return f.positions(i, slots, cell)
 }
 
-// rest is where an orb comes to rest on Landfill i's bottom, as a fraction of the cell from its centre: the first in
-// the centre, later ones at a spot drawn from the cell's seed, so every frame and replay leaves it in the same place.
-func (f *orbField) rest(i int, slot uint8) (x, y float64) {
-	if slot == 0 {
-		return 0, 0
-	}
-	sv := f.seed[i*orbSlots+int(slot)]
-	angle := float64(sv&0xffff) / 65536 * tau
-	r := landfillScatter * (0.5 + 0.5*float64(sv>>16)/65536) // never right on the centre orb
-	return r * math.Cos(angle), r * math.Sin(angle)
-}
-
 func (f *orbField) positions(i, slots int, cell float64) [][2]float64 {
 	p := f.Pos[i*orbSlots*2 : (i*orbSlots+slots)*2]
 	s := cell / orbCell

@@ -16,7 +16,8 @@ type mapSpriteKey struct {
 	feature                         core.Feature
 	circuit                         core.CircuitKind
 	group, durability, corner       uint8
-	pressed, lock, cracks           bool
+	pressed, lock, cracks, crate    bool  // crate: the faint crate in Floor a Box filled
+	squash                          uint8 // a Spring's pad pressed toward its base, in steps of springSquash
 	portalAxes                      core.PortalAxes
 	arrow                           uint8 // a Reservoir's outlet side, 1 up to 4 left
 }
@@ -27,6 +28,12 @@ var mapSprites = make(map[mapSpriteKey]*ebiten.Image)
 var mapSpritePixels int
 
 func drawMapSprite(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, key mapSpriteKey) {
+	drawMapSpriteFaded(dst, sc, r, key, 1, 1)
+}
+
+// drawMapSpriteFaded draws a sprite scaled about its centre and faded, as a Box falling into the pit it fills.
+// shortcut: cells too large for a sprite draw unscaled and opaque; cache them too if that shows.
+func drawMapSpriteFaded(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, key mapSpriteKey, scale, alpha float64) {
 	key.cell = r.W
 	key.ground, key.ink, key.dim, key.partner = sc.Ground, sc.Ink, sc.Dim, PartnerColor(sc, key.group)
 	key.tile = sc.Tile
@@ -60,7 +67,9 @@ func drawMapSprite(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, key mapSpriteKe
 		mapSpritePixels += side * side
 	}
 	var op ebiten.DrawImageOptions
-	op.GeoM.Translate(r.X-pad, r.Y-pad)
+	op.GeoM.Translate(-pad-r.W/2, -pad-r.W/2)
+	op.GeoM.Scale(scale, scale)
+	op.GeoM.Translate(r.Cx(), r.Cy())
 	op.Filter = ebiten.FilterLinear
 	if key.corner != 0 {
 		ui.Tint(&op.ColorScale, mapArtWallColor(sc, key.terrain))
@@ -69,6 +78,7 @@ func drawMapSprite(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, key mapSpriteKe
 	} else if key.terrain == core.Sinkhole {
 		ui.Tint(&op.ColorScale, sc.Pit)
 	}
+	op.ColorScale.ScaleAlpha(float32(alpha))
 	dst.DrawImage(img, &op)
 }
 
@@ -80,6 +90,11 @@ func renderMapSprite(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, key mapSprite
 		renderMapCracks(dst, r, key.durability, ui.PureWhite)
 	case key.terrain == core.Sinkhole:
 		renderSinkhole(dst, r, ui.PureWhite)
+	case key.feature == core.Spring:
+		renderSpring(dst, sc, r, key.arrow, key.squash)
+	case key.crate:
+		s := r.W * crateFloorScale
+		renderCrate(dst, sc, ui.Rect{X: r.Cx() - s/2, Y: r.Cy() - s/2, W: s, H: s}, sc.Tile, ui.Mix(sc.Dim, sc.Pit, .35))
 	case key.lock:
 		_, inner, _, _, width := mapDeviceGeometry(r)
 		path := mapDoorLockPath(inner, width, false)

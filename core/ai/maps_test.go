@@ -33,7 +33,11 @@ func TestBotsOnCustomMaps(t *testing.T) {
 	reservoirs := core.NewMap(5, 5)
 	reservoirs.Name = "Reservoirs"
 	reservoirs.Cells[12].Feature, reservoirs.Cells[7].Feature, reservoirs.Cells[2].Feature = core.Reservoir, core.Reservoir, core.Reservoir
-	for _, m := range append(core.StarterMaps(), barriers, portals, holes, landfills, floors, sinkholes, spillways, furnaces, reservoirs) {
+	boxes := core.NewMap(5, 5)
+	boxes.Name = "Boxes and Springs"
+	boxes.Cells[12].Terrain, boxes.Cells[11].Feature, boxes.Cells[6].Feature = core.Hole, core.Box, core.Box
+	boxes.Cells[2].Terrain, boxes.Cells[7].Feature = core.Wall, core.Spring // faces the Hole
+	for _, m := range append(core.StarterMaps(), barriers, portals, holes, landfills, floors, sinkholes, spillways, furnaces, reservoirs, boxes) {
 		t.Run(m.Name, func(t *testing.T) {
 			g, err := core.NewGameWithMap(m, 3)
 			if err != nil {
@@ -167,5 +171,19 @@ func TestHeuristicBotsSkipWastedCrusherMoves(t *testing.T) {
 			}
 		}
 		_, _ = g.Apply(legal[rng.Intn(len(legal))])
+	}
+}
+
+// A Box beside an explosion can shove orbs anywhere, so the bots that skip simulating quiet explosions simulate it.
+func TestBoxNeighbourIsNotQuiet(t *testing.T) {
+	m := core.NewMap(5, 5)
+	m.Cells[13].Feature = core.Box
+	g, err := core.NewGameWithMap(m, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := Bot{g: g, geo: g.Geo}
+	if b.quiet(12) || !b.quiet(6) {
+		t.Fatal("an explosion beside a Box must be simulated; one in the open needn't")
 	}
 }

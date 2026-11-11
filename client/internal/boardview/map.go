@@ -26,6 +26,8 @@ type MapState struct {
 	PortalAxes          []core.PortalAxes
 	Outlets             []uint8 // the match geometry's Reservoir routes; nil uses the map's starting ones
 	LandfillDurability  []uint8 // presentation waits until incoming orbs have reached the bottom
+	Boxes               []uint8 // a match's core.Game.Boxes: its pits filled by a Box show a crate in the Floor
+	Moving              bool    // the board draws Boxes and Springs itself, to animate them
 }
 
 type MapTransform struct {
@@ -159,6 +161,9 @@ func mapArtTerrain(state *MapState, i int) core.Terrain {
 		return core.Void
 	}
 	t := state.Map.Cells[i].Terrain
+	if i < len(state.Boxes) && state.Boxes[i]&core.CrateFloor != 0 {
+		return core.Floor
+	}
 	durability := state.Durability
 	if t == core.Landfill && state.LandfillDurability != nil {
 		durability = state.LandfillDurability
@@ -331,8 +336,7 @@ func renderSinkhole(dst *ebiten.Image, r ui.Rect, ink color.RGBA) {
 }
 
 const (
-	landfillOrbScale = .7  // an orb on a Landfill bottom, smaller for being below the board
-	landfillScatter  = .06 // how far from the centre, as a fraction of the cell, a later orb comes to rest
+	landfillOrbScale = .7 // an orb on a Landfill bottom, smaller for being below the board, if its clump fits the bottom
 )
 
 // landfillOrbInk is the neutral fill an orb takes on a Landfill bottom.
@@ -494,6 +498,10 @@ func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, g
 		}
 	}
 	switch feature {
+	case core.Box:
+		renderCrate(dst, sc, r, ui.Mix(sc.Tile, sc.Dim, .28), sc.Dim)
+	case core.Spring:
+		renderSpring(dst, sc, r, arrow, 0)
 	case core.Link, core.Portal:
 		drawPartnerMark(dst, sc, group, x, y, body.W/.72, feature == core.Portal, axes)
 	case core.Spillway:
@@ -675,7 +683,7 @@ func mapArtGateContinuesAt(m *core.MapDefinition, edges []core.MapEdge, index in
 
 func drawMapEdgePieceWithEnds(dst *ebiten.Image, sc *ui.Palette, kind core.EdgeKind, group, durability uint8, open, openStart, openEnd bool, x0, y0, x1, y1, k float64, _ bool) {
 	dx, dy := x1-x0, y1-y0
-	w := max(1.2, k*0.13)
+	w := barrierWidth(k)
 	if kind == core.Barrier || kind == core.BreakableBarrier {
 		ink := sc.Dim
 		if kind == core.BreakableBarrier {
@@ -755,6 +763,9 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		if t == core.Sinkhole {
 			drawSinkhole(dst, sc, r)
 		}
+		if i < len(state.Boxes) && state.Boxes[i]&core.CrateFloor != 0 {
+			drawMapSprite(dst, sc, r, mapSpriteKey{crate: true})
+		}
 		pressed := i < len(state.Pressed) && state.Pressed[i] != 0
 		featureScheme := *sc
 		if mapOwnerInked(cfg.Feature) {
@@ -769,10 +780,15 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		}
 		working := cfg.Feature.IsMaker() && i < len(state.Pressed) && i < len(state.Owner) && core.MakerWorking(state.Pressed[i], state.Owner[i])
 		arrow := uint8(0)
-		if cfg.Feature == core.Reservoir {
+		switch cfg.Feature {
+		case core.Reservoir:
 			arrow = reservoirArrow(&state, tr, i)
+		case core.Spring:
+			arrow = springSide(m, tr, i)
 		}
-		drawMapFeature(dst, &featureScheme, cfg.Feature, cfg.Group, axes, arrow, r, working)
+		if !state.Moving || cfg.Feature != core.Box && cfg.Feature != core.Spring { // a match's board slides and squashes these
+			drawMapFeature(dst, &featureScheme, cfg.Feature, cfg.Group, axes, arrow, r, working)
+		}
 		if cfg.Circuit.IsOutput() {
 			pressed = core.CircuitOpen(cfg.InitiallyOpen, state.CircuitOn[cfg.Group])
 		}
@@ -780,6 +796,7 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 	}
 	drawMapWallCorners(dst, sc, &state, tr)
 	drawMapPits(dst, sc, &state, tr)
+	drawSpringMounts(dst, sc, &state, tr)
 	shared := mapGateVertices(m)
 	for edgeIndex, e := range m.Edges {
 		durability := uint8(2)
@@ -883,6 +900,100 @@ func reservoirArrow(state *MapState, tr MapTransform, i int) uint8 {
 		step = state.Pressed[i]
 	}
 	d, _ := core.NextOutlet(mask, step)
+	return screenSide(d, tr)
+}
+
+// barrierWidth is a Barrier's thickness on a board of cell size k.
+func barrierWidth(k float64) float64 { return max(1.2, k*0.13) }
+
+// drawSpringMounts joins each Spring to its Wall: the Wall reaches square across the gutter onto a Barrier-thick mount
+// on their shared edge, as wide as the Wall, which runs on to the corner where a Barrier, Gate or another mount meets
+// it. The Spring's coil stands on the mount.
+func drawSpringMounts(dst *ebiten.Image, sc *ui.Palette, state *MapState, tr MapTransform) {
+	m := state.Map
+	type mount struct {
+		spring, wall       int
+		gx0, gy0, gx1, gy1 float64
+	}
+	var mounts []mount
+	for i, c := range m.Cells {
+		if c.Feature != core.Spring {
+			continue
+		}
+		if d := m.SpringFacing(i); d >= 0 {
+			step := [4][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}[d] // back toward the Wall
+			wall := (i/m.Rows+step[0])*m.Rows + i%m.Rows + step[1]
+			if gx0, gy0, gx1, gy1, ok := MapArtEdge(m, core.MapEdge{A: i, B: wall}); ok && m.Cells[wall].Terrain == core.Wall { // a Barrier mounts itself
+				mounts = append(mounts, mount{i, wall, gx0, gy0, gx1, gy1})
+			}
+		}
+	}
+	// met reports whether an edge piece or another mount ends at grid vertex (gx, gy), and whether it was a mount.
+	met := func(self int, gx, gy float64) (bool, bool) {
+		for k, o := range mounts {
+			if k != self && (o.gx0 == gx && o.gy0 == gy || o.gx1 == gx && o.gy1 == gy) {
+				return true, true
+			}
+		}
+		for k, e := range m.Edges {
+			if e.Kind == core.BreakableBarrier && k < len(state.EdgeDurability) && state.EdgeDurability[k] == 0 {
+				continue
+			}
+			if x0, y0, x1, y1, ok := MapArtEdge(m, e); ok && (x0 == gx && y0 == gy || x1 == gx && y1 == gy) {
+				return true, false
+			}
+		}
+		return false, false
+	}
+	ink, bar := mapArtWallColor(sc, core.Wall), barrierWidth(tr.Cell)/tr.Cell
+	for k, o := range mounts {
+		horizontal := o.gy0 == o.gy1
+		at, a0, a1 := o.gx0, o.gy0, o.gy1 // across the edge, then along it
+		wallAcross := float64(o.wall/m.Rows) + .5
+		if horizontal {
+			at, a0, a1 = o.gy0, o.gx0, o.gx1
+			wallAcross = float64(o.wall%m.Rows) + .5
+		}
+		toWall := math.Copysign(1, wallAcross-at)
+		fill := func(along0, along1, across0, across1 float64) {
+			gx0, gy0, gx1, gy1 := across0, along0, across1, along1
+			if horizontal {
+				gx0, gy0, gx1, gy1 = along0, across0, along1, across1
+			}
+			x0, y0 := tr.Point(m.Rows, gx0, gy0)
+			x1, y1 := tr.Point(m.Rows, gx1, gy1)
+			ui.FillRound(dst, ui.Rect{X: min(x0, x1), Y: min(y0, y1), W: math.Abs(x1 - x0), H: math.Abs(y1 - y0)}, 0, ink)
+		}
+		// Ends meeting another piece run on to the corner; beside another mount the Walls behind join there too.
+		lo, hi, wallLo, wallHi := a0+TileGutter, a1-TileGutter, a0+TileGutter, a1-TileGutter
+		if any, byMount := met(k, o.gx0, o.gy0); any {
+			lo = a0
+			if byMount {
+				wallLo = a0
+			}
+		}
+		if any, byMount := met(k, o.gx1, o.gy1); any {
+			hi = a1
+			if byMount {
+				wallHi = a1
+			}
+		}
+		// The Wall, square on this side, reaches the mount: no gap, and its rounded corners there filled.
+		fill(wallLo, wallHi, at+toWall*(TileGutter+.14), at)
+		fill(lo, hi, at-bar/2, at+bar/2)
+	}
+}
+
+// springSide returns the screen side a Spring faces, as reservoirArrow does; one without a single Wall faces up.
+func springSide(m *core.MapDefinition, tr MapTransform, i int) uint8 {
+	if d := m.SpringFacing(i); d >= 0 {
+		return screenSide(d, tr)
+	}
+	return 1
+}
+
+// screenSide turns direction d (left, right, up, down) into a screen side: 1 up, 2 right, 3 down, 4 left, 0 for none.
+func screenSide(d int, tr MapTransform) uint8 {
 	if d < 0 {
 		return 0
 	}

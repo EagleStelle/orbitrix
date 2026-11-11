@@ -38,6 +38,10 @@ type Geometry struct {
 	// PortalRoutes holds entry/exit pairs per connection, only on maps with active Portal routes.
 	PortalRoutes [][]int16
 	PortalAxes   []PortalAxes
+	// Blocked marks closed edges, 4 per cell in direction order (left, right, up, down), and Dirs the direction each
+	// Nbr slot's orb arrives in (-1 across a Link). Both only on maps with Boxes, which travel and are pushed by them.
+	Blocked []uint8
+	Dirs    []int8
 }
 
 // NewGeometry builds the capacity and neighbour tables for a cols×rows board.
@@ -125,3 +129,10 @@ func (g *Geometry) PortalPath(cell, connection int) []int16 {
 
 // Playable excludes blocked terrain and Portals, including an empty destroyed wall as Floor.
 func (g *Geometry) Playable(i int) bool { return i >= 0 && i < g.Cells() && g.Cap[i] != 0 }
+
+// LastOutlet returns the neighbour slot Reservoir i's extra orb took, given its state after the arrow turned: the
+// inverse of Outlet.
+func (g *Geometry) LastOutlet(i int, state uint8) int {
+	d := clockwise[(state+3)&3]
+	return bits.OnesCount8(g.Outlets[i] & (1<<d - 1))
+}

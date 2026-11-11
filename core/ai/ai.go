@@ -284,7 +284,7 @@ func (b *Bot) others(t [core.MaxPlayers]int32) int32 {
 func (b *Bot) wins(t [core.MaxPlayers]int32) bool { return b.others(t) == 0 }
 
 func (b *Bot) mine(i int) bool                { return b.g.Owner[i] == b.me }
-func (b *Bot) empty(i int) bool               { return b.geo.Playable(i) && b.g.Owner[i] == core.NoOwner }
+func (b *Bot) empty(i int) bool               { return b.g.Placeable(i) && b.g.Owner[i] == core.NoOwner }
 func (b *Bot) enemy(i int) bool               { return b.g.Owner[i] != core.NoOwner && !b.mine(i) }
 func (b *Bot) count(i int) int                { return int(b.g.Count[i]) }
 func (b *Bot) capacity(i int) int             { return int(b.geo.Cap[i]) }

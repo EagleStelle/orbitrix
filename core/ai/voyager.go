@@ -197,7 +197,7 @@ func (b *Bot) shortlist(g *core.Game, k int) []scored {
 	salt := uint32(b.rng.Uint64())
 	list := b.list[:0]
 	for i, o := range g.Owner {
-		if !geo.Playable(i) || o != core.NoOwner && o != p {
+		if !g.Placeable(i) || o != core.NoOwner && o != p {
 			continue
 		}
 		c, cp := int(g.Count[i]), int(geo.Cap[i])
@@ -255,7 +255,7 @@ func (b *Bot) rolloutMove(g *core.Game) int {
 		i := int((bits & 0xffff) * n >> 16)
 		bits >>= 16
 		o := g.Owner[i]
-		if !g.Geo.Playable(i) || o != core.NoOwner && o != p {
+		if !g.Placeable(i) || o != core.NoOwner && o != p {
 			continue
 		}
 		found++

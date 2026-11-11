@@ -18,6 +18,7 @@ type view struct {
 	wave     int
 	revision uint64
 	dropped  []fallingOrb // orbs on the Breakable Floors and Sinkholes the last terrain step took away, for Board to drop
+	pending  []boxPending // orbs of the wave in flight sent into Boxes
 }
 
 func NewView(g *core.Game) *view {
@@ -92,6 +93,10 @@ func (v *view) Land(w core.Wave) []core.TerrainEvent {
 			v.revision++ // its arrow turned
 		}
 		for _, n := range to {
+			if v.boxed(int(n)) {
+				v.pending = append(v.pending, boxPending{box: n, from: e, owner: v.from[k]})
+				continue
+			}
 			v.inkChanged(int(n), v.from[k])
 			v.Owner[n] = v.from[k]
 			v.Count[n]++
@@ -158,12 +163,15 @@ func (v *view) applyTerrain(wave int) []core.TerrainEvent {
 		end++
 	}
 	v.dropped = v.dropped[:0]
+	if v.Replay != nil && (end > 0 || len(v.pending) > 0) {
+		v.moveBoxes(v.Events[:end])
+	}
 	if end > 0 && v.Replay != nil {
 		v.Replay.ReplayTerrain(v.Events[:end])
 		v.Geo = v.Replay.Geo
 		v.revision++
 		for _, e := range v.Events[:end] {
-			if c := e.Cell; !e.Edge && !e.Switch && c >= 0 && e.Durability == 0 && v.Count[c] > 0 && (v.Replay.Map.Cells[c].Terrain == core.BreakableFloor || v.Replay.Map.Cells[c].Terrain == core.Sinkhole) {
+			if c := e.Cell; !e.Edge && !e.Switch && !e.Box && c >= 0 && e.Durability == 0 && v.Count[c] > 0 && (v.Replay.Map.Cells[c].Terrain == core.BreakableFloor || v.Replay.Map.Cells[c].Terrain == core.Sinkhole) {
 				v.dropped = append(v.dropped, fallingOrb{hole: int16(c), owner: v.Owner[c]})
 				v.Count[c], v.Owner[c] = 0, core.NoOwner
 			}

@@ -55,7 +55,9 @@ fill empty seats with AI, and enjoy following a chain reaction as it plays out.
 ## Capabilities and Constraints
 
 - Custom maps and Map Editor: Floor, Void, Hole, Landfill, Wall, Breakable wall, Breakable floor (its second explosion breaks it into Void, dropping its orbs), Sinkhole (playable floor that never explodes: filled to capacity, it collapses into a Hole and its orbs fall in), Barriers, Gates, Doors, Links, Reservoirs (take an extra orb, throw it along a turning arrow and make a new one), Spillways, Furnaces (gain an
-  orb after each move by their holder), Crushers (lose one), both after a one-move grace, and three
+  orb after each move by their holder), Crushers (lose one), both after a one-move grace, Boxes (crates explosions
+  push, shoving orbs ahead and filling the first Hole or Landfill they enter), Springs (against a Wall, sending what
+  arrives out the way they face), and three
   switch types: Latch (rearmed by another switch), Toggle (flips on empty-cell placement or receiving/exploding waves), and Hold (pressed while occupied).
   A pace strip under the editor canvas estimates a game's average moves from Instant to Endless; Instant and Endless
   maps are issues, Fast and Slow are allowed.
