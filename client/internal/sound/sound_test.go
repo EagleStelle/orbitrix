@@ -160,11 +160,11 @@ func TestCombinedSoundsKeepFifteenVoiceLimit(t *testing.T) {
 	s, _, peak := testSound()
 	for k := range 30 {
 		s.last = time.Now().Add(-minGap)
-		s.Wave(k, 16, Link|Latch|ToggleOn|ToggleOff|HoldOn|HoldOff|WallHit|WallBreak|Fall|LandfillFull)
+		s.Wave(k, 16, 1<<len(effectTones)-1)
 		if *peak > 15 {
 			t.Fatalf("simultaneous voices reached %d", *peak)
 		}
-		for i := range 5 {
+		for i := range min(5, len(s.voices)-len(effectTones)) {
 			if !s.notes[k%7+2*i].IsPlaying() {
 				t.Fatal("voice stealing cut a note from the current burst")
 			}

@@ -108,6 +108,7 @@ func (s *Sound) chord(root, n int, effects Effects) {
 	s.pending = 0
 	s.last = now
 	count := bits.OnesCount16(uint16(effects))
+	n = min(n, len(s.voices)-count) // a burst of every cue gives up chord notes rather than steal its own voices
 	noteVolume := 0.55 / math.Sqrt(float64(max(1, n))) * s.Volume
 	effectVolume := 0.55 / math.Sqrt(float64(max(1, count))) * s.Volume
 	// Split power equally between orbs and map cues so larger chords cannot bury a single effect.
