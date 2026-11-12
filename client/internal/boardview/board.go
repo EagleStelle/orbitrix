@@ -32,6 +32,9 @@ const (
 	landTicks     = 4    // an orb or Box filling its pit shows on the bottom this long, landed, before the pit is Floor
 )
 
+// shieldStop is how far an orb flies toward a Vault before its shield stops it: the tile's edge.
+const shieldStop = .5 + TileGutter
+
 // fallingOrb drops into a pit; in a Landfill it settles on the bottom instead of fading away.
 type fallingOrb struct {
 	hole      int16
@@ -41,6 +44,8 @@ type fallingOrb struct {
 	remaining uint8 // Landfill state once this fall reaches the bottom
 	slot      uint8 // its place on the bottom's orbit, so orbs sharing a bottom stay apart
 	box       bool  // a Box sinking into the pit it fills
+	shield    bool  // lost on a Vault's shield: at its edge facing from, or its centre when from is -1
+	from      int16
 }
 
 // ticks is how long the orb or Box is shown: its fall, and for one filling its pit a moment on the bottom.
@@ -292,7 +297,8 @@ func (b *Board) Start(cell int, mover int8, waves []core.Wave, produceAt int, sn
 	snd.Place(int(mover), effects|produced|b.linkSound())
 }
 
-// dropTaken drops the orbs on the cells the last terrain step took away: a broken floor or a collapsed Sinkhole.
+// dropTaken drops the orbs on the cells the last terrain step took away, a broken floor or a collapsed Sinkhole, and
+// those Vault shields took.
 // shortcut: a whole stack falls as one orb from its centre; drop each from its orbit spot if stacks should read as
 // several.
 func (b *Board) dropTaken() {
@@ -300,6 +306,11 @@ func (b *Board) dropTaken() {
 		o.start = b.Clock
 		b.falls = append(b.falls, o)
 	}
+	for _, o := range b.State.hits {
+		o.start = b.Clock
+		b.falls = append(b.falls, o)
+	}
+	b.State.hits = b.State.hits[:0]
 }
 
 // sync makes the view match g without animating.
@@ -375,7 +386,7 @@ func (b *Board) Tick(snd *sound.Sound) {
 		fallStart := len(b.falls)
 		effects |= b.dropIntoHoles()
 		events := b.State.Land(b.Waves[b.Wave])
-		effects |= b.State.terrainSounds(events)
+		effects |= b.State.terrainSounds(events) | b.State.shields
 		b.boxesLanded(events)
 		b.dropTaken()
 		for i := fallStart; i < len(b.falls); i++ {
@@ -457,10 +468,10 @@ func (b *Board) stepSound(snd *sound.Sound, made bool, effects sound.Effects) {
 	}
 }
 
-// produce runs the mover's Furnaces and Crushers; each crushed orb shrinks and fades like one lost in a Hole.
+// produce runs the mover's Furnaces, Crushers and Vaults; each crushed orb shrinks and fades like one lost in a Hole.
 func (b *Board) produce() (made bool, effects sound.Effects) {
 	made, crushed := b.State.Produce(b.mover, b.crushed[:0])
-	b.crushed = crushed
+	b.crushed, effects = crushed, b.State.shields
 	for _, cell := range crushed {
 		b.falls = append(b.falls, fallingOrb{hole: cell, owner: b.mover, start: b.Clock})
 		effects |= sound.Fall
@@ -572,24 +583,28 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 	if b.Playing && !b.settling {
 		for k, e := range b.Waves[b.Wave] {
 			for connection, target := range b.State.Geo.Targets(int(e)) {
-				x, y := b.flightPosition(int(e), connection, b.bounce(int(target), f))
+				x, y := b.flightPosition(int(e), connection, b.bounce(int(target), b.State.from[k], f))
 				b.Orb(x, y, int(b.State.from[k]))
 			}
 			if outlets := b.State.Geo.Outlets; outlets != nil && outlets[e] != 0 {
 				// A Reservoir's extra orb trails the one flying the way its arrow points.
 				slot, _ := b.State.Geo.Outlet(int(e), b.State.Replay.Pressed[e])
-				x, y := b.flightPosition(int(e), slot, b.bounce(int(b.State.Geo.Targets(int(e))[slot]), f*.8))
+				x, y := b.flightPosition(int(e), slot, b.bounce(int(b.State.Geo.Targets(int(e))[slot]), b.State.from[k], f*.8))
 				b.Orb(x, y, int(b.State.from[k]))
 			}
 		}
 	}
 	b.flush(dst, b.OrbImg)
-	if b.State.Replay != nil {
-		for i, c := range b.State.Replay.Map.Cells {
-			if c.Circuit == core.Door && b.State.Count[i] > 0 && !b.State.Geo.Playable(i) {
-				x, y := b.Centre(i)
-				cell := b.base * b.k
-				drawMapSprite(dst, sc, ui.Rect{X: x - cell/2, Y: y - cell/2, W: cell, H: cell}, mapSpriteKey{group: c.Group, lock: true})
+	if g := b.State.Replay; g != nil {
+		cell := b.base * b.k
+		for i, c := range g.Map.Cells {
+			x, y := b.Centre(i)
+			r := ui.Rect{X: x - cell/2, Y: y - cell/2, W: cell, H: cell}
+			switch {
+			case c.Circuit == core.Door && b.State.Count[i] > 0 && !b.State.Geo.Playable(i):
+				drawMapSprite(dst, sc, r, mapSpriteKey{group: c.Group, lock: true})
+			case c.Feature == core.Vault && core.Shield(g.Pressed[i]) > 0: // over the orbs, which sit behind it
+				drawMapSprite(dst, sc, r, mapSpriteKey{shield: uint8(core.Shield(g.Pressed[i])), holder: core.Holder(g.Pressed[i])})
 			}
 		}
 	}
@@ -737,6 +752,9 @@ func (b *Board) queueFall(o fallingOrb) {
 		x, y := b.landfillSpot(int(o.hole), int(o.slot), int(b.landfillTarget[o.hole]-b.landfillDurability[o.hole])+n)
 		b.landfillOrb(int(o.hole), o.owner, depth, x*depth, y*depth)
 		return
+	}
+	if o.shield && o.from >= 0 {
+		x, y = b.along(int(o.from), int(o.hole), nil, shieldStop) // shortcut: straight, even for a Portal route
 	}
 	b.quad(x, y, h, 0, s, ui.Mix(sc.Ground, sc.Pit, .9*depth), alpha)
 	b.quad(x, y, h, s, s, ui.Mix(fill, sc.Pit, .6*depth), alpha)

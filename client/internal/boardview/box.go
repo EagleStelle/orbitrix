@@ -35,9 +35,14 @@ func (v *view) moveBoxes(events []core.TerrainEvent) {
 			v.inkChanged(e.To, core.NoOwner)
 			v.Count[e.To], v.Owner[e.To] = 0, core.NoOwner
 			if t := v.Replay.TerrainAt(e.Shove); t == core.Floor {
-				v.inkChanged(e.Shove, o)
-				v.Owner[e.Shove] = o
-				v.Count[e.Shove] += c
+				for c > 0 && v.shielded(e.Shove, o, -1) {
+					c--
+				}
+				if c > 0 {
+					v.inkChanged(e.Shove, o)
+					v.Owner[e.Shove] = o
+					v.Count[e.Shove] += c
+				}
 			} else {
 				v.dropped = append(v.dropped, fallingOrb{hole: int16(e.Shove), owner: o, landfill: t == core.Landfill})
 			}
@@ -58,6 +63,9 @@ func (v *view) moveBoxes(events []core.TerrainEvent) {
 }
 
 func (v *view) land(i int, owner int8) {
+	if v.shielded(i, owner, -1) {
+		return
+	}
 	v.inkChanged(i, owner)
 	v.Owner[i] = owner
 	v.Count[i]++
@@ -147,10 +155,17 @@ func (b *Board) slideAt(i int, stack bool, f float64) (float64, float64) {
 	return b.Centre(i)
 }
 
-// bounce is the flight fraction f of an orb heading into cell i: one hitting a Box that stays goes half way and back.
-func (b *Board) bounce(i int, f float64) float64 {
+// bounce is the flight fraction f of player p's orb heading into cell i: one hitting a Box that stays goes half way
+// and back, and one a Vault's shield takes stops at its edge.
+func (b *Board) bounce(i int, p int8, f float64) float64 {
 	if b.moving != nil && b.State.boxed(i) && b.moving[i]&slidBox == 0 {
 		return min(f, 1-f)
+	}
+	if g := b.State.Replay; g != nil {
+		// shortcut: every orb a shield would take stops, even past its last point in one wave; those land at the end.
+		if hit, _ := core.Shielded(g.Pressed[i], p); hit {
+			return min(f, shieldStop)
+		}
 	}
 	return f
 }

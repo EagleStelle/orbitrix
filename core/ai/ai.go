@@ -221,9 +221,10 @@ func (b *Bot) production() {
 		if !c.Feature.IsMaker() || g.Owner[i] != b.me || !works(g.Pressed[i], b.me) {
 			continue
 		}
-		if c.Feature == core.Crusher {
+		switch c.Feature {
+		case core.Crusher:
 			b.made--
-		} else {
+		case core.Furnace:
 			b.made++
 			b.pops = b.pops || g.Count[i]+1 >= g.Geo.Cap[i]
 		}

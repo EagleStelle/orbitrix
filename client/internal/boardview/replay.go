@@ -1,6 +1,9 @@
 package boardview
 
-import "orbitrix/core"
+import (
+	"orbitrix/client/internal/sound"
+	"orbitrix/core"
+)
 
 // view is the board as the players see it. core.Game.Apply resolves a whole move at once; the view starts from
 // the position before the move and replays the recorded waves one by one as they animate, with the same two-pass
@@ -19,6 +22,24 @@ type view struct {
 	revision uint64
 	dropped  []fallingOrb // orbs on the Breakable Floors and Sinkholes the last terrain step took away, for Board to drop
 	pending  []boxPending // orbs of the wave in flight sent into Boxes
+	hits     []fallingOrb // orbs the last landing lost on Vault shields, for Board to shrink at the shield
+	shields  sound.Effects
+}
+
+// shielded reports whether Vault i's shield takes owner's orb arriving there, and keeps the shield's cue: a knock,
+// or falling woody notes as it breaks.
+func (v *view) shielded(i int, owner int8, from int16) bool {
+	hit, state := core.Shielded(v.Replay.Pressed[i], owner)
+	if !hit {
+		return false
+	}
+	v.Replay.Pressed[i] = state
+	v.hits = append(v.hits, fallingOrb{hole: int16(i), owner: owner, shield: true, from: from})
+	v.shields |= sound.WallHit
+	if core.Shield(state) == 0 {
+		v.shields |= sound.WallBreak
+	}
+	return true
 }
 
 func NewView(g *core.Game) *view {
@@ -29,7 +50,7 @@ func NewView(g *core.Game) *view {
 }
 
 func (v *view) sync(g *core.Game) {
-	v.Geo, v.Events, v.wave = g.Geo, nil, 0
+	v.Geo, v.Events, v.wave, v.hits = g.Geo, nil, 0, v.hits[:0]
 	if g.Map != nil {
 		if v.Replay == nil {
 			v.Replay = g.Clone()
@@ -83,6 +104,7 @@ func (v *view) Launch(w core.Wave) {
 // land gives one orb to each neighbour of every cell in w, and a Reservoir's extra orb to the side its arrow points
 // to, capturing them for the launching cell's owner.
 func (v *view) Land(w core.Wave) []core.TerrainEvent {
+	v.hits, v.shields = v.hits[:0], 0
 	for k, e := range w {
 		to := v.Geo.Neighbours(int(e))
 		if v.Geo.Outlets != nil && v.Geo.Outlets[e] != 0 {
@@ -97,6 +119,9 @@ func (v *view) Land(w core.Wave) []core.TerrainEvent {
 				v.pending = append(v.pending, boxPending{box: n, from: e, owner: v.from[k]})
 				continue
 			}
+			if v.Replay != nil && v.shielded(int(n), v.from[k], e) {
+				continue
+			}
 			v.inkChanged(int(n), v.from[k])
 			v.Owner[n] = v.from[k]
 			v.Count[n]++
@@ -107,10 +132,12 @@ func (v *view) Land(w core.Wave) []core.TerrainEvent {
 	return events
 }
 
-// Produce runs the mover's Furnaces and Crushers as core.Game does after the move's first chain. It reports whether a
-// Furnace made an orb and appends each Crusher that lost one to crushed.
+// Produce runs the mover's Furnaces, Crushers and Vaults as core.Game does after the move's first chain. It reports
+// whether a Furnace made an orb, appends each Crusher that lost one to crushed, and sets shields when a Vault raised
+// one.
 func (v *view) Produce(p int8, crushed []int16) (bool, []int16) {
 	made := false
+	v.shields = 0
 	for i, c := range v.Replay.Map.Cells {
 		if v.Owner[i] != p || !c.Feature.IsMaker() {
 			continue
@@ -121,6 +148,11 @@ func (v *view) Produce(p int8, crushed []int16) (bool, []int16) {
 		}
 		v.revision++ // its frame closes once it works
 		switch {
+		case c.Feature == core.Vault:
+			var raised bool
+			if v.Replay.Pressed[i], raised = core.RaiseShield(v.Replay.Pressed[i]); raised {
+				v.shields |= sound.Shield
+			}
 		case c.Feature == core.Crusher:
 			crushed = append(crushed, int16(i))
 			if v.Count[i] == 1 {

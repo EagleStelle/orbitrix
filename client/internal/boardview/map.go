@@ -524,6 +524,19 @@ func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, g
 			}
 			ui.Line(dst, x+s*from, y-c*from, x+s*to, y-c*to, width, sc.Dim)
 		}
+	case core.Vault:
+		// A hexagon, the cell of a sci-fi shield; the shield itself is drawn over the orbs.
+		mapPath.Reset()
+		for k := range 6 {
+			s, c := math.Sincos(float64(k) * math.Pi / 3)
+			if px, py := float32(x+s*body.W*.24), float32(y-c*body.W*.24); k == 0 {
+				mapPath.MoveTo(px, py)
+			} else {
+				mapPath.LineTo(px, py)
+			}
+		}
+		mapPath.Close()
+		ui.StrokePath(dst, &mapPath, width, sc.Dim)
 	case core.Crusher:
 		// Two arrows press onto a flat line: an orb squashed after each of its owner's moves.
 		ui.Line(dst, x-body.W*.26, y, x+body.W*.26, y, width, sc.Dim)
@@ -545,6 +558,48 @@ func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, g
 				ui.Line(dst, tx, ty, tx-d[0]*a+d[1]*a, ty-d[1]*a-d[0]*a, width, sc.Dim)
 			}
 		}
+	}
+}
+
+// vaultGlow is a Vault shield's glow for a tile of side vaultGlowSide, white with the alpha rising toward the edge of
+// its rounded square; drawn scaled and tinted, it is the one gradient in the Party Mat.
+var vaultGlow *ebiten.Image
+
+const vaultGlowSide = 256
+
+// renderVaultShield draws a Vault's raised shield over its orbs: a veil tinted toward the holder's ink, so the orbs sit
+// behind glass, under the glow. A damaged shield looks the same, cracked with Breakable Floor's fracture.
+func renderVaultShield(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, ink color.RGBA, shield uint8) {
+	body, radius := mapTileGeometry(r)
+	ui.FillRound(dst, body, radius, ui.WithAlpha(ui.Mix(sc.Tile, ink, .3), .4))
+	if vaultGlow == nil {
+		vaultGlow = ebiten.NewImage(vaultGlowSide, vaultGlowSide)
+		pix := make([]byte, 4*vaultGlowSide*vaultGlowSide)
+		half := vaultGlowSide / 2.0
+		h := half * (1 - TileRadius/(.5-TileGutter)) // straight part of each side, from the centre
+		for py := range vaultGlowSide {
+			for px := range vaultGlowSide {
+				dx, dy := math.Abs(float64(px)+.5-half)-h, math.Abs(float64(py)+.5-half)-h
+				d := (math.Hypot(max(dx, 0), max(dy, 0)) + min(max(dx, dy), 0) + h) / half // 1 on the rounded edge
+				if d >= 1 {
+					continue
+				}
+				a := byte(255 * (.06 + .42*d*d*d) * min(1, (1-d)*half))
+				i := 4 * (py*vaultGlowSide + px)
+				pix[i], pix[i+1], pix[i+2], pix[i+3] = a, a, a, a
+			}
+		}
+		vaultGlow.WritePixels(pix)
+	}
+	var op ebiten.DrawImageOptions
+	op.GeoM.Scale(body.W/vaultGlowSide, body.H/vaultGlowSide)
+	op.GeoM.Translate(body.X, body.Y)
+	op.Filter = ebiten.FilterLinear
+	ui.Tint(&op.ColorScale, ink)
+	dst.DrawImage(vaultGlow, &op)
+	if shield == 1 {
+		clip := image.Rect(int(body.X), int(body.Y), int(math.Ceil(body.Right())), int(math.Ceil(body.Bottom())))
+		renderMapCracks(dst.SubImage(clip).(*ebiten.Image), r, 1, otherTheme(sc).Ground)
 	}
 }
 

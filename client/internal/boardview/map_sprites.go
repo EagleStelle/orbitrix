@@ -20,6 +20,8 @@ type mapSpriteKey struct {
 	squash                          uint8 // a Spring's pad pressed toward its base, in steps of springSquash
 	portalAxes                      core.PortalAxes
 	arrow                           uint8 // a Reservoir's outlet side, 1 up to 4 left
+	shield                          uint8 // a Vault's raised shield, drawn over the orbs in its holder's ink
+	holder                          int8
 }
 
 // Bound both texture memory and resize history. Large, sparse boards can draw
@@ -90,6 +92,8 @@ func renderMapSprite(dst *ebiten.Image, sc *ui.Palette, r ui.Rect, key mapSprite
 		renderMapCracks(dst, r, key.durability, ui.PureWhite)
 	case key.terrain == core.Sinkhole:
 		renderSinkhole(dst, r, ui.PureWhite)
+	case key.shield != 0:
+		renderVaultShield(dst, sc, r, sc.Players[key.holder], key.shield)
 	case key.feature == core.Spring:
 		renderSpring(dst, sc, r, key.arrow, key.squash)
 	case key.crate:

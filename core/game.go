@@ -247,27 +247,59 @@ func ReservoirMakes(state uint8) (bool, uint8) {
 	return state&ReservoirMade == 0, state | ReservoirMade
 }
 
-// makerWorking marks a Furnace's or Crusher's Pressed byte once it has worked for the holder in its low bits
-// (player+1). Any other holder, or 0 after a move leaves it empty, makes it skip its next turn.
-const makerWorking uint8 = 16
+// A maker's Pressed byte holds its holder (player+1) in makerHolder, makerWorking once it has worked for them, and a
+// Vault's shield in multiples of vaultShield. Any other holder, or 0 after a move leaves it empty, makes it skip its
+// next turn and drops the shield.
+const (
+	makerHolder  uint8 = 15
+	makerWorking uint8 = 16
+	vaultShield  uint8 = 32
+)
 
-// MakerTurn returns a Furnace's or Crusher's next state after its holder p moves, and whether it works now: it skips
-// its first turn after changing hands or after a move left it empty.
+// VaultShields is the shield a working Vault raises after its holder's move once the last one broke.
+const VaultShields = 2
+
+// MakerTurn returns a Furnace's, Crusher's or Vault's next state after its holder p moves, and whether it works now:
+// it skips its first turn after changing hands or after a move left it empty.
 func MakerTurn(state uint8, p int8) (uint8, bool) {
-	if state&^makerWorking != uint8(p+1) {
+	if state&makerHolder != uint8(p+1) {
 		return uint8(p + 1), false
 	}
-	return uint8(p+1) | makerWorking, true
+	return state | makerWorking, true
 }
 
-// MakerWorking reports whether a Furnace or Crusher in state with this owner has started working for them.
+// MakerWorking reports whether a Furnace, Crusher or Vault in state with this owner has started working for them.
 func MakerWorking(state uint8, owner int8) bool {
-	return owner != NoOwner && state == uint8(owner+1)|makerWorking
+	return owner != NoOwner && state&^(3*vaultShield) == uint8(owner+1)|makerWorking
 }
 
-// produce runs the mover's Furnaces and Crushers once their move has settled, after each skips its first turn:
-// each Furnace they own gains an orb and each Crusher loses one, turning neutral when empty. Furnaces that reach
-// capacity explode as a further chain numbered from wave.
+// Holder returns the player a Furnace, Crusher or Vault in state works for, NoOwner when none.
+func Holder(state uint8) int8 { return int8(state&makerHolder) - 1 }
+
+// Shield returns the hits a Vault in state can still take.
+func Shield(state uint8) int { return int(state / vaultShield) }
+
+// RaiseShield returns a working Vault's state after its holder's move, and whether it raised a new shield: only once
+// the last one broke, as a damaged shield holds until then.
+func RaiseShield(state uint8) (uint8, bool) {
+	if Shield(state) != 0 {
+		return state, false
+	}
+	return state + VaultShields*vaultShield, true
+}
+
+// Shielded reports whether a cell in state stops an orb of player p, and its state after: a Vault's shield takes
+// any orb but its holder's, and the orb is lost. Only Vaults ever hold a shield, so any map cell can be asked.
+func Shielded(state uint8, p int8) (bool, uint8) {
+	if state < vaultShield || state&makerHolder == uint8(p+1) {
+		return false, state
+	}
+	return true, state - vaultShield
+}
+
+// produce runs the mover's Furnaces, Crushers and Vaults once their move has settled, after each skips its first
+// turn: each Furnace they own gains an orb, each Crusher loses one, turning neutral when empty, and each Vault whose
+// shield broke raises a new one. Furnaces that reach capacity explode as a further chain numbered from wave.
 func (g *Game) produce(p int8, record bool, wave int) {
 	g.cur = g.cur[:0]
 	ran := false
@@ -281,8 +313,10 @@ func (g *Game) produce(p int8, record bool, wave int) {
 		if g.Pressed[i], works = MakerTurn(g.Pressed[i], p); !works {
 			continue
 		}
-		switch {
-		case g.Map.Cells[i].Feature == Crusher:
+		switch f := g.Map.Cells[i].Feature; {
+		case f == Vault:
+			g.Pressed[i], _ = RaiseShield(g.Pressed[i])
+		case f == Crusher:
 			g.Count[i]--
 			g.Orbs[p]--
 			if g.Count[i] == 0 {
@@ -313,8 +347,8 @@ func (g *Game) produce(p int8, record bool, wave int) {
 	g.resolve(record, wave) // also ends the game if a Crusher took the mover's last orb
 }
 
-// settleMakers resets every Furnace and Crusher the move left empty, so whoever fills it next, its last holder
-// included, skips a first turn. One that popped or was crushed empty and then refilled by its holder in the same move
+// settleMakers resets every Furnace, Crusher and Vault the move left empty, so whoever fills it next, its last holder
+// included, skips a first turn, and a Vault loses its shield. One that popped or was crushed empty and then refilled by its holder in the same move
 // keeps working; a different player's orbs already make it skip.
 func (g *Game) settleMakers() {
 	for _, e := range g.topology.makers {
@@ -382,7 +416,7 @@ func (g *Game) explode() {
 		}
 		switch {
 		case g.Count[e] == 0:
-			g.Owner[e] = NoOwner // a Furnace or Crusher keeps its state until the move settles
+			g.Owner[e] = NoOwner // a Furnace, Crusher or Vault keeps its state, shield included, until the move settles
 		case g.Count[e] >= geo.Cap[e]:
 			g.next = append(g.next, e)
 		}
@@ -397,6 +431,12 @@ func (g *Game) explode() {
 			to = append(append(buf[:0], to...), to[slot])
 		}
 		for _, n := range to {
+			if g.Map != nil && g.Pressed[n] >= vaultShield {
+				var hit bool
+				if hit, g.Pressed[n] = Shielded(g.Pressed[n], p); hit {
+					continue // lost on the shield; the sender already gave it up
+				}
+			}
 			if o := g.Owner[n]; o != p {
 				// Capture: the cell's existing orbs change hands with it.
 				if o != NoOwner {

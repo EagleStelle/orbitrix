@@ -7,15 +7,16 @@ import (
 	"orbitrix/core"
 )
 
-// TestFurnacePlaybackMatchesGame plays random games on a map with Furnaces and Crushers and checks that the board's
-// playback, including the step where the mover's Furnaces and Crushers run, ends exactly on the game's state.
+// TestFurnacePlaybackMatchesGame plays random games on a map with Furnaces, Crushers and Vaults and checks that the
+// board's playback, including the step where the mover's makers run and shield hits, ends exactly on the game's state.
 func TestFurnacePlaybackMatchesGame(t *testing.T) {
 	m := core.NewMap(5, 5)
 	for _, i := range []int{2, 12, 18} {
 		m.Cells[i].Feature = core.Furnace
 	}
 	m.Cells[22].Feature, m.Cells[6].Feature = core.Crusher, core.Crusher
-	produced, crushed := false, false
+	m.Cells[8].Feature, m.Cells[16].Feature = core.Vault, core.Vault
+	produced, crushed, shielded := false, false, false
 	for seed := uint64(1); seed <= 10; seed++ {
 		g, err := core.NewGameWithMap(m, 3)
 		if err != nil {
@@ -43,11 +44,12 @@ func TestFurnacePlaybackMatchesGame(t *testing.T) {
 			produced = produced || g.ProducedAt >= 0
 			for _, f := range b.falls {
 				crushed = crushed || m.Cells[f.hole].Feature == core.Crusher
+				shielded = shielded || f.shield
 			}
 		}
 	}
-	if !produced || !crushed {
-		t.Fatal("random play never ran a Furnace or never crushed an orb")
+	if !produced || !crushed || !shielded {
+		t.Fatal("random play never ran a Furnace, crushed an orb or hit a shield")
 	}
 }
 

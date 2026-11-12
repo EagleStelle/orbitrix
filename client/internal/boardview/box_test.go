@@ -7,13 +7,14 @@ import (
 	"orbitrix/core"
 )
 
-// TestBoxPlaybackMatchesGame plays random games among Boxes, Holes, a Landfill, a Spring and a Hold, checking that
-// the board's playback, with its held, returned and shoved orbs, ends exactly on the game's state.
+// TestBoxPlaybackMatchesGame plays random games among Boxes, Holes, a Landfill, a Spring, a Hold and Vaults, checking
+// that the board's playback, with its held, returned, shoved and shielded orbs, ends exactly on the game's state.
 func TestBoxPlaybackMatchesGame(t *testing.T) {
 	m := core.NewMap(7, 7)
 	for _, i := range []int{16, 24, 32, 18, 30} {
 		m.Cells[i].Feature = core.Box
 	}
+	m.Cells[17].Feature, m.Cells[31].Feature = core.Vault, core.Vault
 	m.Cells[23].Terrain, m.Cells[38].Terrain = core.Hole, core.Landfill
 	m.Cells[0].Terrain, m.Cells[1].Feature = core.Wall, core.Spring
 	m.Cells[26].Circuit, m.Cells[26].Group = core.Hold, 1

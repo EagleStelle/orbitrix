@@ -18,13 +18,15 @@ Decisions that future changes have to respect, and why. How things work is in [a
   on their first explosion each move: per explosion, a chain that never settles (two colours recapturing each other
   until `MaxWaves`) would grow counts past their `uint8` range, and two Reservoirs could refill each other forever. Spillways add one to the threshold and
   one lost transfer into their own pit; a Spillway cannot also be a Link, so its targets fit `MaxConnections`.
-- Furnaces and Crushers act once per move, only for the mover, after the move's chain settles and before the turn
-  passes; a Pass runs neither. Ownership is the occupying orbs, never a separate field.
+- Furnaces, Crushers and Vaults act once per move, only for the mover, after the move's chain settles and before the
+  turn passes; a Pass runs neither. Ownership is the occupying orbs, never a separate field.
   A Furnace chain continues the move's wave numbering, and `Game.ProducedAt` tells playback where they acted.
   Each skips its first turn after changing hands or after a move leaves it empty. Emptiness is judged once the move
   settles, in core and in playback alike, so popping and being refilled by the same player keeps it working. That
-  state lives in the cell's existing `Pressed` byte (holder+1, plus a working bit), so snapshots, the hash and the
-  protocol carry it unchanged; a counter for a longer grace would need a protocol change.
+  state lives in the cell's existing `Pressed` byte (holder+1, plus a working bit, and a Vault's shield above them),
+  so snapshots, the hash and the protocol carry it unchanged; a counter for a longer grace would need a protocol
+  change. Only Vaults ever set the shield bits, so a shield check needs no feature lookup in the transfer loop, and a
+  Box never stands on a shield (shields stop Boxes and rise only under orbs), so held orbs never hit one.
 - Latch responds to direct accepted placements and orb arrivals, never to exploding by itself. Latch stays
   pressed after its first input; Toggle flips on direct placement into an empty cell and once per receiving or
   exploding wave, regardless of arrival count. Direct placement into an occupied Toggle does not flip it by itself;
@@ -44,7 +46,8 @@ Decisions that future changes have to respect, and why. How things work is in [a
   destroyed Breakable Walls and Gates whose controller shares a Floor group with either endpoint. Reachable Gates
   merge groups until no more circuits can connect them; permanently isolated Floor and circular Gate dependencies
   remain invalid.
-- Holes and Spillways lose their orbs for good and never fill up; Crushers keep eating. Games end only when the board
+- Holes and Spillways lose their orbs for good and never fill up; Crushers keep eating, and Vault shields keep
+  rising. Games end only when the board
   fills, so `MapDefinition.Estimate` predicts game length from a fit to bot games, and `Validate` refuses Instant
   and Endless. Each piece counts the same on every board size: the slowdown tracks how many there are, not their
   share of the board. Furnaces offset the losses with diminishing returns, less beside a Hole, which they feed. Reservoirs do

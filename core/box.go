@@ -146,7 +146,7 @@ func (g *Game) planBox(m *boxMove) {
 	b := int(m.box)
 	if m.dx != 0 && m.dy != 0 { // only the target cell matters, and nothing bounces
 		to := g.diagonal(b, m.dx, m.dy)
-		land := g.landing(to)
+		land := g.boxLanding(to)
 		if land == landFloor && g.Count[to] != 0 {
 			s := g.diagonal(to, m.dx, m.dy)
 			if g.landing(s) == landBlocked {
@@ -173,7 +173,7 @@ func (g *Game) planBox(m *boxMove) {
 	}
 	for _, d := range [2]int{d, d ^ 1} { // ahead, then bouncing back
 		to, arrive := g.travel(b, d)
-		land := g.landing(to)
+		land := g.boxLanding(to)
 		if land == landBlocked {
 			continue
 		}
@@ -204,6 +204,15 @@ func (g *Game) landing(i int) int {
 		}
 	}
 	return landBlocked
+}
+
+// boxLanding is landing for the Box itself: a Vault's raised shield, as this wave's hits left it, stops it like a
+// Wall. Shoved orbs still reach the shield, which takes what it can.
+func (g *Game) boxLanding(i int) int {
+	if i >= 0 && g.Pressed[i] >= vaultShield {
+		return landBlocked
+	}
+	return g.landing(i)
 }
 
 // travel follows a straight move from cell i on the current topology, through Portals and Springs.
@@ -258,8 +267,16 @@ func (g *Game) restoreBoxes(boxes, count []uint8) error {
 	return nil
 }
 
-// gain adds c of owner's orbs to cell i, capturing it as arriving orbs do.
+// gain adds c of owner's orbs to cell i, capturing it as arriving orbs do; a Vault's shield takes what it can.
 func (g *Game) gain(i int, owner int8, c uint8) {
+	for hit := true; hit && c > 0; {
+		if hit, g.Pressed[i] = Shielded(g.Pressed[i], owner); hit {
+			c--
+		}
+	}
+	if c == 0 {
+		return
+	}
 	if o := g.Owner[i]; o != owner {
 		if o != NoOwner {
 			g.Orbs[o] -= int32(g.Count[i])

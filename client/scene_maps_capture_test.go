@@ -60,6 +60,8 @@ var mapCaptureCases = []mapCaptureCase{
 	{"box-game-mobile-dark", 390, 844, true, true, false, "game", brushBox},
 	{"box-art-light", 1040, 700, false, false, false, "boxes", brushBox},
 	{"box-art-dark", 1040, 700, true, false, false, "boxes", brushBox},
+	{"vault-art-light", 1040, 640, false, false, false, "vaults", brushVault},
+	{"vault-art-dark", 1040, 640, true, true, false, "vaults", brushVault},
 	{"portal-desktop", 1040, 640, false, false, false, "", brushPortal},
 	{"portal-mobile", 390, 844, true, true, false, "", brushPortal},
 	{"portal-landscape", 568, 320, false, false, false, "", brushPortal},
@@ -277,6 +279,39 @@ func drawArtStates(dst *ebiten.Image, a *app) {
 	}
 }
 
+// drawVaultStates shows a match board's Vaults left to right: neutral, held and skipping, shield 2, shield 1 (cracked),
+// and broken, held by Vermilion, Yellow, Blue, Charcoal and Sky, with the palette icon below.
+func drawVaultStates(dst *ebiten.Image, a *app) error {
+	m := core.NewMap(5, 3)
+	for i := range 5 {
+		m.Cells[i*3+1].Feature = core.Vault
+	}
+	g, err := core.NewGameWithMap(m, 12)
+	if err != nil {
+		return err
+	}
+	s := g.Snapshot()
+	s.Played = 1<<12 - 1
+	for i, st := range []struct {
+		owner int8
+		count uint8
+		state uint8
+	}{{core.NoOwner, 0, 0}, {6, 1, 7}, {1, 1, 2 | 16 | 64}, {7, 2, 8 | 16 | 32}, {5, 1, 6 | 16}} {
+		s.Count[i*3+1], s.Owner[i*3+1], s.Pressed[i*3+1] = st.count, st.owner, st.state
+	}
+	if g, err = core.Restore(s); err != nil {
+		return err
+	}
+	b := boardview.New(g)
+	b.Layout(ui.Rect{X: 24, Y: 70, W: a.w - 48, H: 360}, 1)
+	ui.DrawText(dst, "Vaults", a.f.Title, 24, 32, text.AlignStart, a.sc.Ink)
+	b.Draw(dst, a.sc, 1000, -1, a.set.Marks)
+	for i, size := range []float64{64, 40, 28} {
+		boardview.DrawMapBrush(dst, a.sc, boardview.Brush{Feature: core.Vault, Edge: -1}, ui.Rect{X: 24 + float64(i)*90, Y: 520, W: size, H: size}, 0, false, a.set.Marks)
+	}
+	return nil
+}
+
 func drawDoorOrbStates(dst *ebiten.Image, a *app, reopen bool) error {
 	m := core.NewMap(5, 3)
 	groups := []uint8{1, 2, 7, 8, 11}
@@ -456,7 +491,7 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		lib := &mapsScene{back: newHome(), selected: 1, store: store}
 		lib.refresh()
 		s = lib
-	case "art", "wall-corners", "door-orbs", "barriers", "portals", "landfills", "landfill-joins", "landfill-fall", "landfill-close", "boxes":
+	case "art", "wall-corners", "door-orbs", "barriers", "portals", "landfills", "landfill-joins", "landfill-fall", "landfill-close", "boxes", "vaults":
 	default:
 		if c.mode == "large" {
 			m = resizeMap(m, 40, 40)
@@ -688,6 +723,10 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		}
 	} else if c.mode == "boxes" {
 		drawBoxArt(out, a, c.marks)
+	} else if c.mode == "vaults" {
+		if err := drawVaultStates(out, a); err != nil {
+			g.err = err
+		}
 	} else if c.mode == "art" {
 		drawArtStates(out, a)
 	} else {

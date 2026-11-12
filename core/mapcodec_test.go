@@ -76,6 +76,7 @@ func TestMapCodecRoundTrip(t *testing.T) {
 	draft.Cells[19] = MapCell{Feature: Portal, Group: 1}
 	draft.Cells[20] = MapCell{Feature: Portal, Group: 2, PortalMode: PortalHorizontal}
 	draft.Cells[21] = MapCell{Feature: Portal, Group: 3, PortalMode: PortalVertical}
+	draft.Cells[22].Feature = Vault // tag 15, the last
 	draft.Edges = []MapEdge{{A: 1, B: 2, Kind: Barrier}, {A: 2, B: 3, Kind: Gate, Group: 2}, {A: 3, B: 4, Kind: BreakableBarrier}}
 	draft.Edges[1].InitiallyOpen = true
 	large := NewMap(MaxSize, MaxSize)
@@ -206,7 +207,6 @@ func TestMapCodecRejectsInvalidContents(t *testing.T) {
 	for name, b := range map[string][]byte{
 		"short dimensions":             mapTestEnvelope([]byte{3, 3}, 2),
 		"invalid dimensions":           mutated(func(b []byte) { b[0] = 255 }),
-		"unknown feature":              mutated(func(b []byte) { b[3] = 15<<4 | byte(Floor) }),
 		"initial state without output": mutated(func(b []byte) { b[3] = 8 }),
 		"incorrect edge count":         mutated(func(b []byte) { b[len(b)-1] = 1 }),
 		"trailing payload":             mapTestEnvelope(append(append([]byte(nil), payload...), 0), len(payload)+1),

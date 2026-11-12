@@ -72,8 +72,10 @@ func Restore(s Snapshot) (*Game, error) {
 		}
 		for i, c := range g.Map.Cells {
 			pressedOK := s.Pressed[i] <= 1 && (c.Circuit.IsSwitch() || s.Pressed[i] == 0)
-			if holder := s.Pressed[i] &^ makerWorking; c.Feature.IsMaker() {
-				pressedOK = s.Pressed[i] == 0 || holder >= 1 && int(holder) <= s.Players && s.Count[i] > 0
+			if holder, shield := s.Pressed[i]&makerHolder, Shield(s.Pressed[i]); c.Feature.IsMaker() {
+				// Only a working Vault holds a shield, of at most VaultShields.
+				shieldOK := shield == 0 || c.Feature == Vault && shield <= VaultShields && s.Pressed[i]&makerWorking != 0
+				pressedOK = s.Pressed[i] == 0 || holder >= 1 && int(holder) <= s.Players && s.Count[i] > 0 && shieldOK
 			} else if c.Feature == Reservoir {
 				pressedOK = s.Pressed[i]&^(ReservoirMade|3) == 0 // its arrow's clockwise step and made flag
 			}

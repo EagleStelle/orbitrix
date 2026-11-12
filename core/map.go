@@ -34,10 +34,11 @@ const (
 	Crusher  // loses an orb after each of its owner's moves
 	Box      // marks where a crate starts; explosions push it, and the first Hole or Landfill it enters becomes Floor
 	Spring   // takes no orbs: what arrives leaves through the side facing away from its one Wall
+	Vault    // raises a two-hit shield after its owner's moves, which destroys other players' orbs arriving
 )
 
 // IsMaker reports whether f acts after its holder's moves.
-func (f Feature) IsMaker() bool { return f == Furnace || f == Crusher }
+func (f Feature) IsMaker() bool { return f == Furnace || f == Crusher || f == Vault }
 
 const MaxMapGroups = MaxPlayers
 
@@ -137,7 +138,7 @@ func (m MapDefinition) ValidateStructure() error {
 		return fmt.Errorf("map has too many edges")
 	}
 	for i, c := range m.Cells {
-		if c.Terrain > Sinkhole || c.Feature > Spring || c.Circuit > Door {
+		if c.Terrain > Sinkhole || c.Feature > Vault || c.Circuit > Door {
 			return fmt.Errorf("map cell %d has unknown terrain or feature", i)
 		}
 		if c.Feature != NoFeature && c.Circuit != NoCircuit {
@@ -646,12 +647,12 @@ func (m MapDefinition) Validate() []MapIssue {
 		issues = append(issues, MapIssue{Message: "All Floor must connect through Landfills, breakable walls, breakable barriers or reachable Gates, never only Breakable Floors or Sinkholes", Cells: disconnected})
 	}
 	if _, _, pace := m.Estimate(); pace == Instant || pace == Endless {
-		issue := MapIssue{Message: "Too many Holes, Sinkholes, Spillways and Crushers: games would never end"}
+		issue := MapIssue{Message: "Too many Holes, Sinkholes, Spillways, Crushers and Vaults: games would never end"}
 		if pace == Instant {
 			issue.Message = "Too many Furnaces and Reservoirs: games would end almost at once"
 		}
 		for i, c := range m.Cells {
-			drains := c.Terrain == Hole || c.Terrain == Sinkhole || c.Feature == Spillway || c.Feature == Crusher
+			drains := c.Terrain == Hole || c.Terrain == Sinkhole || c.Feature == Spillway || c.Feature == Crusher || c.Feature == Vault
 			if pace == Instant && (c.Feature == Furnace || c.Feature == Reservoir) || pace == Endless && drains {
 				issue.Cells = append(issue.Cells, i)
 			}
@@ -692,7 +693,8 @@ func (m MapDefinition) sealedByBreaking() []MapIssue {
 // Estimate predicts a game's average moves on the starting layout (0 when Endless), its length in thousandths of an
 // empty board's, and its pace. Bot games of 2 to 4 mixed seats fit it on 7×7 to 40×40 boards: an empty board lasts
 // about 0.75 moves per orb of room (what its Floor holds without exploding), and fills at the orb each move adds.
-// Each open Hole side, Spillway and Crusher loses part of it, the same on every board size. Furnaces add to it, each
+// Each open Hole side, Spillway, Crusher and Vault (whose shields destroy orbs) loses part of it, the same on every
+// board size. Furnaces add to it, each
 // a little less as they crowd, and less still beside a Hole, which they feed. More players make Furnace maps longer,
 // since each Furnace works only on its holder's turn. Reservoirs add to it too, less, as they make an orb only when
 // they explode. A Landfill drains nothing: filling it costs about a move per orb, then its Floor adds room. A Sinkhole
@@ -742,7 +744,7 @@ func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 			}
 		}
 		switch m.Cells[i].Feature {
-		case Spillway:
+		case Spillway, Vault:
 			growth -= 35
 		case Crusher:
 			growth -= 80
