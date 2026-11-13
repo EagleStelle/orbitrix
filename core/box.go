@@ -209,7 +209,7 @@ func (g *Game) landing(i int) int {
 // boxLanding is landing for the Box itself: a Vault's raised shield, as this wave's hits left it, stops it like a
 // Wall. Shoved orbs still reach the shield, which takes what it can.
 func (g *Game) boxLanding(i int) int {
-	if i >= 0 && g.Pressed[i] >= vaultShield {
+	if i >= 0 && Shield(g.Pressed[i]) != 0 {
 		return landBlocked
 	}
 	return g.landing(i)
@@ -309,6 +309,10 @@ func (g *Game) collectPushes() {
 		}
 	}
 	for k, e := range g.cur {
+		if k < g.shots {
+			push(k, e, geo.LastAim(int(e), g.Durability[e])) // a Turret's one shot
+			continue
+		}
 		for slot := range geo.Degree[e] {
 			push(k, e, int(slot))
 		}

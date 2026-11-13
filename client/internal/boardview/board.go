@@ -459,8 +459,8 @@ func (b *Board) landfillFalling() bool {
 
 func (b *Board) stepSound(snd *sound.Sound, made bool, effects sound.Effects) {
 	switch {
-	case b.Playing:
-		snd.Wave(b.Wave, len(b.Waves[b.Wave]), effects)
+	case b.Playing && len(b.Waves[b.Wave]) > b.State.shots: // Turrets firing alone play their cue, no chord
+		snd.Wave(b.Wave, len(b.Waves[b.Wave])-b.State.shots, effects)
 	case made:
 		snd.Place(int(b.mover), effects)
 	default:
@@ -472,6 +472,9 @@ func (b *Board) stepSound(snd *sound.Sound, made bool, effects sound.Effects) {
 func (b *Board) produce() (made bool, effects sound.Effects) {
 	made, crushed := b.State.Produce(b.mover, b.crushed[:0])
 	b.crushed, effects = crushed, b.State.shields
+	if b.State.shots > 0 {
+		effects |= sound.Turret
+	}
 	for _, cell := range crushed {
 		b.falls = append(b.falls, fallingOrb{hole: cell, owner: b.mover, start: b.Clock})
 		effects |= sound.Fall
@@ -582,6 +585,12 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 	}
 	if b.Playing && !b.settling {
 		for k, e := range b.Waves[b.Wave] {
+			if k < b.State.shots { // a Turret's one shot, the way it faces
+				slot, _ := b.State.Geo.Aim(int(e), b.State.Replay.Durability[e])
+				x, y := b.flightPosition(int(e), slot, b.bounce(int(b.State.Geo.Targets(int(e))[slot]), b.State.from[k], f))
+				b.Orb(x, y, int(b.State.from[k]))
+				continue
+			}
 			for connection, target := range b.State.Geo.Targets(int(e)) {
 				x, y := b.flightPosition(int(e), connection, b.bounce(int(target), b.State.from[k], f))
 				b.Orb(x, y, int(b.State.from[k]))
@@ -640,6 +649,9 @@ func (b *Board) dropIntoHoles() sound.Effects {
 	}
 	var effects sound.Effects
 	for k, e := range b.Waves[b.Wave] {
+		if k < b.State.shots {
+			continue // a Turret fires only at Floor
+		}
 		for _, hole := range geo.Targets(int(e))[geo.Degree[e]:] {
 			landfill := b.State.Replay != nil && b.State.Replay.TerrainAt(int(hole)) == core.Landfill
 			b.falls = append(b.falls, fallingOrb{hole: hole, owner: b.State.from[k], start: b.Clock, landfill: landfill})
@@ -793,7 +805,7 @@ func (b *Board) drawMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 
 func (b *Board) renderMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 	g := b.State.Replay
-	DrawMapArt(dst, sc, MapState{Map: g.Map, Durability: g.Durability, EdgeDurability: g.EdgeDurability, Pressed: g.Pressed, CircuitOn: g.CircuitOn, Owner: b.State.Owner, Count: b.State.Count, PortalAxes: g.Geo.PortalAxes, Outlets: g.Geo.Outlets, LandfillDurability: b.landfillDurability, Boxes: b.shownBoxes, Moving: true},
+	DrawMapArt(dst, sc, MapState{Map: g.Map, Durability: g.Durability, EdgeDurability: g.EdgeDurability, Pressed: g.Pressed, CircuitOn: g.CircuitOn, Aims: b.State.Geo.Aims, Owner: b.State.Owner, Count: b.State.Count, PortalAxes: g.Geo.PortalAxes, Outlets: g.Geo.Outlets, LandfillDurability: b.landfillDurability, Boxes: b.shownBoxes, Moving: true},
 		MapTransform{Cell: b.base * b.k, Turned: b.Turned}, false, b.marks)
 }
 

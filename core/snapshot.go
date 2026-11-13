@@ -73,14 +73,20 @@ func Restore(s Snapshot) (*Game, error) {
 		for i, c := range g.Map.Cells {
 			pressedOK := s.Pressed[i] <= 1 && (c.Circuit.IsSwitch() || s.Pressed[i] == 0)
 			if holder, shield := s.Pressed[i]&makerHolder, Shield(s.Pressed[i]); c.Feature.IsMaker() {
-				// Only a working Vault holds a shield, of at most VaultShields.
-				shieldOK := shield == 0 || c.Feature == Vault && shield <= VaultShields && s.Pressed[i]&makerWorking != 0
+				// Only a working Vault holds a shield, of at most VaultShields, and only a working Turret a shot count.
+				extra := s.Pressed[i] &^ (makerHolder | makerWorking)
+				counted := c.Feature == Turret && extra > turretFlag
+				shieldOK := extra == 0 || s.Pressed[i]&makerWorking != 0 && (counted || c.Feature == Vault && extra < turretFlag && shield <= VaultShields)
 				pressedOK = s.Pressed[i] == 0 || holder >= 1 && int(holder) <= s.Players && s.Count[i] > 0 && shieldOK
 			} else if c.Feature == Reservoir {
 				pressedOK = s.Pressed[i]&^(ReservoirMade|3) == 0 // its arrow's clockwise step and made flag
 			}
 			// g is fresh from NewGameWithMap, so its durability is each cell's starting value and the most it can hold.
-			if s.Durability[i] > g.Durability[i] || !pressedOK {
+			most := g.Durability[i]
+			if c.Feature == Turret {
+				most = 3 // the clockwise step it faces
+			}
+			if s.Durability[i] > most || !pressedOK {
 				return nil, fmt.Errorf("restore: invalid terrain state at cell %d", i)
 			}
 			boxed := len(s.Boxes) == n && s.Boxes[i]&BoxHere != 0

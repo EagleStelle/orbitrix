@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"slices"
 )
 
 var (
@@ -44,6 +45,8 @@ type Game struct {
 	// unstable is set when a chain hit MaxWaves and left cells at or over capacity. The next move resolves them
 	// together with its own explosions.
 	unstable bool
+	// shots counts the Turrets at the front of g.cur that fire in the wave about to explode, rather than explode.
+	shots int
 
 	// Scratch reused by every move so the hot path doesn't allocate.
 	cur, next []int16 // cells exploding in this wave / the next one
@@ -248,12 +251,13 @@ func ReservoirMakes(state uint8) (bool, uint8) {
 }
 
 // A maker's Pressed byte holds its holder (player+1) in makerHolder, makerWorking once it has worked for them, and a
-// Vault's shield in multiples of vaultShield. Any other holder, or 0 after a move leaves it empty, makes it skip its
-// next turn and drops the shield.
+// Vault's shield in multiples of vaultShield. A Turret counts its shots there instead, under turretFlag. Any other
+// holder, or 0 after a move leaves it empty, makes it skip its next turn and drops the shield or the count.
 const (
 	makerHolder  uint8 = 15
 	makerWorking uint8 = 16
 	vaultShield  uint8 = 32
+	turretFlag   uint8 = 128
 )
 
 // VaultShields is the shield a working Vault raises after its holder's move once the last one broke.
@@ -270,14 +274,19 @@ func MakerTurn(state uint8, p int8) (uint8, bool) {
 
 // MakerWorking reports whether a Furnace, Crusher or Vault in state with this owner has started working for them.
 func MakerWorking(state uint8, owner int8) bool {
-	return owner != NoOwner && state&^(3*vaultShield) == uint8(owner+1)|makerWorking
+	return owner != NoOwner && state&(makerHolder|makerWorking) == uint8(owner+1)|makerWorking
 }
 
 // Holder returns the player a Furnace, Crusher or Vault in state works for, NoOwner when none.
 func Holder(state uint8) int8 { return int8(state&makerHolder) - 1 }
 
 // Shield returns the hits a Vault in state can still take.
-func Shield(state uint8) int { return int(state / vaultShield) }
+func Shield(state uint8) int {
+	if state >= turretFlag {
+		return 0 // a Turret's shot count
+	}
+	return int(state / vaultShield)
+}
 
 // RaiseShield returns a working Vault's state after its holder's move, and whether it raised a new shield: only once
 // the last one broke, as a damaged shield holds until then.
@@ -291,17 +300,34 @@ func RaiseShield(state uint8) (uint8, bool) {
 // Shielded reports whether a cell in state stops an orb of player p, and its state after: a Vault's shield takes
 // any orb but its holder's, and the orb is lost. Only Vaults ever hold a shield, so any map cell can be asked.
 func Shielded(state uint8, p int8) (bool, uint8) {
-	if state < vaultShield || state&makerHolder == uint8(p+1) {
+	if Shield(state) == 0 || state&makerHolder == uint8(p+1) {
 		return false, state
 	}
 	return true, state - vaultShield
 }
 
-// produce runs the mover's Furnaces, Crushers and Vaults once their move has settled, after each skips its first
-// turn: each Furnace they own gains an orb, each Crusher loses one, turning neutral when empty, and each Vault whose
-// shield broke raises a new one. Furnaces that reach capacity explode as a further chain numbered from wave.
+// TurretShots is how often a Turret fires for its holder, once after each of their moves, before it must rearm.
+const TurretShots = 4
+
+// TurretFired returns a working Turret's state after it fires: its last shot leaves it as if just taken, so it skips
+// its holder's next move before firing again.
+func TurretFired(state uint8) uint8 {
+	fired := uint8(1)
+	if state >= turretFlag {
+		fired += state / vaultShield & 3
+	}
+	if fired == TurretShots {
+		return 0
+	}
+	return state&(makerHolder|makerWorking) | turretFlag | fired*vaultShield
+}
+
+// produce runs the mover's Furnaces, Crushers, Vaults and Turrets once their move has settled, after each skips its
+// first turn: each Furnace they own gains an orb, each Crusher loses one, turning neutral when empty, each Vault whose
+// shield broke raises a new one and each Turret fires. Furnaces that reach capacity explode as a further chain
+// numbered from wave, whose first wave carries the Turrets' shots, listed first.
 func (g *Game) produce(p int8, record bool, wave int) {
-	g.cur = g.cur[:0]
+	g.cur, g.next, g.shots = g.cur[:0], g.next[:0], 0
 	ran := false
 	for _, e := range g.topology.makers {
 		i := int(e)
@@ -316,6 +342,12 @@ func (g *Game) produce(p int8, record bool, wave int) {
 		switch f := g.Map.Cells[i].Feature; {
 		case f == Vault:
 			g.Pressed[i], _ = RaiseShield(g.Pressed[i])
+		case f == Turret:
+			g.Pressed[i] = TurretFired(g.Pressed[i])
+			if g.Geo.Aims != nil && g.Geo.Aims[i] != 0 { // shut in, it fires nowhere
+				g.cur = append(g.cur, e)
+				g.shots++
+			}
 		case f == Crusher:
 			g.Count[i]--
 			g.Orbs[p]--
@@ -326,20 +358,21 @@ func (g *Game) produce(p int8, record bool, wave int) {
 			g.Count[i]++
 			g.Orbs[p]++
 			if g.Count[i] == g.Geo.Cap[i] {
-				g.cur = append(g.cur, e)
+				g.next = append(g.next, e)
 			}
 		}
 	}
 	if !ran {
 		return
 	}
+	g.cur = append(g.cur, g.next...)
 	if record {
 		g.ProducedAt = wave
 	}
 	if g.unstable { // the move's chain hit the wave limit: its leftover cells explode with the Furnaces
-		g.cur = g.cur[:0]
+		g.cur = g.cur[:g.shots]
 		for i, n := range g.Count {
-			if g.Geo.Playable(i) && n >= g.Geo.Cap[i] {
+			if g.Geo.Playable(i) && n >= g.Geo.Cap[i] && !slices.Contains(g.cur[:g.shots], int16(i)) {
 				g.cur = append(g.cur, int16(i))
 			}
 		}
@@ -383,6 +416,7 @@ func (g *Game) resolve(record bool, first int) int {
 		if g.Map != nil {
 			g.terrainWave(wave, record)
 		}
+		g.shots = 0
 		g.cur, g.next = g.next, g.cur
 	}
 }
@@ -399,10 +433,13 @@ func (g *Game) explode() {
 		clear(g.arrived)
 	}
 	g.next, g.from = g.next[:0], g.from[:0]
-	for _, e := range g.cur {
+	for k, e := range g.cur {
 		// One orb per target; those sent into Holes or a Spillway's pit are lost, so only Neighbours receive below.
 		p, released := g.Owner[e], geo.Released(int(e))
 		g.from = append(g.from, p)
+		if k < g.shots {
+			continue // a Turret's shot is a new orb: it gives up none of its own
+		}
 		g.Count[e] -= released
 		g.Orbs[p] -= int32(released)
 		if geo.Outlets != nil && geo.Outlets[e] != 0 {
@@ -423,7 +460,12 @@ func (g *Game) explode() {
 	}
 	for k, e := range g.cur {
 		p, to := g.from[k], geo.Neighbours(int(e))
-		if geo.Outlets != nil && geo.Outlets[e] != 0 {
+		if k < g.shots {
+			// A Turret fires one new orb the way it faces, then turns clockwise to its next open route.
+			var slot int
+			slot, g.Durability[e] = geo.Aim(int(e), g.Durability[e])
+			to = to[slot : slot+1]
+		} else if geo.Outlets != nil && geo.Outlets[e] != 0 {
 			// A Reservoir throws its extra orb out the side its arrow points to, then the arrow turns clockwise.
 			var slot int
 			slot, g.Pressed[e] = geo.Outlet(int(e), g.Pressed[e])

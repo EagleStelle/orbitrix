@@ -25,6 +25,7 @@ type MapState struct {
 	Count               []uint8
 	PortalAxes          []core.PortalAxes
 	Outlets             []uint8 // the match geometry's Reservoir routes; nil uses the map's starting ones
+	Aims                []uint8 // the match geometry's Turret routes, likewise
 	LandfillDurability  []uint8 // presentation waits until incoming orbs have reached the bottom
 	Boxes               []uint8 // a match's core.Game.Boxes: its pits filled by a Box show a crate in the Floor
 	Moving              bool    // the board draws Boxes and Springs itself, to animate them
@@ -537,6 +538,19 @@ func renderMapFeature(dst *ebiten.Image, sc *ui.Palette, feature core.Feature, g
 		}
 		mapPath.Close()
 		ui.StrokePath(dst, &mapPath, width, sc.Dim)
+	case core.Turret:
+		// Seen from above: a square base and one filled barrel, joined to it and pointing the way it fires next (arrow,
+		// as a Reservoir's; up without a route). The barrel crosses the tile's edge and its wider muzzle sits in the
+		// gutter, ending at the cell's edge, short of the next tile. No circles.
+		half := body.W * .2
+		ui.StrokeRound(dst, ui.Rect{X: x - half, Y: y - half, W: 2 * half, H: 2 * half}, 0, width, sc.Dim)
+		d := [][2]float64{{0, -1}, {0, -1}, {1, 0}, {0, 1}, {-1, 0}}[arrow]
+		for _, part := range [][3]float64{{half, r.W / 2, body.W * .08}, {body.W / 2, r.W / 2, body.W * .14}} {
+			from, to, wide := part[0], part[1], part[2] // along the barrel from the centre, and its half width
+			cx, cy := x+d[0]*(from+to)/2, y+d[1]*(from+to)/2
+			w, h := math.Abs(d[0])*(to-from)+math.Abs(d[1])*2*wide, math.Abs(d[1])*(to-from)+math.Abs(d[0])*2*wide
+			ui.FillRound(dst, ui.Rect{X: cx - w/2, Y: cy - h/2, W: w, H: h}, 0, sc.Dim)
+		}
 	case core.Crusher:
 		// Two arrows press onto a flat line: an orb squashed after each of its owner's moves.
 		ui.Line(dst, x-body.W*.26, y, x+body.W*.26, y, width, sc.Dim)
@@ -840,6 +854,8 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 			arrow = reservoirArrow(&state, tr, i)
 		case core.Spring:
 			arrow = springSide(m, tr, i)
+		case core.Turret:
+			arrow = turretArrow(&state, tr, i)
 		}
 		if !state.Moving || cfg.Feature != core.Box && cfg.Feature != core.Spring { // a match's board slides and squashes these
 			drawMapFeature(dst, &featureScheme, cfg.Feature, cfg.Group, axes, arrow, r, working)
@@ -953,6 +969,20 @@ func reservoirArrow(state *MapState, tr MapTransform, i int) uint8 {
 	var step uint8
 	if i < len(state.Pressed) {
 		step = state.Pressed[i]
+	}
+	d, _ := core.NextOutlet(mask, step)
+	return screenSide(d, tr)
+}
+
+// turretArrow returns the screen side a Turret fires to next, as reservoirArrow: its facing is its Durability.
+func turretArrow(state *MapState, tr MapTransform, i int) uint8 {
+	mask := state.Map.InitialOutlets(i)
+	if state.Aims != nil {
+		mask = state.Aims[i]
+	}
+	var step uint8
+	if i < len(state.Durability) {
+		step = state.Durability[i]
 	}
 	d, _ := core.NextOutlet(mask, step)
 	return screenSide(d, tr)

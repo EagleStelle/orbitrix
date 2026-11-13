@@ -197,6 +197,12 @@ func (g *Game) mapGeometry() *Geometry {
 			}
 			geo.Outlets[i] = outlets
 		}
+		if c.Feature == Turret {
+			if geo.Aims == nil {
+				geo.Aims = make([]uint8, n)
+			}
+			geo.Aims[i] = outlets
+		}
 	}
 	t.cache[t.next] = topologyEntry{key: key, geo: geo}
 	t.next = (t.next + 1) % len(t.cache)

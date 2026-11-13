@@ -24,6 +24,7 @@ type view struct {
 	pending  []boxPending // orbs of the wave in flight sent into Boxes
 	hits     []fallingOrb // orbs the last landing lost on Vault shields, for Board to shrink at the shield
 	shields  sound.Effects
+	shots    int // Turrets at the front of the wave in flight that fire rather than explode, as in core.Game
 }
 
 // shielded reports whether Vault i's shield takes owner's orb arriving there, and keeps the shield's cue: a knock,
@@ -50,7 +51,7 @@ func NewView(g *core.Game) *view {
 }
 
 func (v *view) sync(g *core.Game) {
-	v.Geo, v.Events, v.wave, v.hits = g.Geo, nil, 0, v.hits[:0]
+	v.Geo, v.Events, v.wave, v.hits, v.shots = g.Geo, nil, 0, v.hits[:0], 0
 	if g.Map != nil {
 		if v.Replay == nil {
 			v.Replay = g.Clone()
@@ -85,8 +86,11 @@ func (v *view) Place(cell int, p int8) []core.TerrainEvent {
 // aimed at Holes or a Spillway's pit never land.
 func (v *view) Launch(w core.Wave) {
 	v.from = v.from[:0]
-	for _, e := range w {
+	for k, e := range w {
 		v.from = append(v.from, v.Owner[e])
+		if k < v.shots {
+			continue // a Turret's shot is a new orb
+		}
 		v.Count[e] -= v.Geo.Released(int(e))
 		if v.Geo.Outlets != nil && v.Geo.Outlets[e] != 0 {
 			var makes bool
@@ -107,7 +111,12 @@ func (v *view) Land(w core.Wave) []core.TerrainEvent {
 	v.hits, v.shields = v.hits[:0], 0
 	for k, e := range w {
 		to := v.Geo.Neighbours(int(e))
-		if v.Geo.Outlets != nil && v.Geo.Outlets[e] != 0 {
+		if k < v.shots {
+			var slot int
+			slot, v.Replay.Durability[e] = v.Geo.Aim(int(e), v.Replay.Durability[e])
+			to = to[slot : slot+1]
+			v.revision++ // its barrel turned
+		} else if v.Geo.Outlets != nil && v.Geo.Outlets[e] != 0 {
 			var slot int
 			slot, v.Replay.Pressed[e] = v.Geo.Outlet(int(e), v.Replay.Pressed[e])
 			var buf [core.MaxConnections + 1]int16
@@ -129,15 +138,16 @@ func (v *view) Land(w core.Wave) []core.TerrainEvent {
 	}
 	events := v.applyTerrain(v.wave)
 	v.wave++
+	v.shots = 0
 	return events
 }
 
 // Produce runs the mover's Furnaces, Crushers and Vaults as core.Game does after the move's first chain. It reports
-// whether a Furnace made an orb, appends each Crusher that lost one to crushed, and sets shields when a Vault raised
-// one.
+// whether a Furnace made an orb, appends each Crusher that lost one to crushed, sets shields when a Vault raised
+// one, and counts in shots the Turrets firing in the wave that follows.
 func (v *view) Produce(p int8, crushed []int16) (bool, []int16) {
 	made := false
-	v.shields = 0
+	v.shields, v.shots = 0, 0
 	for i, c := range v.Replay.Map.Cells {
 		if v.Owner[i] != p || !c.Feature.IsMaker() {
 			continue
@@ -152,6 +162,11 @@ func (v *view) Produce(p int8, crushed []int16) (bool, []int16) {
 			var raised bool
 			if v.Replay.Pressed[i], raised = core.RaiseShield(v.Replay.Pressed[i]); raised {
 				v.shields |= sound.Shield
+			}
+		case c.Feature == core.Turret:
+			v.Replay.Pressed[i] = core.TurretFired(v.Replay.Pressed[i])
+			if v.Geo.Aims != nil && v.Geo.Aims[i] != 0 {
+				v.shots++
 			}
 		case c.Feature == core.Crusher:
 			crushed = append(crushed, int16(i))

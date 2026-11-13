@@ -18,7 +18,7 @@ func TestPaceFit(t *testing.T) {
 	}
 	// A second cell goes just above the first: a Spring's Wall, or a Box over the Hole it can fill.
 	pieces := [][]core.MapCell{{{Terrain: core.Hole}}, {{Terrain: core.Landfill}}, {{Terrain: core.Sinkhole}}, {{Terrain: core.BreakableFloor}}, {{Feature: core.Spillway}}, {{Feature: core.Crusher}}, {{Feature: core.Furnace}}, {{Feature: core.Reservoir}},
-		{{Feature: core.Box}}, {{Terrain: core.Hole}, {Feature: core.Box}}, {{Feature: core.Spring}, {Terrain: core.Wall}}, {{Terrain: core.Wall}}, {{Feature: core.Vault}}}
+		{{Feature: core.Box}}, {{Terrain: core.Hole}, {Feature: core.Box}}, {{Feature: core.Spring}, {Terrain: core.Wall}}, {{Terrain: core.Wall}}, {{Feature: core.Vault}}, {{Feature: core.Turret}}}
 	for _, size := range []int{9, 15} {
 		empty := paceMoves(core.NewMap(size, size))
 		emptyMoves, _, _ := core.NewMap(size, size).Estimate()

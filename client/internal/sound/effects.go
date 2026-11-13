@@ -19,6 +19,7 @@ const (
 	BoxSlide
 	Spring
 	Shield
+	Turret
 )
 
 type effectTone struct {
@@ -43,6 +44,7 @@ var effectTones = [...]effectTone{
 	{[3]int{1, 0, -1}, .24, .002, .03, .07, [4]float64{1, .5, .3, .2}},       // Box slide: two soft woody knocks, D4 C4
 	{[3]int{7, 11, -1}, .28, .001, .05, .06, [4]float64{1, .2, .65, .2}},     // Spring: a reed boing rising, E5 to D6
 	{[3]int{5, 8, 12}, .4, .006, .12, .03, [4]float64{1, .6, .1, .3}},        // Shield: a bright hum sweeping up and ringing, C5 G5 E6
+	{[3]int{0, 9, -1}, .3, .001, .05, .05, [4]float64{1, .5, .3, .2}},        // Turret: a woody thump and its shell's ping, C4 then A5
 }
 
 func synthEffect(tone effectTone) []byte {

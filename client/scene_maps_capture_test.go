@@ -62,6 +62,8 @@ var mapCaptureCases = []mapCaptureCase{
 	{"box-art-dark", 1040, 700, true, false, false, "boxes", brushBox},
 	{"vault-art-light", 1040, 640, false, false, false, "vaults", brushVault},
 	{"vault-art-dark", 1040, 640, true, true, false, "vaults", brushVault},
+	{"turret-art-light", 1040, 640, false, false, false, "turrets", brushTurret},
+	{"turret-art-dark", 1040, 640, true, true, false, "turrets", brushTurret},
 	{"portal-desktop", 1040, 640, false, false, false, "", brushPortal},
 	{"portal-mobile", 390, 844, true, true, false, "", brushPortal},
 	{"portal-landscape", 568, 320, false, false, false, "", brushPortal},
@@ -280,11 +282,11 @@ func drawArtStates(dst *ebiten.Image, a *app) {
 }
 
 // drawVaultStates shows a match board's Vaults left to right: neutral, held and skipping, shield 2, shield 1 (cracked),
-// and broken, held by Vermilion, Yellow, Blue, Charcoal and Sky, with the palette icon below.
-func drawVaultStates(dst *ebiten.Image, a *app) error {
+// and broken, held by Vermilion, Yellow, Blue, Charcoal and Sky, with the palette icon below. Turrets face up, right, down, left and up.
+func drawVaultStates(dst *ebiten.Image, a *app, feature core.Feature) error {
 	m := core.NewMap(5, 3)
 	for i := range 5 {
-		m.Cells[i*3+1].Feature = core.Vault
+		m.Cells[i*3+1].Feature = feature
 	}
 	g, err := core.NewGameWithMap(m, 12)
 	if err != nil {
@@ -297,6 +299,10 @@ func drawVaultStates(dst *ebiten.Image, a *app) error {
 		count uint8
 		state uint8
 	}{{core.NoOwner, 0, 0}, {6, 1, 7}, {1, 1, 2 | 16 | 64}, {7, 2, 8 | 16 | 32}, {5, 1, 6 | 16}} {
+		if feature == core.Turret {
+			st.state &= 31
+			s.Durability[i*3+1] = uint8(i) % 4 // facing up, right, down, left, up
+		}
 		s.Count[i*3+1], s.Owner[i*3+1], s.Pressed[i*3+1] = st.count, st.owner, st.state
 	}
 	if g, err = core.Restore(s); err != nil {
@@ -304,10 +310,10 @@ func drawVaultStates(dst *ebiten.Image, a *app) error {
 	}
 	b := boardview.New(g)
 	b.Layout(ui.Rect{X: 24, Y: 70, W: a.w - 48, H: 360}, 1)
-	ui.DrawText(dst, "Vaults", a.f.Title, 24, 32, text.AlignStart, a.sc.Ink)
+	ui.DrawText(dst, editorTools[brushVault+int(feature-core.Vault)]+"s", a.f.Title, 24, 32, text.AlignStart, a.sc.Ink)
 	b.Draw(dst, a.sc, 1000, -1, a.set.Marks)
 	for i, size := range []float64{64, 40, 28} {
-		boardview.DrawMapBrush(dst, a.sc, boardview.Brush{Feature: core.Vault, Edge: -1}, ui.Rect{X: 24 + float64(i)*90, Y: 520, W: size, H: size}, 0, false, a.set.Marks)
+		boardview.DrawMapBrush(dst, a.sc, boardview.Brush{Feature: feature, Edge: -1}, ui.Rect{X: 24 + float64(i)*90, Y: 520, W: size, H: size}, 0, false, a.set.Marks)
 	}
 	return nil
 }
@@ -723,8 +729,12 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		}
 	} else if c.mode == "boxes" {
 		drawBoxArt(out, a, c.marks)
-	} else if c.mode == "vaults" {
-		if err := drawVaultStates(out, a); err != nil {
+	} else if c.mode == "vaults" || c.mode == "turrets" {
+		feature := core.Vault
+		if c.mode == "turrets" {
+			feature = core.Turret
+		}
+		if err := drawVaultStates(out, a, feature); err != nil {
 			g.err = err
 		}
 	} else if c.mode == "art" {

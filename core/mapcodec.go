@@ -33,19 +33,22 @@ func EncodeMap(m MapDefinition) ([]byte, error) {
 	payload = append(payload, m.Name...)
 	for _, c := range m.Cells {
 		// Keep legacy switch tags 3..5; Portal modes use 7..9, Spillway, Furnace, Crusher, Box, Spring and Vault 10..15 (the
-		// last tag four bits hold), and bit 3 stores the initial state.
+		// last tag four bits hold), and bit 3 stores the initial state. Only circuit outputs have one, so on tags 10..15
+		// bit 3 selects a second set of features instead, from Turret on.
 		component := byte(c.Feature)
 		switch c.Feature {
 		case Portal:
 			component = 7 + byte(c.PortalMode)
 		case Spillway, Furnace, Crusher, Box, Spring, Vault:
 			component = 10 + byte(c.Feature-Spillway)
+		case Turret:
+			component = 10 + byte(c.Feature-Turret)
 		}
 		if c.Circuit != NoCircuit {
 			component = byte(c.Circuit) + 2
 		}
 		cell := byte(c.Terrain) | component<<4
-		if c.InitiallyOpen {
+		if c.InitiallyOpen || c.Feature >= Turret {
 			cell |= 8
 		}
 		payload = append(payload, cell, c.Group)
@@ -153,7 +156,9 @@ func decodeMapPayload(b []byte, version byte) (MapDefinition, error) {
 		if version == 1 && (component > 3 || c.InitiallyOpen) {
 			return bad()
 		}
-		if component >= 10 {
+		if component >= 10 && c.InitiallyOpen {
+			c.Feature, c.InitiallyOpen = Turret+Feature(component-10), false // unknown ones fail ValidateStructure
+		} else if component >= 10 {
 			c.Feature = Spillway + Feature(component-10)
 		} else if component >= 7 {
 			c.Feature = Portal

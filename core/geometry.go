@@ -33,6 +33,8 @@ type Geometry struct {
 	// Outlets holds each Reservoir's open Floor routes, bit d for direction d (left, right, up, down): the sides its
 	// arrow can point to. Nil without Reservoirs.
 	Outlets []uint8
+	// Aims holds each Turret's open Floor routes the same way: the sides it can face. Nil without Turrets.
+	Aims []uint8
 	// Nbr holds MaxConnections slots per cell, of which Degree are active.
 	Nbr []int16
 	// PortalRoutes holds entry/exit pairs per connection, only on maps with active Portal routes.
@@ -129,6 +131,17 @@ func (g *Geometry) PortalPath(cell, connection int) []int16 {
 
 // Playable excludes blocked terrain and Portals, including an empty destroyed wall as Floor.
 func (g *Geometry) Playable(i int) bool { return i >= 0 && i < g.Cells() && g.Cap[i] != 0 }
+
+// Aim returns the neighbour slot Turret i fires into, given the clockwise step it faces (0 up), and the step after.
+func (g *Geometry) Aim(i int, step uint8) (slot int, next uint8) {
+	d, next := NextOutlet(g.Aims[i], step)
+	return bits.OnesCount8(g.Aims[i] & (1<<d - 1)), next
+}
+
+// LastAim returns the neighbour slot Turret i just fired into, given its step after turning: the inverse of Aim.
+func (g *Geometry) LastAim(i int, step uint8) int {
+	return bits.OnesCount8(g.Aims[i] & (1<<clockwise[(step+3)&3] - 1))
+}
 
 // LastOutlet returns the neighbour slot Reservoir i's extra orb took, given its state after the arrow turned: the
 // inverse of Outlet.
