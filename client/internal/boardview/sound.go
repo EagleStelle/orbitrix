@@ -20,7 +20,7 @@ func (v *view) terrainSounds(events []core.TerrainEvent) (effects sound.Effects)
 			continue
 		}
 		if !e.Switch {
-			if !e.Edge && (v.Replay.Map.Cells[e.Cell].Terrain == core.Landfill || v.Replay.Map.Cells[e.Cell].Terrain == core.Sinkhole) {
+			if !e.Edge && (v.Replay.Map.Cells[e.Cell].Terrain == core.Landfill || v.Replay.Map.Cells[e.Cell].Terrain == core.Sinkhole || v.Replay.Map.Cells[e.Cell].Circuit == core.Hatch) {
 				effects |= sound.Fall
 				continue
 			}

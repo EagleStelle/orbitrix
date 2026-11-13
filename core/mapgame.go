@@ -82,6 +82,9 @@ func (g *Game) TerrainAt(i int) Terrain {
 	if len(g.Boxes) != 0 && g.Boxes[i]&CrateFloor != 0 {
 		return Floor
 	}
+	if c.Circuit == Hatch && CircuitOpen(c.InitiallyOpen, g.CircuitOn[c.Group]) {
+		return Hole
+	}
 	switch {
 	case (t == BreakableWall || t == Landfill) && g.Durability[i] == 0:
 		return Floor
@@ -289,6 +292,9 @@ func (g *Game) terrainWave(wave int, record bool) {
 		}
 	}
 	circuitsChanged := g.circuitInputs(wave, record)
+	if circuitsChanged {
+		g.dropHatches(wave, record)
+	}
 	if changed || circuitsChanged {
 		g.Geo = g.mapGeometry()
 	}
@@ -342,6 +348,11 @@ func (g *Game) ReplayTerrain(events []TerrainEvent) {
 		case e.Cell < 0:
 			changed = changed || g.CircuitOn[e.Group] != e.Open
 			g.CircuitOn[e.Group] = e.Open
+			for _, i := range g.topology.hatches { // a Box on a Hatch that opened fills it; the orbs have their own event
+				if len(g.Boxes) != 0 && g.Boxes[i]&BoxHere != 0 && g.TerrainAt(int(i)) == Hole {
+					g.Boxes[i] = CrateFloor
+				}
+			}
 		case e.Switch:
 			g.Pressed[e.Cell] = 0
 			if e.Pressed {

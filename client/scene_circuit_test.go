@@ -11,7 +11,7 @@ func TestEditorOutputStartingStatesAcrossLayouts(t *testing.T) {
 		a := setupTestApp(size[0], size[1], 1, 2)
 		a.in.finger = true
 		e := newMapEditor(a, newHome(), core.NewMap(9, 9), func(core.MapDefinition) error { return nil })
-		for _, tool := range []int{brushDoor, brushGate} {
+		for _, tool := range []int{brushDoor, brushHatch, brushGate} {
 			e.selectTool(tool)
 			e.layout(a)
 			if !containsRect(e.dock, e.initialB) || e.initialB.H < 40*a.u || overlaps(e.initialB, e.info) || overlaps(e.initialB, e.dockScroll.Viewport) {
@@ -24,7 +24,7 @@ func TestEditorOutputStartingStatesAcrossLayouts(t *testing.T) {
 				t.Fatalf("touch did not toggle initial state: %v", err)
 			}
 			a.in.clicked = false
-			if tool == brushDoor {
+			if editorBrushes[tool].Circuit.IsOutput() {
 				if !e.paint(40, 0, 0) || !e.m.Cells[40].InitiallyOpen {
 					t.Fatal("Door initial state was not painted")
 				}

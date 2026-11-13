@@ -24,6 +24,11 @@ func TestBotsOnCustomMaps(t *testing.T) {
 	sinkholes := core.NewMap(5, 5)
 	sinkholes.Name = "Sinkholes"
 	sinkholes.Cells[12].Terrain, sinkholes.Cells[0].Terrain = core.Sinkhole, core.Sinkhole
+	hatches := core.NewMap(5, 5)
+	hatches.Name = "Hatches"
+	hatches.Cells[6] = core.MapCell{Circuit: core.Toggle, Group: 1}
+	hatches.Cells[12] = core.MapCell{Circuit: core.Hatch, Group: 1}
+	hatches.Cells[18] = core.MapCell{Circuit: core.Hatch, Group: 1, InitiallyOpen: true}
 	spillways := core.NewMap(5, 5)
 	spillways.Name = "Spillways"
 	spillways.Cells[12].Feature, spillways.Cells[0].Feature = core.Spillway, core.Spillway
@@ -37,7 +42,7 @@ func TestBotsOnCustomMaps(t *testing.T) {
 	boxes.Name = "Boxes and Springs"
 	boxes.Cells[12].Terrain, boxes.Cells[11].Feature, boxes.Cells[6].Feature = core.Hole, core.Box, core.Box
 	boxes.Cells[2].Terrain, boxes.Cells[7].Feature = core.Wall, core.Spring // faces the Hole
-	for _, m := range append(core.StarterMaps(), barriers, portals, holes, landfills, floors, sinkholes, spillways, furnaces, reservoirs, boxes) {
+	for _, m := range append(core.StarterMaps(), barriers, portals, holes, landfills, floors, sinkholes, hatches, spillways, furnaces, reservoirs, boxes) {
 		t.Run(m.Name, func(t *testing.T) {
 			g, err := core.NewGameWithMap(m, 3)
 			if err != nil {

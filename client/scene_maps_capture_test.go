@@ -34,6 +34,13 @@ type mapCaptureCase struct {
 }
 
 var mapCaptureCases = []mapCaptureCase{
+	{"hatch-states-light", 840, 610, false, false, false, "hatch-states", brushHatch},
+	{"hatch-states-dark", 840, 610, true, false, false, "hatch-states", brushHatch},
+	{"hatch-desktop", 1040, 640, false, false, false, "", brushHatch},
+	{"hatch-mobile-dark", 390, 844, true, true, false, "initial-open", brushHatch},
+	{"hatch-landscape-preview", 568, 320, true, false, true, "", brushHatch},
+	{"hatch-game-light", 1040, 640, false, false, false, "game", brushHatch},
+	{"hatch-game-dark", 390, 844, true, true, true, "game", brushHatch},
 	{"landfill-desktop", 1040, 640, false, false, false, "", brushLandfill},
 	{"landfill-mobile-dark", 390, 844, true, true, false, "", brushLandfill},
 	{"landfill-states-light", 1040, 500, false, false, false, "landfills", brushLandfill},
@@ -188,6 +195,8 @@ func editorShowcaseMap() core.MapDefinition {
 	m.Cells[6*m.Rows+3] = core.MapCell{Circuit: core.Toggle, Group: 1}
 	m.Cells[8*m.Rows+2] = core.MapCell{Circuit: core.Door, Group: 1}
 	m.Cells[9*m.Rows+2] = core.MapCell{Circuit: core.Door, Group: 1, InitiallyOpen: true}
+	m.Cells[8*m.Rows+3] = core.MapCell{Circuit: core.Hatch, Group: 1}
+	m.Cells[9*m.Rows+3] = core.MapCell{Circuit: core.Hatch, Group: 1, InitiallyOpen: true}
 	m.Edges = []core.MapEdge{
 		{A: 3*m.Rows + 1, B: 4*m.Rows + 1, Kind: core.Gate, Group: 1},
 		{A: 3*m.Rows + 2, B: 4*m.Rows + 2, Kind: core.Gate, Group: 1},
@@ -418,6 +427,12 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		a.sc = &ui.Palettes[ui.Dark]
 	}
 	a.set.Marks = c.marks
+	if c.tool == brushHatch {
+		if err := verifyHatchArt(a); err != nil {
+			g.err = err
+			return
+		}
+	}
 	a.in.x, a.in.y = offScreen, offScreen
 	m := editorShowcaseMap()
 	if c.tool == brushLandfill {
@@ -497,7 +512,7 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		lib := &mapsScene{back: newHome(), selected: 1, store: store}
 		lib.refresh()
 		s = lib
-	case "art", "wall-corners", "door-orbs", "barriers", "portals", "landfills", "landfill-joins", "landfill-fall", "landfill-close", "boxes", "vaults":
+	case "art", "wall-corners", "door-orbs", "barriers", "portals", "landfills", "landfill-joins", "landfill-fall", "landfill-close", "boxes", "vaults", "hatch-states":
 	default:
 		if c.mode == "large" {
 			m = resizeMap(m, 40, 40)
@@ -737,6 +752,8 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		if err := drawVaultStates(out, a, feature); err != nil {
 			g.err = err
 		}
+	} else if c.mode == "hatch-states" {
+		drawHatchStates(out, a)
 	} else if c.mode == "art" {
 		drawArtStates(out, a)
 	} else {
@@ -826,6 +843,67 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		g.err = err
 	}
 	g.index++
+}
+
+func drawHatchStates(dst *ebiten.Image, a *app) {
+	ui.DrawText(dst, "Single hinged lid", a.f.Title, 28, 25, text.AlignStart, a.sc.Ink)
+	for column, label := range []string{"Closed", "Open", "Hole"} {
+		x := 60 + float64(column)*270
+		ui.DrawText(dst, label, a.f.LabelBold, x+70, 95, text.AlignCenter, a.sc.Ink)
+		brush := boardview.Brush{Circuit: core.Hatch, Edge: -1}
+		if column == 2 {
+			brush = boardview.Brush{Terrain: core.Hole, Edge: -1}
+		}
+		boardview.DrawMapBrush(dst, a.sc, brush, ui.Rect{X: x, Y: 125, W: 140, H: 140}, 1, column == 1, a.set.Marks)
+	}
+	ui.DrawText(dst, "At board size", a.f.Heading, 28, 320, text.AlignStart, a.sc.Ink)
+	for group := 1; group <= core.MaxMapGroups; group++ {
+		for state := range 2 {
+			r := ui.Rect{X: 28 + float64(group-1)*43, Y: 370 + float64(state)*50, W: 32, H: 32}
+			boardview.DrawMapBrush(dst, a.sc, boardview.Brush{Circuit: core.Hatch, Edge: -1}, r, uint8(group), state == 1, a.set.Marks)
+		}
+	}
+	ui.DrawText(dst, "Joined pits", a.f.Heading, 600, 320, text.AlignStart, a.sc.Ink)
+	m := core.NewMap(5, 3)
+	m.Cells[4] = core.MapCell{Circuit: core.Hatch, Group: 1, InitiallyOpen: true}
+	m.Cells[7].Terrain = core.Hole
+	m.Cells[10] = core.MapCell{Circuit: core.Hatch, Group: 2, InitiallyOpen: true}
+	boardview.DrawMapArt(dst, a.sc, boardview.MapState{Map: &m}, boardview.MapTransform{X: 584, Y: 360, Cell: 48}, true, a.set.Marks)
+}
+
+// Open Hatches retain their hardware over Hole art. A Box filling one removes the hardware permanently.
+func verifyHatchArt(a *app) error {
+	for _, filled := range []bool{false, true} {
+		for _, turned := range []bool{false, true} {
+			m := core.NewMap(3, 3)
+			m.Cells[4] = core.MapCell{Circuit: core.Hatch, Group: 1, InitiallyOpen: true}
+			m.Cells[5].Terrain = core.Hole
+			state := boardview.MapState{Map: &m}
+			if filled {
+				state.Boxes = make([]uint8, 9)
+				state.Boxes[4] = core.CrateFloor
+			}
+			tr := boardview.MapTransform{Cell: 48, Turned: turned}
+			pixels := make([][]byte, 2)
+			for i := range pixels {
+				img := ebiten.NewImage(144, 144)
+				img.Fill(a.sc.Ground)
+				boardview.DrawMapArt(img, a.sc, state, tr, true, a.set.Marks)
+				pixels[i] = make([]byte, 144*144*4)
+				img.ReadPixels(pixels[i])
+				img.Deallocate()
+				m.Cells[4] = core.MapCell{Terrain: core.Hole}
+			}
+			if bytes.Equal(pixels[0], pixels[1]) != filled {
+				return fmt.Errorf("Hatch hardware visibility is wrong: filled=%v, turned=%v", filled, turned)
+			}
+			center := (72*144 + 72) * 4
+			if !bytes.Equal(pixels[0][center:center+4], pixels[1][center:center+4]) {
+				return fmt.Errorf("Hatch hardware covers its pit or crate: filled=%v, turned=%v", filled, turned)
+			}
+		}
+	}
+	return nil
 }
 
 type captureMapError struct{ message string }

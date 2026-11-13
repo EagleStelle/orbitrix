@@ -75,6 +75,12 @@ Decisions that future changes have to respect, and why. How things work is in [a
   drops its capacity, so it can never enter the next wave. Validation treats every Sinkhole as gone for
   connectivity, for the same split-board reason, but needs no sealed-cell check: the Hole it becomes is still a
   route. Bots fill them early, so `Estimate` weighs each as the Hole it becomes.
+- Hatches use the existing circuit polarity and individual initial state, becoming Holes when open. Opening drops
+  their orbs after the step's transfers, before the next wave; a Box fills one permanently, overriding the circuit.
+  Validation keeps Floor connected with every Hatch open, and Estimate counts their sides like Holes regardless of
+  initial state because repeated openings drain nearly as much in mixed-bot games. Reuse Hole bands and cues beneath
+  a persistent circuit-colored frame and hinges so an open Hatch remains identifiable on every surface. No additional
+  runtime or snapshot state is needed.
 - Map format 2 stores terrain in three bits, and Sinkhole (7) fills the last value. Further terrain needs a format
   change, not another value.
 - Boxes move once per wave, after its transfers, against the Boxes and terrain the wave began with; a cell two moves

@@ -20,6 +20,7 @@ type topologyEntry struct {
 
 type mapTopology struct {
 	switches, walls []int16
+	hatches         []int16
 	barriers        []int16
 	makers          []int16 // Furnaces and Crushers, which act after their owner's move
 	reservoirs      []int16
@@ -41,6 +42,9 @@ func newMapTopology(m *MapDefinition) *mapTopology {
 		t.pairs[i] = -1
 		if c.Circuit.IsSwitch() {
 			t.switches = append(t.switches, int16(i))
+		}
+		if c.Circuit == Hatch {
+			t.hatches = append(t.hatches, int16(i))
 		}
 		if c.Terrain == BreakableWall || c.Terrain == Landfill || c.Terrain == BreakableFloor || c.Terrain == Sinkhole {
 			t.walls = append(t.walls, int16(i))

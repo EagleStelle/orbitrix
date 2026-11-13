@@ -54,7 +54,7 @@ fill empty seats with AI, and enjoy following a chain reaction as it plays out.
 
 ## Capabilities and Constraints
 
-- Custom maps and Map Editor: Floor, Void, Hole, Landfill, Wall, Breakable wall, Breakable floor (its second explosion breaks it into Void, dropping its orbs), Sinkhole (playable floor that never explodes: filled to capacity, it collapses into a Hole and its orbs fall in), Barriers, Gates, Doors, Links, Reservoirs (take an extra orb, throw it along a turning arrow and make a new one), Spillways, Furnaces (gain an
+- Custom maps and Map Editor: Floor, Void, Hole, Landfill, Wall, Breakable wall, Breakable floor (its second explosion breaks it into Void, dropping its orbs), Sinkhole (playable floor that never explodes: filled to capacity, it collapses into a Hole and its orbs fall in), Barriers, Gates, Doors, Hatches (Floor when closed, Hole when open; a Box fills one permanently), Links, Reservoirs (take an extra orb, throw it along a turning arrow and make a new one), Spillways, Furnaces (gain an
   orb after each move by their holder), Crushers (lose one), Vaults (raise a two-hit shield that destroys other
   players' orbs and stops Boxes), Turrets (fire a new orb the way they face after each move by their holder, turning clockwise, and rearm
   after four shots), all after a one-move grace, Boxes (crates explosions

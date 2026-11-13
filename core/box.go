@@ -240,7 +240,7 @@ func (g *Game) BoxRoute(cell, d int, dst []int16) []int16 {
 
 // restoreBoxes installs a snapshot's Box state on g, fresh from NewGameWithMap with the rest of its terrain restored,
 // checking it: no more Boxes than the map starts with, each standing empty on ground it can reach (a closed Door holds
-// one dormant) or filling a Hole, an unfinished Landfill or a collapsed Sinkhole.
+// one dormant) or filling a Hole, an unfinished Landfill, a collapsed Sinkhole or a Hatch.
 func (g *Game) restoreBoxes(boxes, count []uint8) error {
 	if len(boxes) != len(g.Boxes) {
 		return fmt.Errorf("restore: invalid Box state length")
@@ -253,7 +253,7 @@ func (g *Game) restoreBoxes(boxes, count []uint8) error {
 	for i, b := range boxes {
 		c := g.Map.Cells[i]
 		t, here, crate := c.Terrain, b&BoxHere != 0, b&CrateFloor != 0
-		if b&^(BoxHere|CrateFloor) != 0 || crate && (t != Hole && t != Landfill && t != Sinkhole || g.Durability[i] != 0) ||
+		if b&^(BoxHere|CrateFloor) != 0 || crate && (t != Hole && t != Landfill && t != Sinkhole && c.Circuit != Hatch || g.Durability[i] != 0) ||
 			here && (count[i] != 0 || c.Feature == Portal || c.Feature == Spring || g.TerrainAt(i) != Floor && c.Circuit != Door) {
 			return fmt.Errorf("restore: invalid Box state at cell %d", i)
 		}

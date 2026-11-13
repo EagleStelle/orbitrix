@@ -9,10 +9,11 @@ const (
 	Toggle
 	Hold
 	Door
+	Hatch // Door's counterpart: playable Floor when closed, a Hole when open
 )
 
 func (c CircuitKind) IsSwitch() bool { return c == Latch || c == Toggle || c == Hold }
-func (c CircuitKind) IsOutput() bool { return c == Door }
+func (c CircuitKind) IsOutput() bool { return c == Door || c == Hatch }
 
 // EdgeKind describes an obstruction between orthogonally adjacent cells.
 type EdgeKind uint8
@@ -91,4 +92,25 @@ func (g *Game) circuitInputs(wave int, record bool) bool {
 		}
 	}
 	return changed
+}
+
+// dropHatches empties every open Hatch once its circuit has changed: the orbs on it are lost, as into any Hole, and a
+// Box standing there falls in and fills it for good. The caller rebuilds topology after the circuit changes.
+func (g *Game) dropHatches(wave int, record bool) {
+	for _, e := range g.topology.hatches {
+		i := int(e)
+		if g.TerrainAt(i) != Hole {
+			continue
+		}
+		if g.Count[i] > 0 {
+			g.Orbs[g.Owner[i]] -= int32(g.Count[i])
+			g.Count[i], g.Owner[i] = 0, NoOwner
+			if record {
+				g.TerrainEvents = append(g.TerrainEvents, TerrainEvent{Wave: wave, Cell: i})
+			}
+		}
+		if len(g.Boxes) != 0 && g.Boxes[i]&BoxHere != 0 {
+			g.Boxes[i] = CrateFloor
+		}
+	}
 }

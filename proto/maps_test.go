@@ -12,6 +12,8 @@ func TestMapMessagesRoundTrip(t *testing.T) {
 	circuit.Cells[16] = core.MapCell{Circuit: core.Latch, Group: 1}
 	circuit.Cells[24] = core.MapCell{Circuit: core.Toggle, Group: 1}
 	circuit.Cells[32] = core.MapCell{Circuit: core.Door, Group: 1, InitiallyOpen: true}
+	circuit.Cells[30] = core.MapCell{Circuit: core.Hatch, Group: 1}
+	circuit.Cells[31] = core.MapCell{Circuit: core.Hatch, Group: 1, InitiallyOpen: true}
 	circuit.Edges = []core.MapEdge{{A: 8, B: 9, Kind: core.Gate, Group: 1, InitiallyOpen: true}, {A: 24, B: 25, Kind: core.BreakableBarrier}}
 	portals := core.NewMap(7, 7)
 	portals.Cells[16], portals.Cells[32] = core.MapCell{Feature: core.Portal, Group: 1}, core.MapCell{Feature: core.Portal, Group: 1}

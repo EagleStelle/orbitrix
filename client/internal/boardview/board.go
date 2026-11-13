@@ -287,18 +287,23 @@ func (b *Board) Bounds() ui.Rect {
 // start shows a move: mover's orb lands in cell, then waves (from core.Game.Apply) play out, with the mover's
 // Furnaces and Crushers running after produceAt of them (core.Game.ProducedAt). snd may be nil.
 func (b *Board) Start(cell int, mover int8, waves []core.Wave, produceAt int, snd *sound.Sound) {
-	effects := b.State.terrainSounds(b.State.Place(cell, mover))
-	b.dropTaken() // a Sinkhole this placement filled
+	events := b.State.Place(cell, mover)
+	effects := b.State.terrainSounds(events)
+	b.dropTaken() // a Sinkhole this placement filled, or a Hatch it opened
 	b.Waves, b.Wave, b.t, b.Playing = waves, -1, 0, true
 	b.settling = false
 	b.mover, b.produceAt = mover, produceAt
 	b.tailCap, b.skipCap = tailCap(len(waves)), 0
-	_, produced := b.next() // a Furnace's orb made now shares the placement note
+	effects |= b.boxesLanded(events) // a Box on a Hatch the placement opened
+	var produced sound.Effects
+	if !b.settling {
+		_, produced = b.next() // a Furnace's orb made now shares the placement note
+	}
 	snd.Place(int(mover), effects|produced|b.linkSound())
 }
 
-// dropTaken drops the orbs on the cells the last terrain step took away, a broken floor or a collapsed Sinkhole, and
-// those Vault shields took.
+// dropTaken drops the orbs on the cells the last terrain step took away, a broken floor, a collapsed Sinkhole or an
+// opened Hatch, and those Vault shields took.
 // shortcut: a whole stack falls as one orb from its centre; drop each from its orbit spot if stacks should read as
 // several.
 func (b *Board) dropTaken() {
@@ -387,7 +392,7 @@ func (b *Board) Tick(snd *sound.Sound) {
 		effects |= b.dropIntoHoles()
 		events := b.State.Land(b.Waves[b.Wave])
 		effects |= b.State.terrainSounds(events) | b.State.shields
-		b.boxesLanded(events)
+		effects |= b.boxesLanded(events)
 		b.dropTaken()
 		for i := fallStart; i < len(b.falls); i++ {
 			if o := &b.falls[i]; o.landfill {

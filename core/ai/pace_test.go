@@ -36,6 +36,26 @@ func TestPaceFit(t *testing.T) {
 	}
 }
 
+func TestPaceFitHatch(t *testing.T) {
+	if os.Getenv("ORBITRIX_PACE") != "1" {
+		t.Skip("set ORBITRIX_PACE=1 to measure game lengths")
+	}
+	for _, size := range []int{9, 15} {
+		empty := paceMoves(core.NewMap(size, size))
+		t.Logf("%d×%d empty: %.0f moves", size, size, empty)
+		for k := 1; k <= 3; k++ {
+			holes := spreadPieces(size, k, []core.MapCell{{Terrain: core.Hole}})
+			t.Logf("%d×%d %d Holes: %.0f‰", size, size, k, 1000*paceMoves(holes)/empty)
+			for _, kind := range []core.CircuitKind{core.Latch, core.Toggle} {
+				for _, open := range []bool{false, true} {
+					m := spreadPieces(size, k, []core.MapCell{{Circuit: core.Hatch, Group: 1, InitiallyOpen: open}, {Circuit: kind, Group: 1}})
+					t.Logf("%d×%d %d Hatches, switch %d, starts open %v: %.0f‰", size, size, k, kind, open, 1000*paceMoves(m)/empty)
+				}
+			}
+		}
+	}
+}
+
 // spreadPieces places k copies of piece on interior cells with no other piece in their 3×3 neighborhood, a second
 // cell of it just above the first.
 func spreadPieces(size, k int, piece []core.MapCell) core.MapDefinition {

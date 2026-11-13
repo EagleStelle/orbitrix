@@ -209,6 +209,7 @@ func (g *Game) play(cell int, record bool) error {
 		clear(g.arrived)
 		g.arrived[cell] = 1
 		if g.circuitInputs(-1, record) {
+			g.dropHatches(-1, record)
 			g.Geo = g.mapGeometry()
 			topologyChanged = true
 		}

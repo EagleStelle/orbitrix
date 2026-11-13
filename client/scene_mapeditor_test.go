@@ -809,7 +809,7 @@ func TestEditorPortraitHorizontalOverflow(t *testing.T) {
 		t.Fatal("last toolbar action is unreachable")
 	}
 	// Auto-reveal and wheel work on the independent element strip.
-	e.selectTool(brushDoor)
+	e.selectTool(brushHatch)
 	e.layout(a)
 	if !containsRect(e.dockScroll.Viewport, e.palette[len(e.palette)-1]) {
 		t.Fatal("selected element is not revealed")

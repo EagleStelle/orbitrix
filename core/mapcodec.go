@@ -34,7 +34,7 @@ func EncodeMap(m MapDefinition) ([]byte, error) {
 	for _, c := range m.Cells {
 		// Keep legacy switch tags 3..5; Portal modes use 7..9, Spillway, Furnace, Crusher, Box, Spring and Vault 10..15 (the
 		// last tag four bits hold), and bit 3 stores the initial state. Only circuit outputs have one, so on tags 10..15
-		// bit 3 selects a second set of features instead, from Turret on.
+		// bit 3 selects a second set instead, from Turret on: Turret 10, a closed Hatch 11 and an open one 12.
 		component := byte(c.Feature)
 		switch c.Feature {
 		case Portal:
@@ -47,8 +47,14 @@ func EncodeMap(m MapDefinition) ([]byte, error) {
 		if c.Circuit != NoCircuit {
 			component = byte(c.Circuit) + 2
 		}
+		if c.Circuit == Hatch {
+			component = 11
+			if c.InitiallyOpen {
+				component = 12
+			}
+		}
 		cell := byte(c.Terrain) | component<<4
-		if c.InitiallyOpen || c.Feature >= Turret {
+		if c.InitiallyOpen || c.Feature >= Turret || c.Circuit == Hatch {
 			cell |= 8
 		}
 		payload = append(payload, cell, c.Group)
@@ -156,7 +162,9 @@ func decodeMapPayload(b []byte, version byte) (MapDefinition, error) {
 		if version == 1 && (component > 3 || c.InitiallyOpen) {
 			return bad()
 		}
-		if component >= 10 && c.InitiallyOpen {
+		if c.InitiallyOpen && (component == 11 || component == 12) {
+			c.Circuit, c.InitiallyOpen = Hatch, component == 12
+		} else if component >= 10 && c.InitiallyOpen {
 			c.Feature, c.InitiallyOpen = Turret+Feature(component-10), false // unknown ones fail ValidateStructure
 		} else if component >= 10 {
 			c.Feature = Spillway + Feature(component-10)

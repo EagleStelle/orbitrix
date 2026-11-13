@@ -3,6 +3,7 @@ package boardview
 import (
 	"image/color"
 	"math"
+	"slices"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -209,20 +210,37 @@ func (b *Board) drawBoxes(dst *ebiten.Image, sc *ui.Palette) {
 }
 
 // boxesLanded starts the fall of every Box the landed wave's events dropped into a pit. Like an orb completing a Landfill,
-// it holds playback until it lands, and the pit shows as Floor only then (boxSunk).
-func (b *Board) boxesLanded(events []core.TerrainEvent) {
+// it holds playback until it lands, and the pit shows as Floor only then (boxSunk). A Box standing on a Hatch that opened
+// falls the same way, with the fall cue its slide would have had; that is reported.
+func (b *Board) boxesLanded(events []core.TerrainEvent) (effects sound.Effects) {
 	g := b.State.Replay
+	fall := func(hole int) {
+		o := fallingOrb{hole: int16(hole), owner: core.NoOwner, start: b.Clock, box: true}
+		if b.skipCap > 0 {
+			o.start = b.Clock - o.ticks() // lands at once; the next tick settles it
+		} else {
+			b.settling = true
+		}
+		b.falls = append(b.falls, o)
+	}
 	for _, e := range events {
 		if e.Box && g.Boxes[e.To] == core.CrateFloor {
-			o := fallingOrb{hole: int16(e.To), owner: core.NoOwner, start: b.Clock, box: true}
-			if b.skipCap > 0 {
-				o.start = b.Clock - o.ticks() // lands at once; the next tick settles it
-			} else {
-				b.settling = true
-			}
-			b.falls = append(b.falls, o)
+			fall(e.To)
 		}
 	}
+	for _, e := range events {
+		if e.Cell >= 0 || e.Edge || len(g.Boxes) == 0 {
+			continue
+		}
+		for i, c := range g.Map.Cells { // a circuit changed: its Hatches may have dropped the Boxes on them
+			sinking := func(o fallingOrb) bool { return o.box && int(o.hole) == i }
+			if c.Circuit == core.Hatch && c.Group == e.Group && g.Boxes[i]&^b.shownBoxes[i]&core.CrateFloor != 0 && !slices.ContainsFunc(b.falls, sinking) {
+				fall(i)
+				effects |= sound.Fall
+			}
+		}
+	}
+	return
 }
 
 // boxSunk shows the pit Box fall hole filled: Floor with the crate in it, and the filled Landfill's cue.

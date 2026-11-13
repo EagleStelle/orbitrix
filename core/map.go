@@ -139,7 +139,7 @@ func (m MapDefinition) ValidateStructure() error {
 		return fmt.Errorf("map has too many edges")
 	}
 	for i, c := range m.Cells {
-		if c.Terrain > Sinkhole || c.Feature > Turret || c.Circuit > Door {
+		if c.Terrain > Sinkhole || c.Feature > Turret || c.Circuit > Hatch {
 			return fmt.Errorf("map cell %d has unknown terrain or feature", i)
 		}
 		if c.Feature != NoFeature && c.Circuit != NoCircuit {
@@ -187,7 +187,19 @@ func (m MapDefinition) EdgeFits(a, b int) bool {
 
 // initialFloor includes a Box's cell: neighbors route into it, and it is Floor once the Box moves on.
 func (m MapDefinition) initialFloor(i int) bool {
-	return m.floor(i) && m.Cells[i].Feature != Portal && m.Cells[i].Feature != Spring && (m.Cells[i].Circuit != Door || m.Cells[i].InitiallyOpen)
+	return m.floor(i) && m.Cells[i].Feature != Portal && m.Cells[i].Feature != Spring && !m.shut(i)
+}
+
+// shut reports whether cell i holds a circuit output that starts as something other than Floor: a closed Door, a Wall,
+// or an open Hatch, a Hole.
+func (m MapDefinition) shut(i int) bool {
+	c := m.Cells[i]
+	return c.Circuit == Door && !c.InitiallyOpen || c.Circuit == Hatch && c.InitiallyOpen
+}
+
+// hole reports whether cell i starts as a Hole: one, or an open Hatch.
+func (m MapDefinition) hole(i int) bool {
+	return i >= 0 && (m.Cells[i].Terrain == Hole || m.Cells[i].Circuit == Hatch && m.Cells[i].InitiallyOpen)
 }
 
 // SpringFacing is the direction (left, right, up, down) a Spring launches toward, away from the one orthogonal Wall
@@ -371,10 +383,10 @@ func (m MapDefinition) capacity(cell int) (n, holes int) {
 	n = len(m.InitialConnections(cell, neighbors[:0]))
 	for d := range 4 {
 		if j, _ := m.route(cell, d, nil, nil, nil, nil); j >= 0 {
-			switch m.Cells[j].Terrain {
-			case Hole:
+			switch {
+			case m.hole(j):
 				holes++
-			case Landfill:
+			case m.Cells[j].Terrain == Landfill:
 				n++
 			}
 		}
@@ -390,7 +402,7 @@ func (m MapDefinition) capacity(cell int) (n, holes int) {
 func (m MapDefinition) FillTarget(cell int) int {
 	n := 0
 	for d := range 4 {
-		if j, _ := m.route(cell, d, nil, nil, nil, nil); m.initialFloor(j) || j >= 0 && (m.Cells[j].Terrain == Hole || m.Cells[j].Terrain == Landfill) {
+		if j, _ := m.route(cell, d, nil, nil, nil, nil); m.initialFloor(j) || m.hole(j) || j >= 0 && m.Cells[j].Terrain == Landfill {
 			n++
 		}
 	}
@@ -500,7 +512,7 @@ func (m MapDefinition) Validate() []MapIssue {
 			issues = append(issues, MapIssue{Message: "Portal group needs exactly two nonadjacent Floor endpoints and a nonzero group", Cells: slices.Clone(portalCells), Group: uint8(group)})
 		}
 		if len(circuitCells)+len(gates[group]) > 0 && (group == 0 || len(switches[group]) == 0 || len(gates[group])+len(doors[group]) == 0) {
-			issues = append(issues, MapIssue{Message: "A circuit needs at least one switch and one Gate or Door", Cells: circuitCells, Edges: slices.Clone(gates[group]), Group: uint8(group)})
+			issues = append(issues, MapIssue{Message: "A circuit needs at least one switch and one Gate, Door or Hatch", Cells: circuitCells, Edges: slices.Clone(gates[group]), Group: uint8(group)})
 		}
 	}
 	portalAxes := m.InitialPortalAxes()
@@ -539,9 +551,13 @@ func (m MapDefinition) Validate() []MapIssue {
 		issues = append(issues, m.sealedByBreaking()...)
 	}
 	// Destructible terrain can join regions later without changing starting capacities. Breakable Floors and
-	// Sinkholes can only split them, so the board must hold together without them.
+	// Sinkholes can only split them, so the board must hold together without them, and with every Hatch open.
 	future := m.Clone()
 	for i, c := range future.Cells {
+		if c.Circuit == Hatch {
+			future.Cells[i] = MapCell{Terrain: Hole}
+			continue
+		}
 		switch c.Terrain {
 		case BreakableWall, Landfill:
 			future.Cells[i].Terrain = Floor
@@ -633,27 +649,27 @@ func (m MapDefinition) Validate() []MapIssue {
 	}
 	ref := 0 // the region of the first playable Floor that can't break away
 	for i, c := range m.Cells {
-		if m.initialFloor(i) && c.Terrain == Floor {
+		if m.initialFloor(i) && c.Terrain == Floor && c.Circuit != Hatch {
 			ref = regions[i]
 			break
 		}
 	}
 	var disconnected []int
 	for i, c := range m.Cells {
-		if (c.Terrain == Floor || c.Terrain == Landfill) && c.Feature != Portal && c.Feature != Spring && regions[i] != ref {
+		if (c.Terrain == Floor || c.Terrain == Landfill) && c.Feature != Portal && c.Feature != Spring && c.Circuit != Hatch && regions[i] != ref {
 			disconnected = append(disconnected, i)
 		}
 	}
 	if len(disconnected) > 0 {
-		issues = append(issues, MapIssue{Message: "All Floor must connect through Landfills, breakable walls, breakable barriers or reachable Gates, never only Breakable Floors or Sinkholes", Cells: disconnected})
+		issues = append(issues, MapIssue{Message: "All Floor must connect through Landfills, breakable walls, breakable barriers or reachable Gates, never only Breakable Floors, Sinkholes or Hatches", Cells: disconnected})
 	}
 	if _, _, pace := m.Estimate(); pace == Instant || pace == Endless {
-		issue := MapIssue{Message: "Too many Holes, Sinkholes, Spillways, Crushers and Vaults: games would never end"}
+		issue := MapIssue{Message: "Too many Holes, Sinkholes, Hatches, Spillways, Crushers and Vaults: games would never end"}
 		if pace == Instant {
 			issue.Message = "Too many Furnaces, Reservoirs and Turrets: games would end almost at once"
 		}
 		for i, c := range m.Cells {
-			drains := c.Terrain == Hole || c.Terrain == Sinkhole || c.Feature == Spillway || c.Feature == Crusher || c.Feature == Vault
+			drains := c.Terrain == Hole || c.Terrain == Sinkhole || c.Circuit == Hatch || c.Feature == Spillway || c.Feature == Crusher || c.Feature == Vault
 			if pace == Instant && (c.Feature == Furnace || c.Feature == Reservoir || c.Feature == Turret) || pace == Endless && drains {
 				issue.Cells = append(issue.Cells, i)
 			}
@@ -705,13 +721,14 @@ func (m MapDefinition) sealedByBreaking() []MapIssue {
 // and a route from each neighbor, about two thirds of the way into a game on average. Each Box fills a Hole (or a
 // collapsed Sinkhole) early in a game, assuming it reaches one, so the Holes Boxes can fill drain only for a while.
 // Boxes and Springs otherwise drain and add nothing; a Spring takes its own cell's room. Integers keep validation
-// identical on every device.
+// identical on every device. Hatches drain nearly as much as Holes in bot games, so count their open sides regardless
+// of starting state; like Sinkholes, their temporary Floor adds no lasting room.
 func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 	room, growth, furnaces, reservoirs, broken := 0, 1000, 0, 0, 0 // growth in thousandths of an empty board's
 	pits, pitSides, boxes := 0, 0, 0
 	for i := range m.Cells {
 		switch {
-		case m.Cells[i].Terrain == Hole || m.Cells[i].Terrain == Sinkhole:
+		case m.Cells[i].Terrain == Hole || m.Cells[i].Terrain == Sinkhole || m.Cells[i].Circuit == Hatch:
 			pits++
 		case m.Cells[i].Feature == Box:
 			boxes++
@@ -720,7 +737,7 @@ func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 			// A finite cost, not a drain on growth: the orbs it absorbs, about a move each, and the Floor it becomes.
 			room += 2 * m.FillTarget(i)
 		}
-		if m.Cells[i].Terrain == Sinkhole {
+		if m.Cells[i].Terrain == Sinkhole || m.Cells[i].Circuit == Hatch {
 			continue // weighed as the Hole it soon becomes, through its neighbors' routes into it
 		}
 		capacity, holes := m.capacity(i)
@@ -730,7 +747,7 @@ func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 		var near [5]int
 		connections := m.InitialConnections(i, near[:0])
 		for _, j := range connections {
-			if m.Cells[j].Terrain == Sinkhole {
+			if m.Cells[j].Terrain == Sinkhole || m.Cells[j].Circuit == Hatch {
 				holes++
 			}
 		}
@@ -740,7 +757,7 @@ func (m MapDefinition) Estimate() (moves, length int, pace Pace) {
 		if m.Cells[i].Terrain == BreakableFloor {
 			broken += capacity - 1 // its own room, and one route from each neighbor that outlasts it
 			for _, j := range connections {
-				if t := m.Cells[j].Terrain; t != BreakableFloor && t != Sinkhole {
+				if t := m.Cells[j].Terrain; t != BreakableFloor && t != Sinkhole && m.Cells[j].Circuit != Hatch {
 					broken++
 				}
 			}

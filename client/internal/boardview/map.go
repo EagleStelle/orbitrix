@@ -165,6 +165,9 @@ func mapArtTerrain(state *MapState, i int) core.Terrain {
 	if i < len(state.Boxes) && state.Boxes[i]&core.CrateFloor != 0 {
 		return core.Floor
 	}
+	if c := state.Map.Cells[i]; c.Circuit == core.Hatch && core.CircuitOpen(c.InitiallyOpen, state.CircuitOn[c.Group]) {
+		return core.Hole // an open Hatch is a Hole like any other, joined to its neighbors
+	}
 	durability := state.Durability
 	if t == core.Landfill && state.LandfillDurability != nil {
 		durability = state.LandfillDurability
@@ -628,6 +631,21 @@ func renderMapCircuit(dst *ebiten.Image, sc *ui.Palette, component core.CircuitK
 			ink = ui.InkOn(c)
 		}
 		ui.StrokePath(dst, mapDoorLockPath(inner, width, pressed), width, ink)
+	case core.Hatch:
+		lid := body.Inset(2.5 * width)
+		if !pressed {
+			ui.StrokeRound(dst, lid, max(0, radius-2.5*width), width, c)
+		}
+		ui.StrokeRound(dst, body, radius, width, c)
+		for _, x := range [2]float64{body.X + body.W*.28, body.Right() - body.W*.28} {
+			ui.FillRound(dst, ui.Rect{X: x - width, Y: body.Y - width/2, W: 2 * width, H: 3 * width}, width*.3, c)
+		}
+		if pressed {
+			ui.FillRound(dst, ui.Rect{X: lid.X, Y: lid.Y - width, W: lid.W, H: 2 * width}, width/2, c)
+		} else {
+			handle := ui.Rect{X: lid.Cx() - body.W*.12, Y: lid.Bottom() - body.H*.24, W: body.W * .24, H: body.H * .12}
+			ui.StrokeRound(dst, handle, width/2, width, c)
+		}
 	case core.Latch:
 		ui.StrokeRound(dst, body, radius, width, sc.Dim)
 		if pressed {
@@ -834,6 +852,7 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 		}
 		if i < len(state.Boxes) && state.Boxes[i]&core.CrateFloor != 0 {
 			drawMapSprite(dst, sc, r, mapSpriteKey{crate: true})
+			continue // filling a Hatch replaces its trapdoor too
 		}
 		pressed := i < len(state.Pressed) && state.Pressed[i] != 0
 		featureScheme := *sc
@@ -867,6 +886,13 @@ func DrawMapArt(dst *ebiten.Image, sc *ui.Palette, state MapState, tr MapTransfo
 	}
 	drawMapWallCorners(dst, sc, &state, tr)
 	drawMapPits(dst, sc, &state, tr)
+	for i, cfg := range m.Cells {
+		if cfg.Circuit != core.Hatch || mapArtTerrain(&state, i) != core.Hole {
+			continue
+		}
+		x, y := tr.Point(m.Rows, float64(i/m.Rows)+.5, float64(i%m.Rows)+.5)
+		drawMapCircuit(dst, sc, core.Hatch, cfg.Group, ui.Rect{X: x - tr.Cell/2, Y: y - tr.Cell/2, W: tr.Cell, H: tr.Cell}, true)
+	}
 	drawSpringMounts(dst, sc, &state, tr)
 	shared := mapGateVertices(m)
 	for edgeIndex, e := range m.Edges {
@@ -941,6 +967,11 @@ func DrawMapBrush(dst *ebiten.Image, sc *ui.Palette, brush Brush, r ui.Rect, gro
 		return
 	}
 	if brush.Terrain == core.Void {
+		return
+	}
+	if brush.Circuit == core.Hatch && pressed {
+		DrawMapWall(dst, sc, r, core.Hole, 0, 2)
+		drawMapCircuit(dst, sc, core.Hatch, group, r, true)
 		return
 	}
 	if mapArtJoin(brush.Terrain) != 0 {
