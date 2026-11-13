@@ -3,9 +3,9 @@ module orbitrix
 go 1.27.3
 
 require (
-	github.com/andybalholm/brotli v1.2.7
+	github.com/andybalholm/brotli v1.2.8
 	github.com/coder/websocket v1.8.15
-	github.com/hajimehoshi/ebiten/v2 v2.10.5
+	github.com/hajimehoshi/ebiten/v2 v2.10.6
 	github.com/magefile/mage v1.17.2
 	github.com/pion/webrtc/v4 v4.2.26
 	github.com/wlynxg/anet v0.0.5
@@ -17,7 +17,7 @@ require (
 	github.com/ebitengine/gomobile v0.0.0-20260820040257-d11f821a26a6 // indirect
 	github.com/ebitengine/hideconsole v1.0.0 // indirect
 	github.com/ebitengine/oto/v3 v3.5.0 // indirect
-	github.com/ebitengine/purego v0.11.0 // indirect
+	github.com/ebitengine/purego v0.11.3 // indirect
 	github.com/go-text/typesetting v0.3.5 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jfreymuth/pulse v0.1.3 // indirect
