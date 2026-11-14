@@ -139,6 +139,10 @@ var mapCaptureCases = []mapCaptureCase{
 	{"board-desktop", 1040, 640, false, false, true, "game", brushFloor},
 	{"board-mobile-dark", 390, 844, true, true, true, "game", brushFloor},
 	{"library-mobile", 390, 844, false, false, false, "library", brushFloor},
+	{"library-desktop", 1040, 640, false, false, false, "library", brushFloor},
+	{"library-desktop-dark", 1040, 640, true, false, false, "library", brushFloor},
+	{"setup-map-mobile", 390, 844, false, false, false, "setup-map", brushFloor},
+	{"setup-map-desktop", 1040, 640, false, false, false, "setup-map", brushFloor},
 	{"large-desktop", 1040, 640, false, false, false, "large", brushWall},
 	{"large-mobile-dark", 390, 844, true, true, false, "large", brushLink},
 	{"art-states", 1100, 844, false, false, false, "art", brushFloor},
@@ -509,9 +513,18 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 			func(string) ([]byte, error) { return nil, fs.ErrNotExist },
 			func(string, []byte) error { return nil },
 		)
+		for _, name := range []string{"Spiral", "Twin rivers", "A very long map name that must be cut"} {
+			m.Name = name
+			_ = store.Put(-1, m)
+		}
 		lib := &mapsScene{back: newHome(), selected: 1, store: store}
 		lib.refresh()
 		s = lib
+	case "setup-map":
+		m.Name = "Twin rivers"
+		a.set.Map = &m
+		a.set.Cols, a.set.Rows = m.Cols, m.Rows
+		s = &setupScene{menu: -1, open: foldPlayers}
 	case "art", "wall-corners", "door-orbs", "barriers", "portals", "landfills", "landfill-joins", "landfill-fall", "landfill-close", "boxes", "vaults", "hatch-states":
 	default:
 		if c.mode == "large" {

@@ -287,7 +287,7 @@ func (h *hostRoom) minPlayers() int {
 	return core.MinPlayers
 }
 
-// leave closes the room this player hosts (or one still opening) and goes back to the join page.
+// leave closes the room this player hosts, or one still opening. Setup stays, and moves on itself.
 func (h *hostRoom) leave(a *app) {
 	if h.opening { // a room that opens after all closes again at once
 		go func() {
@@ -305,7 +305,6 @@ func (h *hostRoom) leave(a *app) {
 		h.net.leave(a)
 		a.net = nil
 	}
-	a.next = newJoin(a, h.lan, "")
 }
 
 // apply hands the host's settings to the open room: the board and seats to its hub (in its lobby, and only once the
@@ -347,7 +346,7 @@ func (h *hostRoom) canAct(a *app) bool {
 	case !mapCanStart(a.set):
 		return false
 	case n == nil:
-		return hasHuman(a.set.seats) && !h.opening && h.noteT == 0
+		return hasHuman(a.set.seats) && !h.opening && h.noteT == 0 && !cantHost()
 	case !n.got || n.seat < 0:
 		return false
 	}
@@ -389,6 +388,8 @@ func (h *hostRoom) actionLabel(a *app) string {
 		return "Opening"
 	case !mapCanStart(a.set):
 		return "Board too small"
+	case n == nil && cantHost():
+		return "This browser can't host"
 	case n == nil && !hasHuman(a.set.seats):
 		return "Needs a human seat"
 	case n == nil:
@@ -605,23 +606,28 @@ type roomScene struct {
 	page
 	net *session
 
-	loff  float64
-	lkeyN int
-	block ui.Rect
-	rows  [core.MaxPlayers]ui.Rect
+	loff   float64
+	lkeyN  int
+	lstrip float64
+	game   gameBlock
+	block  ui.Rect
+	rows   [core.MaxPlayers]ui.Rect
 }
 
 func (r *roomScene) layout(a *app) {
 	n := len(r.net.lobby.Seats)
-	if !r.frame(a, true) && r.view.Offset == r.loff && n == r.lkeyN {
+	if !r.frame(a, true) && r.view.Offset == r.loff && n == r.lkeyN && r.game.strip.Offset == r.lstrip {
 		return
 	}
-	r.lkeyN = n
+	r.lkeyN, r.lstrip = n, r.game.strip.Offset
 	u, bp := a.u, r.bp
 	v := r.view.Viewport
 	pitch := (ui.CompactButtonTarget + 8) * u
 	h := bp + 40*u + float64(n)*pitch + bp
-	y := r.content(h)
+	gameH := r.game.layout(a, v.X, 0, v.W, bp, true) + r.gap // the host's choices, read only
+	y := r.content(gameH + h)
+	r.game.layout(a, v.X, y, v.W, bp, true)
+	y += gameH
 	r.loff = r.view.Offset
 	r.block = ui.Rect{X: v.X, Y: y, W: v.W, H: h}
 	for i := range n {
@@ -636,7 +642,7 @@ func (r *roomScene) update(a *app) error {
 		return nil
 	}
 	r.layout(a)
-	if r.scrolled(a) {
+	if r.game.scrolled(a) || r.scrolled(a) {
 		r.layout(a)
 	}
 	switch {
@@ -662,6 +668,11 @@ func (r *roomScene) draw(dst *ebiten.Image, a *app) {
 	}
 	ui.DrawButton(dst, a.ui(), r.action, label, "", style, ok)
 	b := r.body(dst)
+	where := whereOnline
+	if n.wifi() {
+		where = whereWifi
+	}
+	r.game.draw(b, a, where, 0, true, true, false)
 	ui.FillRound(b, r.block, 24*u, sc.Tile)
 	ui.DrawText(b, "Players", f.Heading, r.block.X+r.bp, r.block.Y+r.bp+10*u, text.AlignStart, sc.Ink)
 	for i, st := range n.lobby.Seats {
@@ -720,3 +731,6 @@ func firstHuman(seats []int) int {
 	}
 	return -1
 }
+
+// cantHost reports a browser that cannot connect players, and so cannot open a room.
+func cantHost() bool { return runtime.GOOS == "js" && !platform.HasWebRTC }

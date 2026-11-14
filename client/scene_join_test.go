@@ -19,30 +19,18 @@ func TestJoinGroupsVisible(t *testing.T) {
 						joinNote: "Browsers cannot search your Wi-Fi for rooms. Ask the host for an invite link.",
 						status:   "No room with that code. Ask the host for a new code."}
 					s.layout(a)
-					if s.hostB.W <= 0 || s.joinB.W <= 0 || overlaps(s.hostB, s.joinB) {
-						t.Fatal("Host and Join must both be laid out")
-					}
-					if !containsRect(s.hostB, s.host) || len(s.joinLines) == 0 {
-						t.Fatal("groups must contain their action and the browser Join explanation")
-					}
-					if s.hostB.H != 2*s.bp+32*a.u+52*a.u {
-						t.Fatal("Host must have no description space")
+					if s.joinB.W <= 0 || len(s.joinLines) == 0 {
+						t.Fatal("Join must be laid out with the browser explanation")
 					}
 					for _, lines := range [][]string{s.joinLines, s.statusLines} {
 						for _, line := range lines {
-							if ui.TextWidth(line, a.f.Label) > s.hostB.W-2*s.bp {
+							if ui.TextWidth(line, a.f.Label) > s.joinB.W-2*s.bp {
 								t.Fatalf("explanation overflows: %q", line)
 							}
 						}
 					}
 					if canJoin && !containsRect(s.joinB, s.join) {
 						t.Fatal("Join must stay inside its group")
-					}
-					if blocked {
-						a.in = input{x: s.host.Cx(), y: s.host.Cy(), clicked: true}
-						if err := s.update(a); err != nil || a.next != nil {
-							t.Fatal("unavailable hosting must not open Setup")
-						}
 					}
 				})
 			}
@@ -86,6 +74,27 @@ func TestJoinWaitingKeepsButtonInGroup(t *testing.T) {
 					t.Fatalf("Cancel must stop the join while waiting: %v", err)
 				}
 			})
+		}
+	}
+}
+
+// The Same Wi-Fi and Online tabs share the column over the Join block, each a full touch target.
+func TestJoinTabs(t *testing.T) {
+	for _, size := range append(layoutSizes, [2]float64{640, 320}) {
+		a := withCutout(setupTestApp(size[0], size[1], 1, 2))
+		s := &joinScene{lan: true, canJoin: true, code: codeField()}
+		s.layout(a)
+		for i, tab := range s.tabs {
+			hit := ui.CompactHit(tab, a.u)
+			if hit.H < 44*a.u || hit.Bottom() > s.joinB.Y || tab.X < s.joinB.X || tab.Right() > s.joinB.Right()+0.001 {
+				t.Fatalf("%v: tab %d %+v must sit over the Join block %+v", size, i, tab, s.joinB)
+			}
+			if ui.TextWidth(joinTabs[i], a.f.LabelBold) > tab.W-24*a.u {
+				t.Fatalf("%v: %q does not fit its tab", size, joinTabs[i])
+			}
+		}
+		if overlaps(s.tabs[0], s.tabs[1]) {
+			t.Fatalf("%v: the tabs overlap", size)
 		}
 	}
 }

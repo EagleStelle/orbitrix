@@ -10,25 +10,22 @@
 
 ## Home
 
-Home shows the ORBITRIX wordmark, the twelve seat colours, a live bot game on the mat, and the PLAY dot with Settings and Exit under it. Exit is missing in the browser.
+Home shows the ORBITRIX wordmark, the twelve seat colours, a live bot game on the mat, and the round play button with the name bar to its right, with Maps, Settings and Exit under them. Exit is missing in the browser.
 
-Tap the welcome line above PLAY ("Welcome, Human!" at first) to type your name on the device's keyboard. It labels your seat everywhere: your first human seat on this device, and your seat in any room you join or host.
+Tap the name bar to type your name on the device's keyboard. It labels your seat everywhere: your first human seat on this device, and your seat in any room you join or host.
 
-PLAY swaps itself for the ways to play:
-
-- This Device: alone against bots, or with friends passing one device around.
-- Same Wi-Fi: native LAN rooms, browser joining by QR, and browser rooms joined by invite and reply links.
-- Online: rooms through the site's server. Present in the web build and in native builds made with `ORBITRIX_SERVER`.
-- Back.
-
-Browsers loading the game from a native LAN host offer This Device and Same Wi-Fi.
-
-Host and Join stay visible on every room page without descriptions. Only the browser's Join group explains limits and how to continue.
+The play button (or Enter in the name bar) opens Setup.
 
 ## Setup
 
+- Rules and Players fold: tap a heading to open it; opening one closes the other, and both start closed. A closed Players card still shows the count with − and +.
+- Rules: square option tiles, each an icon over its label, in three groups stacked one a row.
+  - Join a room, in the heading, is always there: it opens the join page, with Same Wi-Fi and Online tabs, a list of rooms and a code.
+  - Play on: This Device (alone against bots, or with friends passing one device around), Same Wi-Fi (native LAN rooms, browser joining by QR, and browser rooms joined by invite and reply links) or Online (rooms through the site's server; in the web build and in native builds made with `ORBITRIX_SERVER`). Same Wi-Fi and Online turn Start into Open room. The choice is remembered. While a room is open the group is held; Back closes the room and keeps your setup.
+  - Mode (Turn-based) and Add-ons, extras that can be on together: Real-time, Drop, Combine, Fog of war and Tiles are listed dimmed until they are built.
+
 - Players: the heading's − and + set the count from 2 to 12. Each seat is Human or one of the twelve bots, with its difficulty shown as five pips. The seat dropdown also has Swap position, which moves you into that seat and gives the bot there yours (two humans never trade), and Remove player, which takes the seat out and moves the seats after it up.
-- Board: a mini-board preview, then eighteen presets in Portrait, Balanced and Landscape sections, each with six sizes from Coaster (5×7) to Floor (13×18). Columns and Rows go from 3 to 40; a size that matches no preset reads Custom.
+- Map: on a screen on its side it fills the right, with Rules and Players stacked on the left; upright, everything stacks. Long lists scroll inside their own card: the seats in Players, the sizes in Map. The classic map is a mini-board preview, then eighteen presets in Portrait, Balanced and Landscape sections, each with six sizes from Coaster (5×7) to Floor (13×18). Columns and Rows go from 3 to 40; a size that matches no preset reads Custom. Choose a map in the heading opens Maps; with a saved map chosen the block shows its thumbnail and name instead of the size controls.
 - Start reads "Board too small" when there are more players than cells.
 
 Your choices are saved for next time.
@@ -79,9 +76,9 @@ Every bot is deterministic for a given position and seed, and each thinks for a 
 
 Every native build can host or join on the local network, with or without internet.
 
-1. One player opens Same Wi-Fi and taps Set up a room. The room page is Setup with a round invite button beside the action.
+1. One player taps play and chooses Same Wi-Fi in Setup. A round invite button appears beside the action.
 2. The invite button opens the Invite players dialog: Public or Private, the QR, the code, and Copy code and Copy link beside the action. Access changes apply on Confirm.
-3. Open room starts listening and shows the same dialog. The QR is the join link; Copy code copies the code and Copy link the link, on every platform. Joiners find a public room under Rooms nearby or type the public or private room's code under Join by code.
+3. Open room starts listening and shows the same dialog. The QR is the join link; Copy code copies the code and Copy link the link, on every platform. Joiners tap Join a room in Setup and stay on the Same Wi-Fi tab: a public room is under Rooms nearby, or they type the public or private room's code under Join by code.
 4. Seats stay changeable until the host presses Start. Open seats are filled with bots.
 
 On Windows the first Same Wi-Fi tap explains that Windows will ask to let Orbitrix on the network. Allow it for private networks. If the host's device sleeps or the Android app goes to the background, the room pauses and joiners retry for 60 seconds.
@@ -94,7 +91,7 @@ The host must use a Mage build that bundles the web game. Browsers can't discove
 
 ### Host in a browser without signaling
 
-1. Open the web game, choose Same Wi-Fi, set up a room, and tap Open room.
+1. Open the web game, tap play, choose Same Wi-Fi and tap Open room.
 2. The Invite players dialog shows the invite's QR and code. Each invite admits one player. The joining player scans the QR, or opens the link sent with Copy link.
 3. The joiner's game uses the same layout for Reply: QR, code, Done, Copy code and Copy link. Scan its QR on the host's device, in the same browser and site as the hosting tab. Return to the hosting tab; the joiner enters the room once connected.
 4. Use the next invite for another player, then start as usual.
@@ -105,7 +102,7 @@ Browser-only invite and reply codes contain the full connection details, so they
 
 ## Online
 
-1. The host opens Online and taps Set up a room. When the server has a host password, the host types it once; the client saves it and asks again only if the server refuses it.
+1. The host taps play and chooses Online in Setup. When the server has a host password, the host types it once; the client saves it and asks again only if the server refuses it.
 2. Open room creates the room and shows the Invite players dialog: access, QR, code, Copy code and Copy link. A public room is listed under Public rooms with its board size; a private one is reached by its code or by scanning the QR.
 3. Each join request appears as a bar above the action with No and Let in. More waiting requests show as "+N".
 4. Start fills open seats with bots.

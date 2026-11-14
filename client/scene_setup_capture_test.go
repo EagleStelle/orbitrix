@@ -71,7 +71,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		return
 	}
 	c := g.cases[g.n]
-	a, s := setupTestApp(c.w, c.h, 1, c.players), newSetup()
+	a, s := setupTestApp(c.w, c.h, 1, c.players), &setupScene{menu: -1, open: foldPlayers}
 	if c.dark {
 		a.sc, a.set.Marks = &ui.Palettes[ui.Dark], true
 	}
@@ -122,10 +122,16 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		m.layout(a)
 		m.draw(out, a)
 	case "modes":
-		h := newHome()
-		h.choosing = true
-		h.layout(a)
-		h.draw(out, a)
+		a.set.Where = whereWifi
+		s := newSetup(a)
+		switch c.hover {
+		case "rules":
+			s.open = foldRules
+		case "players":
+			s.open = foldPlayers
+		}
+		s.layout(a)
+		s.draw(out, a)
 	case "online", "wifi":
 		// Built by hand, so the capture neither listens on the network nor asks a server for its rooms.
 		o := &joinScene{lan: c.screen == "wifi", canJoin: true, code: codeField()}
@@ -377,6 +383,11 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "results-mobile", w: 390, h: 844, players: 4, screen: "results", dark: true},
 		{name: "results-landscape", w: 844, h: 390, players: 4, screen: "results"},
 		{name: "p6-home-modes", w: 1440, h: 900, players: 4, screen: "modes"},
+		{name: "fold-rules", w: 1440, h: 900, players: 4, screen: "modes", hover: "rules"},
+		{name: "fold-players-12", w: 1040, h: 640, players: 12, screen: "modes", hover: "players"},
+		{name: "fold-players-12-short", w: 844, h: 390, players: 12, screen: "modes", hover: "players", dark: true},
+		{name: "fold-players", w: 1040, h: 640, players: 4, screen: "modes", hover: "players", dark: true},
+		{name: "fold-rules-mobile", w: 390, h: 844, players: 4, screen: "modes", hover: "rules"},
 		{name: "p6-home-modes-mobile", w: 390, h: 844, players: 4, screen: "modes", dark: true},
 		{name: "p6-online", w: 1440, h: 900, players: 2, screen: "online"},
 		{name: "p6-online-1040-waiting", w: 1040, h: 640, players: 2, screen: "online", hover: "waiting"},
@@ -396,6 +407,9 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "fix-results-dark", w: 1040, h: 640, players: 3, screen: "results", dark: true},
 		{name: "desktop", w: 1440, h: 900, players: 2},
 		{name: "setup-all-shapes", w: 1440, h: 1080, players: 2},
+		{name: "setup-rules-upright", w: 1080, h: 1200, players: 2},
+		{name: "setup-map-upright-end", w: 390, h: 844, players: 2, tail: true},
+		{name: "setup-rules-upright-dark", w: 1080, h: 1200, players: 2, dark: true},
 		{name: "setup-desktop-12p", w: 1440, h: 900, players: 12},
 		{name: "setup-preview-background", w: 1881, h: 851, players: 12, dark: true},
 		{name: "setup-preview-quarter", w: 1881, h: 851, players: 12, dark: true, progress: 0.25},

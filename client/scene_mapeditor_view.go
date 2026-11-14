@@ -201,13 +201,16 @@ func (e *mapEditor) layout(a *app) {
 			break
 		}
 	}
-	e.options = ui.Rect{X: v.Cx() - min(400*u, v.W)/2, Y: v.Cy() - 94*u, W: min(400*u, v.W), H: 188 * u}
-	for i := range e.dims {
-		e.dims[i] = ui.Rect{X: e.options.X + 12*u + float64(i%2)*(e.options.W-12*u)/2, Y: e.options.Y + 36*u + float64(i/2)*44*u, W: (e.options.W - 36*u) / 2, H: 44 * u}
-	}
-	for i := range e.option {
-		e.option[i] = ui.Rect{X: e.options.X + 12*u, Y: e.options.Y + 132*u + float64(i)*48*u, W: e.options.W - 24*u, H: 44 * u}
-	}
+	// Map size: the size picker Setup shares, scrolling over Done when the screen is short.
+	ow, og := min(400*u, v.W), 12*u
+	stackSize := ow-2*og < 2*sizeDimensionMin(a)+og
+	pickH := sizePickerH(u, og, stackSize)
+	bodyH := max(44*u, min(pickH, v.H-2*og-36*u-56*u-og))
+	e.options = ui.Rect{X: v.Cx() - ow/2, Y: v.Cy() - (36*u+bodyH+56*u+og)/2, W: ow, H: 36*u + bodyH + 56*u + og}
+	sizeView := ui.Rect{X: e.options.X + og, Y: e.options.Y + 36*u, W: ow - 2*og, H: bodyH}
+	e.sizeScroll.Set(sizeView, pickH)
+	e.size.layout(a, sizeView.X, sizeView.Y-e.sizeScroll.Offset, sizeView.W, og, stackSize)
+	e.option[0] = ui.Rect{X: sizeView.X, Y: sizeView.Bottom() + og, W: sizeView.W, H: 44 * u}
 	e.channelPanel = ui.Rect{X: v.Cx() - min(304*u, v.W)/2, Y: v.Cy() - 122*u, W: min(304*u, v.W), H: 244 * u}
 	cw := (e.channelPanel.W - 32*u) / 4
 	for i := range e.channels {
@@ -729,9 +732,8 @@ func (e *mapEditor) drawOptions(dst *ebiten.Image, a *app) {
 	ui.FillRound(dst, a.safe(), 0, ui.WithAlpha(sc.Ground, .8))
 	ui.FillRound(dst, e.options, 16*u, sc.Tile)
 	ui.DrawText(dst, fmt.Sprintf("Map size  %d × %d", e.m.Cols, e.m.Rows), a.f.LabelBold, e.options.X+16*u, e.options.Y+18*u, text.AlignStart, sc.Ink)
-	for i, label := range []string{"Columns −", "Columns +", "Rows −", "Rows +"} {
-		editorControl(dst, a, e.dims[i], label, false, true, false)
-	}
+	e.size.draw(e.sizeScroll.Clip(dst), a, e.m.Cols, e.m.Rows)
+	e.sizeScroll.DrawScrollbar(dst, a.ui())
 	editorControl(dst, a, e.option[0], "Done", false, true, true)
 }
 func (e *mapEditor) drawChannels(dst *ebiten.Image, a *app) {

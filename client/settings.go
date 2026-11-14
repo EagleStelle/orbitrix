@@ -43,6 +43,8 @@ type settings struct {
 	OnlinePublic bool `json:"onlinePublic,omitempty"`
 	// Firewall: this Windows device was warned that Windows would ask to let Orbitrix on the network.
 	Firewall bool `json:"firewall,omitempty"`
+	// Where is where Setup last played: whereDevice, whereWifi or whereOnline; where() is the one this build offers.
+	Where int `json:"where,omitempty"`
 
 	seats      []int // parsed Seats
 	mapChecked *core.MapDefinition
@@ -216,4 +218,12 @@ func (s *settings) save() {
 	if err != nil {
 		log.Print(fmt.Errorf("settings: save: %w", err))
 	}
+}
+
+// where is where Setup plays: the saved choice, or This Device when this build can no longer offer it.
+func (s *settings) where() int {
+	if s.Where < whereDevice || s.Where > whereOnline || whereOff()&(1<<s.Where) != 0 {
+		return whereDevice
+	}
+	return s.Where
 }

@@ -218,7 +218,7 @@ func TestPerf(t *testing.T) {
 		p.overT = wipeTicks
 		return p
 	}
-	setup := func(*app) scene { return newSetup() }
+	setup := func(a *app) scene { return newSetup(a) }
 	settings := func(*app) scene { return newSettingsMenu(newHome()) }
 	home := func(*app) scene { return newHome() }
 	cases := []perfCase{

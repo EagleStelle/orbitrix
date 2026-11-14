@@ -1,13 +1,13 @@
 package client
 
 import (
-	"cmp"
 	"image"
+	"image/color"
 	"math"
-	"runtime"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
+	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"orbitrix/client/internal/boardview"
 	"orbitrix/client/internal/ui"
@@ -17,23 +17,17 @@ import (
 )
 
 // homeScene is the title screen: one column as wide as the wordmark (the wordmark, the twelve seat dots spread
-// across it, the welcome plaque with the player's name, the PLAY dot centred in it, and a stack of full-width
-// buttons), beside a live demo mat where four AIs play real chain reactions. On a screen taller than wide the column
-// opens around the mat instead: wordmark and dots above it, the plaque, PLAY and the buttons below it. The button
-// stack is a list so the Local, LAN and Online entries can join it later.
+// across it, the round play button with the name bar beside it, and a stack of buttons as wide as the column),
+// beside a live demo mat where four AIs play real chain reactions. On a screen taller than wide the column opens
+// around the mat instead: wordmark and dots above it, the name row and the buttons below it.
 type homeScene struct {
-	demo     *demo
-	choosing bool       // PLAY was pressed: the column offers the ways to play instead
-	ask      *askDialog // the warning before Windows' firewall question, while it is open
+	demo *demo
 
-	// The welcome plaque: the name field, the edits saved and measured so far, and the plaque as drawn, which hugs
-	// its line and so changes with the name. plaqueOff: the ways to play need its room on this screen.
-	name                            *field
-	named, measured                 int
-	nameText                        string
-	greetW, nameW, bangW, plaqueMin float64
-	plaque                          ui.Rect
-	plaqueOff                       bool
+	// The name bar: its field, the edits saved and measured so far, and the name as drawn.
+	name            *field
+	named, measured int
+	nameText        string
+	nameW           float64
 
 	// Layout in device px, recomputed when the screen size changes.
 	lv                  ui.Rect
@@ -41,14 +35,14 @@ type homeScene struct {
 	logoX               [len(logoLetters)]float64
 	x, w                float64 // the column: left edge and width (the wordmark's)
 	logoY, dotsY, dotR  float64
+	bar                 ui.Rect // the name bar, right of the play button
 	playX, playY, playR float64
-	playFace            *text.GoTextFace
+	playIcon            *ebiten.Image // the play triangle in white, tinted when drawn
 	items               []homeItem
-	modes               []homeItem // the ways to play, then Back, where PLAY and its buttons were
 	mat                 ui.Rect
 }
 
-// homeItem is one button in the stack under the PLAY dot.
+// homeItem is one button in the stack under the name row.
 type homeItem struct {
 	label string
 	r     ui.Rect
@@ -56,13 +50,8 @@ type homeItem struct {
 
 var logoLetters = [...]string{"O", "R", "B", "I", "T", "R", "I", "X"}
 
-// The welcome plaque: its height and the greeting around the name, set in the buttons' label face (logical px).
-const (
-	plaqueH   = 34
-	plaquePad = 16
-	caretRoom = 3 // between the name and its "!" while typing
-	greeting  = "Welcome, "
-)
+// namePrompt stands in the name bar, dimmed, until the player types a name.
+const namePrompt = "Your name"
 
 func newHome() *homeScene { return &homeScene{} }
 
@@ -87,8 +76,8 @@ func (s *homeScene) layout(a *app) {
 		room = col - 2*pad
 	}
 
-	// The wordmark sets the width of everything under it: 60 px tall at most, so it leads without crowding the PLAY dot.
-	// It is set letter by letter with a little tracking: at this weight Unbounded's R and B touch when set solid.
+	// The wordmark sets the width of everything under it: 60 px tall at most. It is set letter by letter with a
+	// little tracking: at this weight Unbounded's R and B touch when set solid.
 	track := func(f *text.GoTextFace) float64 {
 		w := 0.0
 		for i, l := range logoLetters {
@@ -113,48 +102,33 @@ func (s *homeScene) layout(a *app) {
 	if compactActions {
 		rowsOfActions--
 	}
-	stack := float64(rowsOfActions)*(bh+gap) - gap
-	s.playX = s.x + s.w/2
-	var y float64 // top of the button stack
+	stack := float64(1+rowsOfActions)*(bh+gap) - gap // the name row, then the buttons
+	var y float64                                    // top of the name row
 	if portrait {
 		y = s.layoutPortrait(a, v, size, stack)
 	} else {
 		y = s.layoutBeside(a, v, size, stack, col)
 	}
-	s.playFace = ui.NewFace(ui.SrcDisplay, s.playR*0.34, 800) // the label grows with the dot
+
+	// The play button is a circle as tall as the name bar, at the row's left end.
+	s.playR = bh / 2
+	s.playX, s.playY = s.x+s.playR, y+s.playR
+	s.bar = ui.Rect{X: s.x + bh + gap, Y: y, W: s.w - bh - gap, H: bh}
+	s.name.caret = image.Rect(int(s.bar.X), int(s.bar.Y), int(s.bar.Right()), int(s.bar.Bottom()))
+	s.renderPlay()
+	y += bh + gap
 	s.items = s.items[:0]
-	buttonW := min(2*s.playR, ui.QuietButtonMaxWidth*u)
-	if compactActions {
-		buttonW = max(buttonW, 220*u)
-	}
-	s.plaqueMin = buttonW
 	for i, l := range labels {
 		if compactActions && i < 2 {
-			half := (buttonW - gap) / 2
-			s.items = append(s.items, homeItem{l, ui.Rect{X: s.playX - buttonW/2 + float64(i)*(half+gap), Y: y, W: half, H: bh}})
+			half := (s.w - gap) / 2
+			s.items = append(s.items, homeItem{l, ui.Rect{X: s.x + float64(i)*(half+gap), Y: y, W: half, H: bh}})
 			if i == 1 {
 				y += bh + gap
 			}
 			continue
 		}
-		s.items = append(s.items, homeItem{l, ui.Rect{X: s.playX - buttonW/2, Y: y, W: buttonW, H: bh}})
+		s.items = append(s.items, homeItem{l, ui.Rect{X: s.x, Y: y, W: s.w, H: bh}})
 		y += bh + gap
-	}
-
-	// The ways to play stand where PLAY and its buttons stood, centred on them, under the plaque. On a screen too short
-	// for that they take the plaque's room too, and it steps aside until Back.
-	labels = append(playModes(), "Back")
-	modesH := float64(len(labels))*(bh+gap) - gap
-	top, bottom := s.plaque.Bottom()+gap, y-gap
-	if s.plaqueOff = modesH > bottom-top; s.plaqueOff {
-		top = s.dotsY + s.dotR + gap
-	}
-	my := max(top, min((s.playY-s.playR+bottom-modesH)/2, bottom-modesH))
-	modeW := min(s.w, max(buttonW, 220*u))
-	s.modes = s.modes[:0]
-	for _, l := range labels {
-		s.modes = append(s.modes, homeItem{l, ui.Rect{X: s.playX - modeW/2, Y: my, W: modeW, H: bh}})
-		my += bh + gap
 	}
 
 	rows := 7
@@ -163,44 +137,46 @@ func (s *homeScene) layout(a *app) {
 		s.demo = newDemo(cols, rows, a.rng.Uint64())
 	}
 	s.demo.layout(s.mat, u)
-	s.fitName(a)
 }
 
-// layoutBeside puts the column left of the mat, centred top to bottom, and returns the top of its button stack. On a
-// screen too short for it, the gaps tighten and the PLAY dot shrinks until the column fits; on one shorter still, only
-// the gaps give again, so the plaque never makes anything smaller.
+var playPath vector.Path
+
+// renderPlay caches the play triangle, nudged right of centre so it sits optically centred in its circle.
+func (s *homeScene) renderPlay() {
+	if s.playIcon != nil {
+		s.playIcon.Deallocate()
+	}
+	r := float32(s.playR)
+	s.playIcon = ebiten.NewImage(int(2*r)+1, int(2*r)+1)
+	playPath.Reset()
+	playPath.MoveTo(r-0.24*r, r-0.4*r)
+	playPath.LineTo(r+0.44*r, r)
+	playPath.LineTo(r-0.24*r, r+0.4*r)
+	playPath.Close()
+	ui.FillPath(s.playIcon, &playPath, color.RGBA{255, 255, 255, 255})
+}
+
+// layoutBeside puts the column left of the mat, centred top to bottom, and returns the top of its name row. On a
+// screen too short for it only the gaps tighten: nothing in the column shrinks.
 func (s *homeScene) layoutBeside(a *app, v ui.Rect, size, stack, col float64) float64 {
 	u := a.u
-	gLogo, gDots, gName, gPlay := 30*u, 24*u, 20*u, 32*u
-	rest := func() float64 { return size + gLogo + 2*s.dotR + gDots + plaqueH*u + gName + gPlay + stack }
-	s.playR = max(64*u, min(s.w*0.3, v.H*0.17, 150*u))
-	if rest()+2*s.playR > v.H-32*u {
-		gLogo, gDots, gName, gPlay = 16*u, 12*u, 12*u, 20*u
-	}
-	if rest()+80*u > v.H-32*u { // too short even for the smallest PLAY dot
-		gLogo, gDots, gName, gPlay = 12*u, 8*u, 8*u, 12*u
-	}
-	s.playR = max(40*u, min(s.playR, (v.H-32*u-rest())/2))
-	s.logoY = v.Y + (v.H-rest()-2*s.playR)/2 + size/2
-	s.dotsY = s.logoY + size/2 + gLogo + s.dotR
-	s.plaque = ui.Rect{X: s.playX, Y: s.dotsY + s.dotR + gDots, W: 0, H: plaqueH * u} // its width follows the name
-	s.playY = s.plaque.Bottom() + gName + s.playR
+	fixed := size + 2*s.dotR + stack
+	g := max(4*u, min(28*u, (v.H-32*u-fixed)/2))
+	s.logoY = v.Y + max(8*u, (v.H-fixed-2*g)/2) + size/2
+	s.dotsY = s.logoY + size/2 + g + s.dotR
 	s.mat = ui.Rect{X: v.X + col, Y: v.Y + 24*u, W: v.W - col - 24*u, H: v.H - 48*u}
-	return s.playY + s.playR + gPlay
+	return s.dotsY + s.dotR + g
 }
 
-// layoutPortrait opens the column around the mat: the wordmark and dots at the top, PLAY and the buttons at the
-// bottom within thumb reach, and the mat filling the middle. It returns the top of the button stack.
+// layoutPortrait opens the column around the mat: the wordmark and dots at the top, the name row and the buttons at
+// the bottom within thumb reach, and the mat filling the middle. It returns the top of the name row.
 func (s *homeScene) layoutPortrait(a *app, v ui.Rect, size, stack float64) float64 {
 	u := a.u
-	s.playR = max(48*u, min(s.w*0.3, v.H*0.11, 150*u))
 	s.logoY = v.Y + 32*u + size/2
 	s.dotsY = s.logoY + size/2 + 24*u + s.dotR
 	stackY := v.Bottom() - 24*u - stack
-	s.playY = stackY - 24*u - s.playR
-	s.plaque = ui.Rect{X: s.playX, Y: s.playY - s.playR - 20*u - plaqueH*u, W: 0, H: plaqueH * u}
 	top := s.dotsY + s.dotR + 24*u
-	s.mat = ui.Rect{X: v.X + 16*u, Y: top, W: v.W - 32*u, H: max(1, s.plaque.Y-20*u-top)}
+	s.mat = ui.Rect{X: v.X + 16*u, Y: top, W: v.W - 32*u, H: max(1, stackY-24*u-top)}
 	return stackY
 }
 
@@ -211,25 +187,12 @@ func (s *homeScene) playRect() ui.Rect {
 func (s *homeScene) update(a *app) error {
 	s.layout(a)
 	s.demo.tick()
-	if s.ask != nil {
-		s.updateAsk(a)
-		return nil
-	}
-	s.updateName(a)
-	if s.choosing {
-		s.updateModes(a)
+	if s.updateName(a) || a.clicked(s.playRect()) { // Enter in the name bar plays too
+		a.next = newSetup(a)
 		return nil
 	}
 	if a.in.esc {
 		platform.Leave() // Android's back button on the first screen; Esc on desktop and web does nothing here
-		return nil
-	}
-	if a.clicked(s.playRect()) {
-		if len(playModes()) == 1 {
-			a.next = newSetup() // nothing to choose between
-		} else {
-			s.choosing = true
-		}
 		return nil
 	}
 	for _, it := range s.items {
@@ -248,6 +211,24 @@ func (s *homeScene) update(a *app) error {
 	return nil
 }
 
+// updateName runs the name bar: a tap on it takes typing, a tap elsewhere on a touch screen gives the keyboard back,
+// and each change is saved before anything else this update can leave Home. It reports Enter.
+func (s *homeScene) updateName(a *app) bool {
+	s.name.tap(a, s.bar)
+	enter := s.name.update(a)
+	if enter {
+		s.name.focus(a, false)
+	}
+	if s.name.edits != s.named {
+		s.named = s.name.edits
+		if t := string(s.name.text); t != a.set.Name {
+			a.set.Name = t
+			a.set.save()
+		}
+	}
+	return enter
+}
+
 func (s *homeScene) draw(dst *ebiten.Image, a *app) {
 	s.layout(a)
 	sc, u := a.sc, a.u
@@ -261,29 +242,33 @@ func (s *homeScene) draw(dst *ebiten.Image, a *app) {
 	for p := range core.MaxPlayers {
 		ui.SeatDot(dst, sc, p, s.x+s.dotR+float64(p)*step, s.dotsY, s.dotR, false, a.set.Marks)
 	}
-	if !s.choosing || !s.plaqueOff {
-		s.drawName(dst, a)
+
+	// The name bar: the name in ink, or its prompt dimmed; outlined with a caret while it takes typing.
+	if s.name.edits != s.measured {
+		s.measured, s.nameText = s.name.edits, string(s.name.shown)
+		s.nameW = ui.TextWidth(s.nameText, a.f.LabelBold)
+	}
+	ui.DrawButtonSurface(dst, a.ui(), s.bar, ui.ButtonTile, true, !s.name.focused && a.over(s.bar))
+	tx := s.bar.X + 22*u
+	if s.name.focused {
+		ui.StrokeRound(dst, s.bar, s.bar.H/2, 2.5*u, sc.Ink)
+		ui.FillRound(dst, ui.Rect{X: tx + s.nameW + u, Y: s.bar.Cy() - 9*u, W: 2 * u, H: 18 * u}, u, sc.Ink)
+	}
+	if s.nameText != "" {
+		ui.DrawText(dst, s.nameText, a.f.LabelBold, tx, s.bar.Cy(), text.AlignStart, sc.Ink)
+	} else if !s.name.focused {
+		ui.DrawText(dst, namePrompt, a.f.LabelBold, tx, s.bar.Cy(), text.AlignStart, sc.Dim)
 	}
 
-	if s.choosing {
-		for _, it := range s.modes {
-			style := ui.ButtonInk
-			if it.label == "Back" {
-				style = ui.ButtonTile
-			}
-			ui.DrawButton(dst, a.ui(), it.r, it.label, "", style, true)
-		}
-		if s.ask != nil {
-			s.ask.draw(dst, a)
-		}
-		return
-	}
 	fill := sc.Ink
 	if a.over(s.playRect()) {
 		fill = sc.InkHi
 	}
 	ui.FillCircle(dst, s.playX, s.playY, s.playR, fill)
-	ui.DrawText(dst, "PLAY", s.playFace, s.playX, s.playY-2*u, text.AlignCenter, sc.Ground)
+	var op ebiten.DrawImageOptions
+	op.GeoM.Translate(s.playX-s.playR, s.playY-s.playR)
+	ui.Tint(&op.ColorScale, sc.Ground)
+	dst.DrawImage(s.playIcon, &op)
 
 	for _, it := range s.items {
 		ui.DrawButton(dst, a.ui(), it.r, it.label, "", ui.ButtonTile, true)
@@ -358,120 +343,6 @@ func (d *demo) tick() {
 		d.wait = 24
 		if d.game.Over() {
 			d.wait = 150
-		}
-	}
-}
-
-// playModes are the ways to play this build offers.
-func playModes() []string { return waysToPlay(origin) }
-
-// waysToPlay is This Device and Same Wi-Fi always (a browser hosts server-free rooms, joined by invite links, and joins
-// the LAN host that served its page), and Online where the build has a server.
-func waysToPlay(origin string) []string {
-	modes := []string{"This Device", "Same Wi-Fi"}
-	if origin != "" {
-		modes = append(modes, "Online")
-	}
-	return modes
-}
-
-// updateName runs the plaque's name: a tap on the plaque takes typing, Enter (or on a touch screen a tap elsewhere)
-// gives it back, and each change is saved before anything else this update can leave Home.
-func (s *homeScene) updateName(a *app) {
-	s.fitName(a)
-	if s.choosing && s.plaqueOff {
-		s.name.focused = false
-	} else {
-		s.name.tap(a, ui.CompactHit(s.plaque, a.u))
-	}
-	if s.name.update(a) {
-		s.name.focus(a, false)
-	}
-	if s.name.edits == s.named {
-		return
-	}
-	s.named = s.name.edits
-	if t := string(s.name.text); t != a.set.Name {
-		a.set.Name = t
-		a.set.save()
-	}
-}
-
-// fitName measures the plaque's line after an edit and sizes the plaque to hug it: at least as wide as the buttons
-// under PLAY, at most the column.
-func (s *homeScene) fitName(a *app) {
-	if s.name.edits == s.measured {
-		return
-	}
-	f, u := &a.f, a.u
-	s.measured, s.nameText = s.name.edits, string(s.name.shown)
-	s.greetW, s.bangW = ui.TextWidth(greeting, f.LabelBold), ui.TextWidth("!", f.LabelBold)
-	s.nameW = ui.TextWidth(cmp.Or(s.nameText, seatLabels[seatHuman]), f.LabelBold)
-	w := min(s.w, max(s.plaqueMin, s.greetW+s.nameW+caretRoom*u+s.bangW+2*plaquePad*u)) // typing never widens it
-	s.plaque.X, s.plaque.W = s.playX-w/2, w
-	s.name.caret = image.Rect(int(s.plaque.X), int(s.plaque.Y), int(s.plaque.Right()), int(s.plaque.Bottom()))
-}
-
-// drawName draws the welcome plaque, bare words with no fill or border: "Welcome, Ana!", the name in ink between the
-// dim greeting and its mark, or Human dimmed while there is none. While the name takes typing a caret follows it.
-func (s *homeScene) drawName(dst *ebiten.Image, a *app) {
-	s.fitName(a)
-	sc, f, u, p := a.sc, &a.f, a.u, s.plaque
-	x := p.Cx() - (s.greetW+s.nameW+s.bangW)/2
-	ui.DrawText(dst, greeting, f.LabelBold, x, p.Cy(), text.AlignStart, sc.Dim)
-	name, ink := s.nameText, sc.Ink
-	if name == "" {
-		name, ink = seatLabels[seatHuman], sc.Dim
-	}
-	ui.DrawText(dst, name, f.LabelBold, x+s.greetW, p.Cy(), text.AlignStart, ink)
-	mark := x + s.greetW + s.nameW
-	if s.name.focused {
-		caret := mark + u
-		if s.nameText == "" {
-			caret = x + s.greetW - u // where typing starts, before the dimmed Human
-		} else {
-			mark += caretRoom * u // the caret stands between the name and its mark
-		}
-		ui.FillRound(dst, ui.Rect{X: caret, Y: p.Cy() - 9*u, W: 2 * u, H: 18 * u}, u, sc.Ink)
-	}
-	ui.DrawText(dst, "!", f.LabelBold, mark, p.Cy(), text.AlignStart, sc.Dim)
-}
-
-// updateAsk runs the firewall warning: Continue goes on to Same Wi-Fi, where Windows asks; it isn't shown again.
-func (s *homeScene) updateAsk(a *app) {
-	switch yes, back := s.ask.update(a); {
-	case yes:
-		a.set.Firewall = true
-		a.set.save()
-		a.next = newJoin(a, true, "")
-	case back:
-		s.ask = nil
-	}
-}
-
-// updateModes runs the ways to play; Back (or Esc) brings PLAY, Settings and Exit back.
-func (s *homeScene) updateModes(a *app) {
-	if a.in.esc {
-		s.choosing = false
-		return
-	}
-	for _, it := range s.modes {
-		if !a.clicked(it.r) {
-			continue
-		}
-		switch it.label {
-		case "This Device":
-			a.next = newSetup()
-		case "Same Wi-Fi":
-			if runtime.GOOS == "windows" && !a.set.Firewall {
-				s.ask = &askDialog{text: firewallText, yes: "Continue"}
-			} else {
-				a.next = newJoin(a, true, "")
-			}
-		case "Online":
-			a.next = newJoin(a, false, "")
-		case "Back":
-			s.choosing = false
 		}
 	}
 }

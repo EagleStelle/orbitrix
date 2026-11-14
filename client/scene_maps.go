@@ -1,6 +1,7 @@
 package client
 
 import (
+	"cmp"
 	"unicode/utf8"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -22,11 +23,6 @@ func mapCanStart(s *settings) bool {
 		s.mapOK = s.Map.ValidateStructure() == nil && len(s.Map.Validate()) == 0
 	}
 	return s.mapOK && s.Players <= s.Map.FloorCount()
-}
-
-func (s *setupScene) mapButton(a *app) ui.Rect {
-	r := s.previewPanel
-	return ui.Rect{X: r.X + 8*a.u, Y: r.Bottom() - 48*a.u, W: max(1, r.W-16*a.u), H: 40 * a.u}
 }
 
 type mapNotice struct {
@@ -55,8 +51,8 @@ func (n *mapNotice) draw(dst *ebiten.Image, a *app, x, y float64) {
 
 type libraryEntry struct {
 	issues     []core.MapIssue
-	floors     int
-	status     string
+	dims       string // "cols × rows", its badge
+	unsaved    bool   // the recovered draft
 	name       string
 	nameShown  string
 	nameWidth  float64
@@ -67,6 +63,35 @@ type libraryEntry struct {
 	thumbMarks bool
 }
 
+// What the picker has selected besides a saved map's index: nothing, the classic map (the plain board Setup sizes),
+// or the recovered draft.
+const (
+	selNone    = -1
+	selClassic = -2
+	selDraft   = -3
+)
+
+// The bottom bar's buttons, left to right: two for the library, then the selected map's.
+const (
+	barNew = iota
+	barImport
+	barEdit
+	barCopy
+	barShare
+	barExport
+	barDelete
+	barUse
+	barCount
+)
+
+// unsavedChip marks the recovered draft's tile.
+var unsavedChip = ui.Chip{Word: "Unsaved", Kind: ui.ChipOn}
+
+var barIcons = [barCount]int{iconNew, iconImport, iconEdit, iconCopy, iconShare, iconExport, iconDelete, iconUse}
+
+// mapsScene is the map picker Home and Setup share: a grid of map tiles (the classic map first, then a recovered
+// draft, then the saved maps) over one bar of round icon buttons. New and Import stand at the bar's left; the
+// selected map's actions at its right, dimmed where they can't act.
 type mapsScene struct {
 	page
 	back        scene
@@ -75,9 +100,12 @@ type mapsScene struct {
 	entries     []libraryEntry
 	selected    int
 	rows        []ui.Rect
-	actions     [7]ui.Rect
-	toolbar     [2]ui.Rect
-	recovery    [2]ui.Rect
+	classic     libraryEntry // the plain board at Setup's size
+	classicMap  core.MapDefinition
+	classicR    ui.Rect
+	draftE      libraryEntry
+	draftR      ui.Rect
+	bar         [barCount]ui.Rect
 	draft       *core.MapDefinition
 	reloadDraft bool
 	confirm     *askDialog
@@ -89,9 +117,12 @@ type mapsScene struct {
 }
 
 func newMaps(a *app, back scene, pick func(*core.MapDefinition)) *mapsScene {
-	s := &mapsScene{back: back, pick: pick, selected: -1, store: mapstore.Load(platform.Load, platform.Save)}
+	s := &mapsScene{back: back, pick: pick, selected: selClassic, store: mapstore.Load(platform.Load, platform.Save)}
 	if s.store.LoadErr != nil {
 		s.notice.set("Your saved maps could not be read. The existing library will remain untouched. " + s.store.LoadErr.Error())
+	}
+	if a.set.Map != nil { // the map in use starts selected
+		s.selected = a.set.selectedMapIndex(s.store.Maps)
 	}
 	s.refresh()
 	s.readDraft()
@@ -108,23 +139,13 @@ func (s *mapsScene) refresh() {
 	s.rows = make([]ui.Rect, len(s.store.Maps))
 	for i, m := range s.store.Maps {
 		e := &s.entries[i]
-		e.issues, e.name = m.Validate(), m.Name
-		e.floors = m.FloorCount()
+		e.issues, e.name, e.dims = m.Validate(), m.Name, ui.Numbers[m.Cols]+" × "+ui.Numbers[m.Rows]
 		if e.name == "" {
 			e.name = "Untitled map"
-		}
-		e.status = ui.Numbers[m.Cols] + " × " + ui.Numbers[m.Rows]
-		if len(e.issues) > 0 {
-			e.status += " · Draft"
-		} else {
-			e.status += " · Ready"
 		}
 	}
 	if s.selected >= len(s.entries) {
 		s.selected = len(s.entries) - 1
-	}
-	if len(s.entries) == 0 && s.store.LoadErr == nil {
-		s.notice.set("No maps saved yet. Create a map or import one.")
 	}
 }
 
@@ -133,6 +154,10 @@ func (s *mapsScene) readDraft() {
 	if b, err := platform.Load("map-draft.orbitrixmap"); err == nil && len(b) > 0 {
 		if m, err := core.DecodeMap(b); err == nil {
 			s.draft = &m
+			if s.draftE.thumb != nil {
+				s.draftE.thumb.Deallocate()
+			}
+			s.draftE = libraryEntry{name: cmp.Or(m.Name, "Untitled map"), dims: ui.Numbers[m.Cols] + " × " + ui.Numbers[m.Rows], unsaved: true, issues: m.Validate()}
 		} else {
 			s.notice.set("The recovered draft could not be read. Your map library is unchanged.")
 		}
@@ -167,6 +192,11 @@ func (s *mapsScene) edit(a *app, m core.MapDefinition, index int) {
 func (s *mapsScene) choose(a *app, m *core.MapDefinition) {
 	s.applyMap(a, m)
 	a.next = s.back
+	if s.pick == nil { // opened from Home: on to Setup, whose Back returns here
+		setup := newSetup(a)
+		setup.backTo = s
+		a.next = setup
+	}
 }
 
 func (s *mapsScene) applyMap(a *app, m *core.MapDefinition) {
@@ -185,39 +215,133 @@ func (s *mapsScene) applyMap(a *app, m *core.MapDefinition) {
 	}
 }
 
+// layout sets the library out as a grid of map tiles, each a thumbnail over its name, as many a row as
+// stay at least 148 px wide, above the bar of icon buttons.
 func (s *mapsScene) layout(a *app) {
-	s.frame(a, true)
+	if s.frame(a, true) {
+		s.layoutBar(a)
+	}
 	v, u := s.view.Viewport, a.u
-	cols := max(1, min(3, int(v.W/(132*u))))
-	buttonW := (v.W - float64(cols-1)*8*u) / float64(cols)
-	actionRows := (len(s.actions) + cols - 1) / cols
-	h := 56 * u
+	if s.classicMap.Cols != a.set.Cols || s.classicMap.Rows != a.set.Rows {
+		if s.classic.thumb != nil {
+			s.classic.thumb.Deallocate()
+		}
+		s.classicMap = core.NewMap(a.set.Cols, a.set.Rows)
+		s.classic = libraryEntry{name: "Classic", dims: ui.Numbers[a.set.Cols] + " × " + ui.Numbers[a.set.Rows]}
+	}
+	gap := 12 * u
+	cols := max(1, int((v.W+gap)/(160*u)))
+	tileW := (v.W - float64(cols-1)*gap) / float64(cols)
+	tileH := tileW + 28*u
+	tiles := 1 + len(s.rows)
 	if s.draft != nil {
-		h += 56 * u
+		tiles++
 	}
 	noticeH := s.notice.layout(a, v.W)
-	h += noticeH + float64(len(s.rows))*112*u
-	if s.selected >= 0 {
-		h += float64(actionRows)*52*u + 12*u
-	}
-	y := s.content(h)
-	s.toolbar = [2]ui.Rect{{X: v.X, Y: y, W: (v.W - 8*u) / 2, H: 40 * u}, {X: v.Cx() + 4*u, Y: y, W: (v.W - 8*u) / 2, H: 40 * u}}
-	y += 56 * u
-	s.recovery = [2]ui.Rect{}
-	if s.draft != nil {
-		s.recovery = [2]ui.Rect{{X: v.X, Y: y, W: (v.W - 8*u) / 2, H: 40 * u}, {X: v.Cx() + 4*u, Y: y, W: (v.W - 8*u) / 2, H: 40 * u}}
-		y += 56 * u
-	}
+	y := s.content(noticeH + float64((tiles+cols-1)/cols)*(tileH+gap) - gap)
 	s.noticeY = y
 	y += noticeH
+	n := 0
+	place := func() ui.Rect {
+		r := ui.Rect{X: v.X + float64(n%cols)*(tileW+gap), Y: y + float64(n/cols)*(tileH+gap), W: tileW, H: tileH}
+		n++
+		return r
+	}
+	s.classicR, s.draftR = place(), ui.Rect{}
+	if s.draft != nil {
+		s.draftR = place()
+	}
 	for i := range s.rows {
-		s.rows[i] = ui.Rect{X: v.X, Y: y, W: v.W, H: 100 * u}
-		y += 112 * u
-		if i == s.selected {
-			for j := range s.actions {
-				s.actions[j] = ui.Rect{X: v.X + float64(j%cols)*(buttonW+8*u), Y: y + float64(j/cols)*52*u, W: buttonW, H: 40 * u}
-			}
-			y += float64(actionRows)*52*u + 12*u
+		s.rows[i] = place()
+	}
+}
+
+// layoutBar sets the icon buttons in the page's action row: the library's two from the left, the selected map's
+// six from the right. A screen too narrow for all eight at their smallest moves the library's two to a row below,
+// so nothing shrinks further.
+func (s *mapsScene) layoutBar(a *app) {
+	u, r := a.u, s.action
+	size, gap := ui.QuietButtonHeight*u, 8*u
+	if barCount*size+(barCount-1)*gap > r.W {
+		size, gap = ui.CompactButtonHeight*u, 4*u
+	}
+	y := r.Cy() - size/2
+	top := y // the selected map's row
+	if barCount*size+(barCount-1)*gap > r.W {
+		top = y - size - 8*u
+		s.view.Viewport.H = max(1, s.view.Viewport.H-size-8*u)
+	}
+	for i := range s.bar {
+		s.bar[i] = ui.Rect{X: r.X + float64(i)*(size+gap), Y: y, W: size, H: size}
+		if i >= barEdit {
+			s.bar[i].X, s.bar[i].Y = r.Right()-float64(barCount-i)*(size+gap)+gap, top
+		}
+	}
+}
+
+// selectedMap is the saved map selected, if one is.
+func (s *mapsScene) selectedMap() (core.MapDefinition, bool) {
+	if s.selected < 0 || s.selected >= len(s.store.Maps) {
+		return core.MapDefinition{}, false
+	}
+	return s.store.Maps[s.selected], true
+}
+
+// can reports whether bar button i acts: New and Import always; the classic map can only be used, a draft only
+// edited or discarded, and a saved map used once it is ready and holds the players.
+func (s *mapsScene) can(a *app, i int) bool {
+	m, saved := s.selectedMap()
+	switch {
+	case i == barNew || i == barImport:
+		return true
+	case s.selected == selClassic:
+		return i == barUse
+	case s.selected == selDraft:
+		return s.draft != nil && (i == barEdit || i == barDelete)
+	case !saved:
+		return false
+	case i == barUse:
+		return len(s.entries[s.selected].issues) == 0 && a.set.Players <= m.FloorCount()
+	}
+	return true
+}
+
+// act runs bar button i.
+func (s *mapsScene) act(a *app, i int) {
+	m, _ := s.selectedMap()
+	switch i {
+	case barNew:
+		s.edit(a, core.NewMap(a.set.Cols, a.set.Rows), -1)
+	case barImport:
+		a.next = newMapImport(a, s, s.saveAt(a, -1))
+	case barEdit:
+		if s.selected == selDraft {
+			s.edit(a, *s.draft, -1)
+		} else {
+			s.edit(a, m, s.selected)
+		}
+	case barCopy:
+		m.Name = mapCopyName(m.Name)
+		if err := s.store.Put(-1, m); err != nil {
+			s.notice.set(err.Error())
+		} else {
+			s.selected = len(s.store.Maps) - 1
+			s.refresh()
+		}
+	case barShare, barExport:
+		a.next = newMapShare(a, s, m, i == barExport)
+	case barDelete:
+		if s.discard = s.selected == selDraft; s.discard {
+			s.confirm = &askDialog{text: "Discard the recovered draft?", yes: "Discard draft"}
+		} else {
+			s.deleteIndex = s.selected
+			s.confirm = &askDialog{text: "Delete this saved map?", yes: "Delete map"}
+		}
+	case barUse:
+		if s.selected == selClassic {
+			s.choose(a, nil)
+		} else {
+			s.choose(a, &m)
 		}
 	}
 }
@@ -248,9 +372,9 @@ func (s *mapsScene) update(a *app) error {
 			} else if err := s.store.Remove(s.deleteIndex); err != nil {
 				s.notice.set(err.Error())
 			} else {
-				s.selected = -1
 				s.refresh()
 			}
+			s.selected = selNone
 		}
 		if yes || back {
 			s.confirm = nil
@@ -264,60 +388,25 @@ func (s *mapsScene) update(a *app) error {
 		a.next = s.back
 		return nil
 	}
-	if a.clicked(s.action) {
-		s.edit(a, core.NewMap(a.set.Cols, a.set.Rows), -1)
-		return nil
+	for i, r := range s.bar {
+		if s.can(a, i) && a.clicked(ui.CompactHit(r, a.u)) {
+			s.act(a, i)
+			return nil
+		}
 	}
 	if !s.inBody(a) {
 		return nil
 	}
 	switch {
-	case a.clicked(ui.CompactHit(s.toolbar[0], a.u)):
-		a.next = newMapImport(a, s, s.saveAt(a, -1))
-	case a.clicked(ui.CompactHit(s.toolbar[1], a.u)):
-		s.choose(a, nil)
-	case s.draft != nil && a.clicked(ui.CompactHit(s.recovery[0], a.u)):
-		s.edit(a, *s.draft, -1)
-	case s.draft != nil && a.clicked(ui.CompactHit(s.recovery[1], a.u)):
-		s.discard = true
-		s.confirm = &askDialog{text: "Discard the recovered draft?", yes: "Discard draft"}
+	case a.clicked(s.classicR):
+		s.selected = selClassic
+	case s.draft != nil && a.clicked(s.draftR):
+		s.selected = selDraft
 	default:
 		for i, row := range s.rows {
 			if a.clicked(row) {
 				s.selected = i
-				return nil
 			}
-		}
-		if s.selected < 0 {
-			return nil
-		}
-		m := s.store.Maps[s.selected]
-		for action, r := range s.actions {
-			if !a.clicked(ui.CompactHit(r, a.u)) {
-				continue
-			}
-			switch action {
-			case 0:
-				if len(s.entries[s.selected].issues) == 0 && a.set.Players <= m.FloorCount() {
-					s.choose(a, &m)
-				}
-			case 1, 2:
-				s.edit(a, m, s.selected)
-			case 3:
-				m.Name = mapCopyName(m.Name)
-				if err := s.store.Put(-1, m); err != nil {
-					s.notice.set(err.Error())
-				} else {
-					s.selected = len(s.store.Maps) - 1
-					s.refresh()
-				}
-			case 4:
-				s.deleteIndex, s.discard = s.selected, false
-				s.confirm = &askDialog{text: "Delete this saved map?", yes: "Delete map"}
-			case 5, 6:
-				a.next = newMapShare(a, s, m, action == 5)
-			}
-			break
 		}
 	}
 	return nil
@@ -334,67 +423,61 @@ func mapCopyName(name string) string {
 func (s *mapsScene) draw(dst *ebiten.Image, a *app) {
 	s.layout(a)
 	s.page.draw(dst, a, "Maps")
-	b, u := s.body(dst), a.u
-	ui.DrawButton(b, a.ui(), s.toolbar[0], "Import", "", ui.ButtonTile, true)
-	ui.DrawButton(b, a.ui(), s.toolbar[1], "Classic board", "", ui.ButtonTile, true)
-	if s.draft != nil {
-		ui.DrawButton(b, a.ui(), s.recovery[0], "Recover draft", "", ui.ButtonTile, true)
-		ui.DrawButton(b, a.ui(), s.recovery[1], "Discard draft", "", ui.ButtonTile, true)
-	}
+	b := s.body(dst)
 	s.notice.draw(b, a, s.view.Viewport.X, s.noticeY)
+	s.drawTile(b, a, s.classicR, &s.classic, s.classicMap, s.selected == selClassic)
+	if s.draft != nil {
+		s.drawTile(b, a, s.draftR, &s.draftE, *s.draft, s.selected == selDraft)
+	}
 	for i, r := range s.rows {
-		if r.Bottom() < s.view.Viewport.Y || r.Y > s.view.Viewport.Bottom() {
-			continue
-		}
-		e, m := &s.entries[i], s.store.Maps[i]
-		ui.FillRound(b, r, 16*u, a.sc.Tile)
-		if s.selected == i {
-			ui.StrokeRound(b, r, 16*u, 2.5*u, a.sc.Ink)
-		}
-		thumb := ui.Rect{X: r.X + 12*u, Y: r.Y + 12*u, W: 76 * u, H: 76 * u}
-		if e.thumb == nil || e.thumbMode != a.sc || e.thumbSize != int(thumb.W) || e.thumbMarks != a.set.Marks {
-			if e.thumb != nil {
-				e.thumb.Deallocate()
-			}
-			e.thumbSize, e.thumbMode = int(thumb.W), a.sc
-			e.thumbMarks = a.set.Marks
-			e.thumb = ebiten.NewImage(max(1, e.thumbSize), max(1, e.thumbSize))
-			drawMapThumb(e.thumb, a, m, ui.Rect{X: 0, Y: 0, W: thumb.W, H: thumb.H})
-		}
-		var op ebiten.DrawImageOptions
-		op.GeoM.Translate(thumb.X, thumb.Y)
-		b.DrawImage(e.thumb, &op)
-		x, width := thumb.Right()+12*u, r.Right()-thumb.Right()-24*u
-		if e.nameWidth != width || e.nameScale != u {
-			e.nameWidth, e.nameScale, e.nameShown = width, u, e.name
-			if ui.TextWidth(e.nameShown, a.f.Heading) > width {
-				for len(e.nameShown) > 0 && ui.TextWidth(e.nameShown+"…", a.f.Heading) > width {
-					_, size := utf8.DecodeLastRuneInString(e.nameShown)
-					e.nameShown = e.nameShown[:len(e.nameShown)-size]
-				}
-				e.nameShown += "…"
-			}
-		}
-		ui.DrawText(b, e.nameShown, a.f.Heading, x, r.Y+36*u, text.AlignStart, a.sc.Ink)
-		status := e.status
-		if len(e.issues) == 0 && a.set.Players > e.floors {
-			status = "Too small for these players"
-		}
-		ui.DrawText(b, status, a.f.Label, x, r.Y+66*u, text.AlignStart, a.sc.Dim)
+		s.drawTile(b, a, r, &s.entries[i], s.store.Maps[i], s.selected == i)
 	}
-	if s.selected >= 0 {
-		labels := [...]string{"Use map", "Edit", "Rename", "Duplicate", "Delete", "Export", "Share"}
-		for i, label := range labels {
-			enabled := true
-			if i == 0 {
-				enabled = len(s.entries[s.selected].issues) == 0 && a.set.Players <= s.store.Maps[s.selected].FloorCount()
-			}
-			ui.DrawButton(b, a.ui(), s.actions[i], label, "", ui.ButtonTile, enabled)
+	for i, r := range s.bar {
+		style := ui.ButtonTile
+		if i == barUse {
+			style = ui.ButtonInk
 		}
+		iconButton(dst, a, r, barIcons[i], style, s.can(a, i))
 	}
-	ui.DrawButton(dst, a.ui(), s.action, "New map", "", ui.ButtonInk, true)
 	if s.confirm != nil {
 		s.confirm.draw(dst, a)
+	}
+}
+
+// drawTile draws one map's tile: its cached thumbnail, badged with its size, over its name; outlined when selected.
+func (s *mapsScene) drawTile(b *ebiten.Image, a *app, r ui.Rect, e *libraryEntry, m core.MapDefinition, selected bool) {
+	if r.Bottom() < s.view.Viewport.Y || r.Y > s.view.Viewport.Bottom() {
+		return
+	}
+	u := a.u
+	ui.FillRound(b, r, 16*u, a.sc.Tile)
+	if selected {
+		ui.StrokeRound(b, r, 16*u, 2.5*u, a.sc.Ink)
+	}
+	thumb := ui.Rect{X: r.X + 12*u, Y: r.Y + 12*u, W: r.W - 24*u, H: r.W - 24*u}
+	if e.thumb == nil || e.thumbMode != a.sc || e.thumbSize != int(thumb.W) || e.thumbMarks != a.set.Marks {
+		if e.thumb != nil {
+			e.thumb.Deallocate()
+		}
+		e.thumbSize, e.thumbMode = int(thumb.W), a.sc
+		e.thumbMarks = a.set.Marks
+		e.thumb = ebiten.NewImage(max(1, e.thumbSize), max(1, e.thumbSize))
+		drawMapThumb(e.thumb, a, m, ui.Rect{X: 8 * u, Y: 8 * u, W: thumb.W - 16*u, H: thumb.H - 16*u})
+	}
+	ui.FillRound(b, thumb, 10*u, a.sc.Ground) // the mat under the map, as in Setup's preview
+	var op ebiten.DrawImageOptions
+	op.GeoM.Translate(thumb.X, thumb.Y)
+	b.DrawImage(e.thumb, &op)
+	if e.nameWidth != thumb.W || e.nameScale != u {
+		e.nameWidth, e.nameScale = thumb.W, u
+		e.nameShown = ellipsize(e.name, a.f.LabelBold, thumb.W)
+	}
+	ui.DrawText(b, e.nameShown, a.f.LabelBold, thumb.X, thumb.Bottom()+20*u, text.AlignStart, a.sc.Ink)
+	// Its size is a badge on the thumbnail's top right corner; a recovered draft is marked on the left.
+	ch := 22 * u
+	ui.DrawChip(b, a.ui(), ui.Chip{Word: e.dims, Kind: ui.ChipBusy}, thumb.Right()-6*u, thumb.Y+6*u+ch/2, ch)
+	if e.unsaved {
+		ui.DrawChip(b, a.ui(), unsavedChip, thumb.X+6*u+ui.ChipWidth(a.ui(), unsavedChip.Word, ch), thumb.Y+6*u+ch/2, ch)
 	}
 }
 

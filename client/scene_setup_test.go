@@ -29,12 +29,12 @@ func TestSetupLayout(t *testing.T) {
 		for _, u := range []float64{1, 1.5, 2} {
 			for players := core.MinPlayers; players <= core.MaxPlayers; players++ {
 				t.Run(fmt.Sprintf("%.0fx%.0f/u%g/%dp", size[0], size[1], u, players), func(t *testing.T) {
-					a, s := setupTestApp(size[0], size[1], u, players), newSetup()
+					a, s := setupTestApp(size[0], size[1], u, players), &setupScene{menu: -1, open: foldPlayers}
 					s.layout(a)
-					if s.start.X != s.boardB.X || s.start.W != s.boardB.W || s.start.Bottom() != a.h-s.start.X {
+					if s.start.X != s.players.X || math.Abs(s.start.Right()-s.boardB.Right()) > 0.001 || s.start.Bottom() != a.h-s.start.X {
 						t.Fatal("Start must fill the content width and stay at the bottom margin")
 					}
-					if s.players.Bottom() >= s.boardB.Y || s.viewport.Bottom() >= s.start.Y {
+					if overlaps(s.players, s.boardB) || s.viewport.Bottom() >= s.start.Y {
 						t.Fatal("Board, roster, and pinned action must not overlap")
 					}
 					if s.previewPanel.H > 0 && !containsRect(s.boardB, s.previewPanel) || s.showPreview && !containsRect(s.previewPanel, s.preview) {
@@ -51,11 +51,11 @@ func TestSetupLayout(t *testing.T) {
 					presetBottom := s.previewPanel.Y
 					for g, group := range s.presetPills {
 						label := s.shapeLabels[g]
-						if label.Y < presetBottom || !containsRect(s.boardB, label) {
+						if label.Y < presetBottom || label.X < s.boardB.X || label.Right() > s.boardB.Right() {
 							t.Fatalf("%s must stack below the previous preset group", shapeNames[g])
 						}
 						for i, r := range group {
-							if r.H != s.back.H || ui.CompactHit(r, u).H != 44*u || !containsRect(s.boardB, ui.CompactHit(r, u)) || ui.CompactHit(r, u).Y < label.Bottom() {
+							if r.H != s.back.H || ui.CompactHit(r, u).H != 44*u || ui.CompactHit(r, u).Y < label.Bottom() {
 								t.Fatalf("%s preset %d must fit below its heading with a full hit area", shapeNames[g], i)
 							}
 						}
@@ -81,18 +81,15 @@ func TestSetupLayout(t *testing.T) {
 					if size[0] < 600 && (s.rowsCtl.Y <= s.colsCtl.Bottom() || s.rowsCtl.X != s.colsCtl.X || s.rowsCtl.W != s.colsCtl.W) {
 						t.Fatal("phone dimensions must stack as full-width rows")
 					}
-					if size[0] >= 1040 && s.rowsCtl.Y != s.colsCtl.Y {
-						t.Fatal("desktop dimensions must sit side by side")
-					}
 					for _, r := range []ui.Rect{s.minusCol, s.plusCol, s.minusRow, s.plusRow} {
-						if r.H != s.back.H || setupStepHit(r, u).W != 44*u || setupStepHit(r, u).H != 44*u || !containsRect(s.boardB, setupStepHit(r, u)) {
+						if r.H != s.back.H || setupStepHit(r, u).W != 44*u || setupStepHit(r, u).H != 44*u || setupStepHit(r, u).X < s.boardB.X || setupStepHit(r, u).Right() > s.boardB.Right() {
 							t.Fatal("dimension stepper must stay compact with a full touch area inside Board")
 						}
 					}
 					columns := map[float64]bool{}
 					for i := range players {
 						columns[s.seatTy[i].X] = true
-						if s.seatTy[i].H != s.back.H || s.seatTy[i].H != 40*u || s.seatTy[i].H != s.presetPills[0][0].H || s.seatHit[i].H != 44*u || !containsRect(s.players, s.seatHit[i]) {
+						if s.seatTy[i].H != s.back.H || s.seatTy[i].H != 40*u || s.seatTy[i].H != s.presetPills[0][0].H || s.seatHit[i].H != 44*u || s.seatHit[i].X < s.players.X || s.seatHit[i].Right() > s.players.Right() {
 							t.Fatalf("seat %d must match Back's 40px height and retain a 44px target", i)
 						}
 						if !containsRect(s.seatHit[i], s.seatTy[i]) {
@@ -132,51 +129,21 @@ func TestSetupLayout(t *testing.T) {
 	}
 }
 
-func TestSetupPreviewFollowsVisibleBoard(t *testing.T) {
-	for _, size := range [][2]float64{{1040, 640}, {1881, 851}, {844, 390}, {760, 844}} {
-		for _, u := range []float64{1, 2.625} {
-			for _, players := range []int{2, 12} {
-				a, s := withCutout(setupTestApp(size[0], size[1], u, players)), newSetup()
-				s.layout(a)
-				start, first, limit := s.start, s.presetPills[0][0], s.maxScroll
-				for _, progress := range []float64{0, 0.25, 0.5, 0.75, 1, 0} {
-					s.scroll = progress * limit
-					s.layout(a)
-					bodyTop, bodyBottom := s.boardB.Y+s.blockPad+32*u, s.boardB.Bottom()-s.blockPad
-					panel := s.previewPanel
-					if bodyTop >= s.viewport.Bottom() {
-						if panel.H != 0 || s.showPreview {
-							t.Fatal("a Board below the viewport must not draw a miniature")
-						}
-						continue
-					}
-					if !containsRect(s.viewport, panel) || !containsRect(s.boardB, panel) {
-						t.Fatalf("preview %+v leaves its visible Board area at %v / u%g / %dp / scroll %g", panel, size, u, players, s.scroll)
-					}
-					if math.Abs(panel.Y-max(bodyTop, s.viewport.Y)) > 0.001 || math.Abs(panel.Bottom()-min(bodyBottom, s.viewport.Bottom())) > 0.001 {
-						t.Fatal("the preview must fill all of the visible Board column as the page scrolls")
-					}
-					if s.start != start || s.maxScroll != limit || math.Abs(s.presetPills[0][0].Y-(first.Y-s.scroll)) > 0.001 {
-						t.Fatal("following the preview must preserve normal page scrolling and the pinned Start")
-					}
-				}
-			}
-		}
-	}
-}
-
 func TestSetupPresetSelection(t *testing.T) {
 	t.Setenv("APPDATA", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	for _, size := range [][2]float64{{1040, 640}, {390, 844}, {844, 390}} {
-		a, s := setupTestApp(size[0], size[1], 1, 2), newSetup()
+		a, s := setupTestApp(size[0], size[1], 1, 2), &setupScene{menu: -1, open: foldPlayers}
 		s.layout(a)
 		for g := range shapeNames {
 			for tier := range boardSizes {
-				s.scroll += s.presetPills[g][tier].Cy() - s.viewport.Cy()
+				s.scroll = s.maxScroll // the page down to Map, then the Map body to the preset
+				s.layout(a)
+				s.pickScroll.Reveal(ui.CompactHit(s.presetPills[g][tier], a.u))
+				s.lv = ui.Rect{}
 				s.layout(a)
 				r := s.presetPills[g][tier]
-				if !containsRect(s.viewport, ui.CompactHit(r, a.u)) {
+				if !containsRect(s.viewport, ui.CompactHit(r, a.u)) || !containsRect(s.pickScroll.Viewport, ui.CompactHit(r, a.u)) {
 					t.Fatalf("%v: %s preset %d is unreachable by scrolling", size, shapeNames[g], tier)
 				}
 				a.in = input{x: r.Cx(), y: r.Cy(), clicked: true}
@@ -196,9 +163,12 @@ func TestSetupDimensionsAtScrollEnd(t *testing.T) {
 	t.Setenv("APPDATA", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	for _, size := range [][2]float64{{1040, 640}, {390, 844}, {844, 390}} {
-		a, s := setupTestApp(size[0], size[1], 1, 12), newSetup()
+		a, s := setupTestApp(size[0], size[1], 1, 12), &setupScene{menu: -1, open: foldPlayers}
 		s.layout(a)
 		s.scroll = s.maxScroll
+		s.layout(a)
+		s.pickScroll.Offset = s.pickScroll.MaxScroll() // and the Map body to its end
+		s.lv = ui.Rect{}
 		s.layout(a)
 		for _, step := range []struct {
 			button     ui.Rect
@@ -222,8 +192,8 @@ func TestSetupPlayerColumnBreakpoints(t *testing.T) {
 	for _, tc := range []struct {
 		width float64
 		cols  int
-	}{{390, 1}, {640, 2}, {760, 3}, {1040, 4}, {1440, 4}} {
-		a, s := setupTestApp(tc.width, 844, 1, 12), newSetup()
+	}{{390, 1}, {640, 2}, {760, 3}, {1040, 1}, {1440, 1}} { // a screen on its side gives Players one column, left of Map
+		a, s := setupTestApp(tc.width, 844, 1, 12), &setupScene{menu: -1, open: foldPlayers}
 		s.layout(a)
 		columns := map[float64]bool{}
 		for i := range a.set.Players {
@@ -240,7 +210,7 @@ func TestSetupPlayerColumnBreakpoints(t *testing.T) {
 
 func TestSetupMenuBounds(t *testing.T) {
 	for _, size := range [][2]float64{{1040, 640}, {390, 844}, {320, 640}, {844, 390}} {
-		a, s := setupTestApp(size[0], size[1], 1, 12), newSetup()
+		a, s := setupTestApp(size[0], size[1], 1, 12), &setupScene{menu: -1, open: foldPlayers}
 		s.layout(a)
 		for seat := range a.set.Players {
 			s.menu = seat
@@ -261,7 +231,7 @@ func TestSetupMenuBounds(t *testing.T) {
 func TestSetupCountChangesPreserveSeats(t *testing.T) {
 	t.Setenv("APPDATA", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	a, s := setupTestApp(1040, 640, 1, 2), newSetup()
+	a, s := setupTestApp(1040, 640, 1, 2), &setupScene{menu: -1, open: foldPlayers}
 	a.set.seats = []int{2, seatHuman}
 	want := slices.Clone(a.set.seats)
 	s.layout(a)
@@ -282,7 +252,7 @@ func TestSetupCountChangesPreserveSeats(t *testing.T) {
 func TestRemoveSeat(t *testing.T) {
 	a := setupTestApp(1040, 640, 1, 3)
 	a.set.seats = []int{seatHuman, 1 + 2, 1 + 5}
-	s := newSetup()
+	s := newSetup(a)
 	s.layout(a)
 	s.menu = 1
 	if s.menuCount(a) != len(seatLabels)+2 {
@@ -304,7 +274,7 @@ func TestSwapSeat(t *testing.T) {
 	a := setupTestApp(1040, 640, 1, 4)
 	a.set.seats = []int{seatHuman, 1 + 2, 1 + 5, seatHuman}
 	a.set.Name = "Ana"
-	s := newSetup()
+	s := newSetup(a)
 	s.layout(a)
 	pick := func(o int) {
 		panel, first := s.menuRects(a)
@@ -329,5 +299,35 @@ func TestSwapSeat(t *testing.T) {
 	}
 	if l, _, _ := s.seat(a, 2); l != "Ana" {
 		t.Fatalf("the player's name must follow their seat, got %q", l)
+	}
+}
+
+// On a screen on its side nothing scrolls the page while Rules is closed: Map is exactly as tall as the screen
+// shows, and a full Players card stops at the bottom and scrolls its seats inside itself.
+func TestSetupCardsScrollInside(t *testing.T) {
+	for _, size := range [][2]float64{{1040, 640}, {844, 390}, {1440, 900}} {
+		a, s := setupTestApp(size[0], size[1], 1, 12), &setupScene{menu: -1, open: foldPlayers}
+		s.layout(a)
+		if s.maxScroll != 0 || s.boardB.Y != s.viewport.Y || s.boardB.H != s.viewport.H {
+			t.Fatalf("%v: Map must fill the screen's height exactly and the page must not scroll (max %g)", size, s.maxScroll)
+		}
+		if s.players.Bottom() > s.viewport.Bottom()+0.001 || s.seatScroll.MaxScroll() == 0 {
+			t.Fatalf("%v: twelve seats must scroll inside a Players card that ends on the screen", size)
+		}
+		last := s.seatHit[11]
+		a.in = input{x: last.Cx(), y: s.seatScroll.Viewport.Bottom() + 4, clicked: true}
+		if err := s.update(a); err != nil || s.menu >= 0 {
+			t.Fatalf("%v: a seat scrolled out of the card must not take a click", size)
+		}
+		s.seatScroll.Reveal(last)
+		s.lv = ui.Rect{}
+		s.layout(a)
+		if last = s.seatHit[11]; !containsRect(s.seatScroll.Viewport, last) {
+			t.Fatalf("%v: the last seat is unreachable by scrolling the card", size)
+		}
+		a.in = input{x: last.Cx(), y: last.Cy(), clicked: true}
+		if err := s.update(a); err != nil || s.menu != 11 {
+			t.Fatalf("%v: the last seat must open its menu once scrolled to", size)
+		}
 	}
 }

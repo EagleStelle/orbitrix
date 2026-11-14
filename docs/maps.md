@@ -1,8 +1,8 @@
 # Maps and Map Editor
 
-Open **Maps** from Home or from the Board preview in Setup. Choose a saved map, or choose **Classic board** to use the existing rectangular presets. Maps are saved on this device, never uploaded to a catalogue. Browser storage belongs to the current browser and site; export files for backups.
+Open **Maps** from Home, or with **Choose a map** in Setup's Map heading. Both open the same map picker: tap a tile to select it, then use the round buttons along the bottom. Left: New (plus) and Import (arrow into a tray). Right, for the selected map: Edit (pencil), Duplicate (two sheets), Share (joined points), Export (arrow out of a tray), Delete (bin) and Use (check). **Classic**, the first tile, is the plain board whose size Setup changes. A draft the editor left unsaved appears as the second tile: Edit recovers it, Delete discards it. Maps are saved on this device, never uploaded to a catalogue. Browser storage belongs to the current browser and site; export files for backups.
 
-The library starts with Crossroads, Long Distance, and Pressure Points. Select a map to edit, rename, duplicate, delete, export, share, or use it. Invalid designs remain editable drafts; they cannot start a match.
+The library starts with Crossroads, Long Distance, and Pressure Points. Select a map to edit (renaming it there), duplicate, delete, export, share, or use it. Invalid designs remain editable drafts; they cannot start a match.
 
 ## Terms and tools
 
@@ -47,7 +47,7 @@ With the Portal tool selected, choose **All directions**, **Horizontal**, or **V
 
 The toolbar has capacity and reversed-circuit preview toggles. Preview reverses every circuit relative to its outputs' saved starting states and shows switches pressed; capacities follow that preview. It does not change the saved design. **More** contains map dimensions. Validation messages appear in the bottom snackbar; affected cells and edges are outlined. Invalid drafts can be saved, but Test remains disabled until they are valid.
 
-Save commits the draft to the library. Unsaved work is recovered separately after editing stops; **Recover draft** resumes it. Leaving an edited map asks before discarding changes. **Test** opens the familiar player/bot setup with private preferences. Escape/Android Back returns from test play to the unchanged editor draft.
+Save commits the draft to the library. Unsaved work is recovered separately after editing stops; it appears in Maps as an Unsaved tile, and Edit resumes it. Leaving an edited map asks before discarding changes. **Test** opens the familiar player/bot setup with private preferences. Escape/Android Back returns from test play to the unchanged editor draft.
 
 Saving a playable revision of the selected map also updates the selection for normal play. On startup, a saved selection refreshes from its uniquely named library entry; missing, ambiguous or unplayable entries leave the prior playable selection intact. Ongoing matches retain their private map copy.
 

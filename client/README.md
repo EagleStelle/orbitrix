@@ -10,7 +10,9 @@ and Android entry points all use `client.New()` and `client.Game`.
 | `game.go` | Shared application state, Ebitengine frame loop, screen transitions and layout |
 | `input.go` | Mouse, touch, keyboard-back input and hit testing |
 | `settings.go` | Saved preferences, seat choices and rejoin details |
-| `scene_home.go`, `scene_setup.go`, `scene_settings.go` | Home, local setup and settings screens |
+| `scene_home.go`, `scene_setup.go`, `scene_settings.go` | Home, Setup (This Device and hosted rooms) and settings screens |
+| `setup_parts.go` | Shared Setup parts: the Rules card and its option tiles, the board size picker |
+| `icons.go` | Round icon buttons, and the line-drawn icons for them and for the Rules options |
 | `scene_play.go` | Match controls, AI scheduling, pause menu and results |
 | `scene_join.go`, `scene_room*.go`, `scene_password.go`, `scene_reply.go`, `scene_gone.go` | Joining, lobby, invitations, host password, direct replies and disconnect screens |
 | `scene_maps.go` | Map library selection and actions |

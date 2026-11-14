@@ -23,8 +23,8 @@ import (
 	"orbitrix/server/signal"
 )
 
-// joinScene is the Same Wi-Fi and Online pages: one centred column, a Host block (Set up a room, which opens the
-// Room page) above a Join block. Join lists the public rooms, heard on the network or listed by the server, and a tap
+// joinScene is the Same Wi-Fi and Online join pages, opened from Setup: one centred Join block. It lists the public
+// rooms, heard on the network or listed by the server, and a tap
 // joins one (online, once its host lets the player in). Under the list, the code's six slots, typed on the device's
 // own keyboard, join a private room. On Android the multicast lock lets the Wi-Fi pass the hosts' announcements on
 // while the page is open. A browser's Same Wi-Fi page hears only the LAN host that served it, and explains why nearby
@@ -55,19 +55,21 @@ type joinScene struct {
 	online  chan joinResult
 	local   chan lanResult
 
-	loff               float64
-	lrows              int
-	ljoining           bool
-	hostB, host, joinB ui.Rect
-	rowR               []ui.Rect
-	emptyY, codeY      float64
-	listY, divY        float64 // the list's label, and the hairline between the two ways to join
-	slots              [proto.CodeLen]ui.Rect
-	slotRow            ui.Rect // the slots: pressing them opens the keyboard
-	slotFace           *text.GoTextFace
-	statusY            float64
-	join               ui.Rect
-	snack              snackbar
+	loff          float64
+	lrows         int
+	ljoining      bool
+	joinB         ui.Rect
+	rowR          []ui.Rect
+	emptyY, codeY float64
+	listY, divY   float64 // the list's label, and the hairline between the two ways to join
+	slots         [proto.CodeLen]ui.Rect
+	slotRow       ui.Rect // the slots: pressing them opens the keyboard
+	slotFace      *text.GoTextFace
+	statusY       float64
+	join          ui.Rect
+	snack         snackbar
+	tabs          [2]ui.Rect // Same Wi-Fi, Online
+	ask           *askDialog // the warning before Windows' firewall question
 }
 
 // joinRow is a public room's row: its name, its state, and where a tap goes.
@@ -91,6 +93,9 @@ type lanResult struct {
 	addr, code string
 	err        error
 }
+
+// joinTabs name the join page's two networks, in tab order.
+var joinTabs = [2]string{"Same Wi-Fi", "Online"}
 
 // newJoin opens the Same Wi-Fi (lanRoom) or Online page with code filled in: from a /join/ link, or the room this
 // player may rejoin. With a mouse there is a physical keyboard, so the code takes typing straight away; a touch screen
@@ -218,7 +223,6 @@ func (s *joinScene) layout(a *app) {
 		s.statusLines = wrap(s.status, a.f.Label, w-2*bp)
 		statusH = max(statusH, float64(len(s.statusLines))*24*u+16*u)
 	}
-	hostH := bp + 32*u + 52*u + bp
 	joinNoteH := 0.0
 	if s.joinNote != "" {
 		s.joinLines = wrap(s.joinNote, a.f.Label, w-2*bp)
@@ -230,7 +234,8 @@ func (s *joinScene) layout(a *app) {
 		joinH = bp + 32*u + bp
 	}
 	joinH += joinNoteH
-	h := hostH + s.gap + joinH
+	tabsH := ui.CompactButtonTarget*u + s.gap // the Same Wi-Fi and Online tabs, over the Join block
+	h := tabsH + joinH
 	centering := max(0, v.H-h) / 2
 	contentH := h
 	if joining {
@@ -238,9 +243,11 @@ func (s *joinScene) layout(a *app) {
 	}
 	y := s.content(contentH) + centering
 	s.loff = s.view.Offset
-	s.hostB = ui.Rect{X: x, Y: y, W: w, H: hostH}
-	s.host = ui.Rect{X: x + bp, Y: y + bp + 32*u, W: w - 2*bp, H: 52 * u}
-	s.joinB = ui.Rect{X: x, Y: s.hostB.Bottom() + s.gap, W: w, H: joinH}
+	tw := (w - 8*u) / 2
+	for i := range s.tabs {
+		s.tabs[i] = ui.Rect{X: x + float64(i)*(tw+8*u), Y: y + 2*u, W: tw, H: ui.CompactButtonHeight * u}
+	}
+	s.joinB = ui.Rect{X: x, Y: y + tabsH, W: w, H: joinH}
 	if !s.canJoin {
 		return
 	}
@@ -277,6 +284,18 @@ func (s *joinScene) update(a *app) error {
 	defer s.leaving(a)
 	s.refresh(a)
 	s.layout(a)
+	if s.ask != nil { // Continue goes on to Same Wi-Fi, where Windows asks; it isn't shown again
+		yes, back := s.ask.update(a)
+		if yes {
+			a.set.Firewall = true
+			a.set.save()
+			a.next = newJoin(a, true, "")
+		}
+		if yes || back {
+			s.ask = nil
+		}
+		return nil
+	}
 	overSnack := false
 	if bar := s.snackbar(); bar != nil {
 		_, overSnack = bar.update(a)
@@ -299,12 +318,16 @@ func (s *joinScene) update(a *app) error {
 		return nil
 	}
 	if s.backed(a) {
-		a.next = newHome()
+		a.next = newSetup(a)
 		return nil
 	}
-	if in && !s.hostBlocked && a.clicked(s.host) {
-		a.next = newRoomSetup(a, s.lan)
-		return nil
+	for i, t := range s.tabs { // the other tab opens its own page: a fresh search, list and code
+		if lan := i == 0; in && lan != s.lan && (lan || origin != "") && a.clicked(ui.CompactHit(t, a.u)) {
+			if s.ask = firewallAsk(a, lan); s.ask == nil {
+				a.next = newJoin(a, lan, "")
+			}
+			return nil
+		}
 	}
 	if !s.canJoin {
 		return nil
@@ -452,20 +475,16 @@ func (s *joinScene) joinedOnline(a *app, r joinResult) {
 func (s *joinScene) draw(dst *ebiten.Image, a *app) {
 	s.layout(a)
 	sc, f, u := a.sc, &a.f, a.u
-	title := "Online"
-	if s.lan {
-		title = "Same Wi-Fi"
-	}
-	s.page.draw(dst, a, title)
+	s.page.draw(dst, a, "Join a room")
 	b := s.body(dst)
-	ui.FillRound(b, s.hostB, 24*u, sc.Tile)
-	ui.DrawText(b, "Host", f.Heading, s.hostB.X+s.bp, s.hostB.Y+s.bp+10*u, text.AlignStart, sc.Ink)
-	if s.hostBlocked {
-		ui.DrawButton(b, a.ui(), s.host, "This browser can't host", "", ui.ButtonTile, false)
-	} else if s.joining != "" {
-		ui.DrawButton(b, a.ui(), s.host, "Set up a room", "", ui.ButtonTile, false)
-	} else {
-		ui.DrawButton(b, a.ui(), s.host, "Set up a room", "", ui.ButtonGround, true)
+	// The chosen tab is outlined in ink, as in Settings. The other is held while a join is under way, and Online
+	// is dimmed on a build without a server.
+	for i, t := range s.tabs {
+		style, chosen := ui.ButtonTile, (i == 0) == s.lan
+		if chosen {
+			style = ui.ButtonChosen
+		}
+		ui.DrawButton(b, a.ui(), t, joinTabs[i], "", style, chosen || s.joining == "" && (i == 0 || origin != ""))
 	}
 	ui.FillRound(b, s.joinB, 24*u, sc.Tile)
 	ui.DrawText(b, "Join", f.Heading, s.joinB.X+s.bp, s.joinB.Y+s.bp+10*u, text.AlignStart, sc.Ink)
@@ -516,6 +535,9 @@ func (s *joinScene) draw(dst *ebiten.Image, a *app) {
 		ui.DrawButton(b, a.ui(), s.join, "Join", "", ui.ButtonInk, true)
 	default:
 		ui.DrawButton(b, a.ui(), s.join, "Join", "", ui.ButtonTile, false) // the mat's disabled fill would vanish on the block
+	}
+	if s.ask != nil {
+		s.ask.draw(dst, a)
 	}
 }
 

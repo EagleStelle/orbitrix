@@ -1,6 +1,7 @@
 package client
 
 import (
+	"cmp"
 	"image"
 	"image/color"
 	"log"
@@ -151,12 +152,21 @@ type setupScene struct {
 	seatHit               [core.MaxPlayers]ui.Rect
 	preview, previewPanel ui.Rect
 	showPreview           bool
-	shapeLabels           [len(shapeNames)]ui.Rect
-	presetPills           [len(shapeNames)][len(boardSizes)]ui.Rect
-	colsCtl, rowsCtl      ui.Rect
-	minusCol, plusCol     ui.Rect
-	minusRow, plusRow     ui.Rect
-	start                 ui.Rect
+	sizePicker
+	game                   gameBlock
+	mapsB                  ui.Rect // the Map heading's button, which opens the map picker
+	lmap                   bool
+	lstrip                 float64    // the Rules strip's offset when laid out
+	seatScroll, pickScroll ui.Scroll  // the seats and the Map body, each scrolling inside its card
+	ask                    *askDialog // the warning before Windows' firewall question
+	askJoin                bool       // Continue goes on to the join page, not to hosting on Same Wi-Fi
+	backTo                 scene      // where Back goes instead of Home: the map picker that opened Setup
+	open                   int        // the expanded card: foldNone, foldRules or foldPlayers
+	rulesHead, playersHead ui.Rect    // the headings that fold their cards
+	mapOf                  *core.MapDefinition
+	dimsW                  float64
+	mapW                   float64
+	start                  ui.Rect
 
 	// The screen clipped to the viewport, kept until either changes.
 	content, contentOf *ebiten.Image
@@ -166,7 +176,16 @@ type setupScene struct {
 	dimC, dimR     int
 }
 
-func newSetup() *setupScene { return &setupScene{menu: -1} }
+// newSetup opens Setup where the player last played: on This Device, or as a room not yet open.
+func newSetup(a *app) *setupScene {
+	if w := a.set.where(); w != whereDevice {
+		return newRoomSetup(a, w == whereWifi)
+	}
+	return &setupScene{menu: -1}
+}
+
+// chooseMap labels the Map heading's button, which opens the map picker.
+const chooseMap = "Choose a map"
 
 func (s *setupScene) layout(a *app) {
 	v := a.safe()
@@ -175,10 +194,11 @@ func (s *setupScene) layout(a *app) {
 	if s.room != nil && s.room.net != nil {
 		ln = s.room.net.lobbyN
 	}
-	if v == s.lv && a.u == s.lu && a.set.Players == s.lp && s.scroll == s.lscroll && snacking == s.lsnack && ln == s.ln {
+	saved := a.set.Map != nil
+	if v == s.lv && a.u == s.lu && a.set.Players == s.lp && s.scroll == s.lscroll && snacking == s.lsnack && ln == s.ln && saved == s.lmap && s.game.strip.Offset == s.lstrip {
 		return
 	}
-	s.lv, s.lu, s.lp, s.lsnack, s.ln = v, a.u, a.set.Players, snacking, ln
+	s.lv, s.lu, s.lp, s.lsnack, s.ln, s.lmap = v, a.u, a.set.Players, snacking, ln, saved
 	u := a.u
 	pad, gap, bp := 20*u, 16*u, 20*u
 	if v.W < 1200*u {
@@ -203,29 +223,9 @@ func (s *setupScene) layout(a *app) {
 			snack = snackH*u + gap
 		}
 	}
-
 	// Visible controls match Back; their larger hit rows preserve touch usability.
 	buttonH, targetH := ui.CompactButtonHeight*u, ui.CompactButtonTarget*u
 	rowPitch := targetH + 8*u
-	vw := 0.0
-	for _, number := range ui.Numbers {
-		vw = max(vw, ui.TextWidth(number, a.f.Number))
-	}
-	vw += 12 * u
-	inner := w - 2*bp
-	// Presets and dimensions form one vertical group beside or below the preview.
-	dimensionMin := max(ui.TextWidth("Columns", a.f.LabelBold), ui.TextWidth("Rows", a.f.LabelBold)) + 8*u + 2*targetH + vw
-	controlsMin := max(2*dimensionMin+gap, 288*u)
-	sideBySide := inner >= 200*u+gap+controlsMin
-	controlsW := inner
-	if sideBySide {
-		controlsW = max(controlsMin, min(420*u, inner*0.42))
-	}
-	stackDimensions := v.W < 600*u || controlsW < 2*dimensionMin+gap
-	dimensionsH := targetH
-	if stackDimensions {
-		dimensionsH = 2*targetH + gap
-	}
 	minSeatW := 220 * u
 	for _, label := range seatLabels {
 		minSeatW = max(minSeatW, seatChoiceX*u+ui.TextWidth(label, a.f.LabelBold)+(52+pipsW)*u)
@@ -239,70 +239,105 @@ func (s *setupScene) layout(a *app) {
 			minSeatW = max(minSeatW, seatChoiceX*u+ui.TextWidth(label, a.f.LabelBold)+right)
 		}
 	}
-	cols := max(1, min(4, a.set.Players, int((inner+gap)/(minSeatW+gap))))
-	rows := (a.set.Players + cols - 1) / cols
-	playerH := 2*bp + 44*u + float64(rows)*rowPitch
-	groupH := 32*u + 3*targetH + 16*u // a heading, then three rows of two presets
-	presetH := float64(len(shapeNames))*groupH + float64(len(shapeNames)-1)*24*u
-	controlsH := presetH + gap + dimensionsH
-	boardMin := 2*bp + 32*u + controlsH
-	if !sideBySide {
-		boardMin += 128*u + gap // preview above the controls
+	dimensionMin := sizeDimensionMin(a)
+	controlsMin := max(2*sizePresetW(a)+8*u, dimensionMin, 288*u) // two preset pills that hug their labels
+
+	// A screen on its side gives Map the whole right, top to bottom, and stacks Rules over Players in a left column
+	// one seat wide: wider only while Map still keeps its preview beside its size picker. An upright screen, or one
+	// too narrow for both columns, stacks Rules, Players and Map.
+	besideMin, lwMin := 200*u+gap+controlsMin+2*bp, minSeatW+2*bp
+	twoCol := !a.portrait() && w >= lwMin+gap+288*u+2*bp
+	lw, bw, bx := w, w, v.X+pad
+	if twoCol {
+		lw = max(lwMin, min(math.Round(w*0.36), 440*u, w-gap-besideMin))
+		bw, bx = w-gap-lw, v.X+pad+lw+gap
 	}
-	s.maxScroll = max(0, boardMin+gap+playerH+snack-s.viewport.H)
+	gameH := 0.0 // the Rules card and the gutter under it; an editor's test game has none
+	if !s.test {
+		gameH = s.game.layout(a, v.X+pad, 0, lw, bp, s.open == foldRules) + gap
+	}
+	pinner, inner := lw-2*bp, bw-2*bp
+	cols := max(1, min(4, a.set.Players, int((pinner+gap)/(minSeatW+gap))))
+	rows := (a.set.Players + cols - 1) / cols
+	if s.open != foldPlayers {
+		rows = 0 // collapsed to its heading and count
+	}
+	// Players never grows past what the screen shows under Rules: its seats scroll inside the card instead.
+	seatsH := float64(rows) * rowPitch
+	playerH := 2*bp + 44*u + min(seatsH, max(rowPitch, s.viewport.H-gameH-2*bp-44*u)) // one row at least
+
+	// Map is exactly as tall as the screen shows. Side by side it never moves, and the page scrolls only when an
+	// open Rules card pushes Players off the screen; stacked, the page scrolls down to it.
+	boardH := s.viewport.H
+	content := gameH + playerH
+	if !twoCol {
+		content += gap + boardH
+	}
+	s.maxScroll = max(0, content+snack-s.viewport.H)
 	s.scroll = max(0, min(s.maxScroll, s.scroll))
 	s.lscroll = s.scroll
-	boardH := max(boardMin, s.viewport.H-gap-playerH)
-	s.players = ui.Rect{X: v.X + pad, Y: top - s.scroll, W: w, H: playerH}
-	s.boardB = ui.Rect{X: v.X + pad, Y: s.players.Bottom() + gap, W: w, H: boardH}
+	leftY := top - s.scroll
+	if !s.test {
+		s.game.layout(a, v.X+pad, leftY, lw, bp, s.open == foldRules)
+	}
+	s.lstrip = s.game.strip.Offset
+	s.players = ui.Rect{X: v.X + pad, Y: leftY + gameH, W: lw, H: playerH}
+	s.boardB = ui.Rect{X: bx, Y: s.players.Bottom() + gap, W: bw, H: boardH}
+	if twoCol {
+		s.boardB.Y = top
+	}
+
 	p := s.players
 	s.headY = p.Y + bp + 22*u
-	colW := (inner - float64(cols-1)*gap) / float64(cols)
+	s.seatScroll.Set(ui.Rect{X: p.X + bp, Y: p.Y + bp + 52*u, W: pinner, H: max(0, p.H-2*bp-52*u)}, max(0, seatsH-8*u)) // down to the card's padding
+	colW := (pinner - float64(cols-1)*gap) / float64(cols)
 	clear(s.seatHit[:])
 	clear(s.seatTy[:])
-	for i := range a.set.Players {
+	for i := range rows * cols { // none while collapsed
+		if i >= a.set.Players {
+			break
+		}
 		x := p.X + bp + float64(i%cols)*(colW+gap)
-		cy := p.Y + bp + 52*u + float64(i/cols)*rowPitch + targetH/2
+		cy := s.seatScroll.Viewport.Y - s.seatScroll.Offset + float64(i/cols)*rowPitch + targetH/2
 		r := ui.Rect{X: x, Y: cy - buttonH/2, W: colW, H: buttonH}
 		s.seatTy[i], s.seatHit[i] = r, ui.CompactHit(r, u)
 		s.seatDot[i] = ui.Rect{X: x + 16*u, Y: cy - 8*u, W: 16 * u, H: 16 * u}
 	}
+	s.minusP, s.plusP = stepRects(a, p.Right()-bp-foldRoom*u, s.headY) // left of the chevron
+	// A tap on a heading, clear of its buttons, folds its card.
+	head := bp + 50*u
+	s.playersHead = ui.Rect{X: p.X, Y: p.Y, W: p.W, H: min(p.H, head)}
+	s.rulesHead = ui.Rect{}
+	if g := s.game.r; !s.test {
+		s.rulesHead = ui.Rect{X: g.X, Y: g.Y, W: g.W, H: min(g.H, head)}
+	}
 
-	// Size controls reflow as groups; their labels and hit areas never shrink with the viewport.
-	step := func(right, cy float64) (minus, plus ui.Rect) {
-		plus = ui.Rect{X: right - 42*u, Y: cy - buttonH/2, W: buttonH, H: buttonH}
-		return ui.Rect{X: plus.X - vw - targetH, Y: plus.Y, W: buttonH, H: buttonH}, plus
-	}
-	s.minusP, s.plusP = step(p.Right()-bp, s.headY)
+	// The Map card's body scrolls inside the card when it is shorter than what it holds: the classic map's size
+	// picker beside its preview, or the preview over the picker; a saved map's thumbnail fills it.
 	b := s.boardB
-	body := ui.Rect{X: b.X + bp, Y: b.Y + bp + 32*u, W: inner, H: b.H - 2*bp - 32*u}
-	controls := ui.Rect{X: body.Right() - controlsW, Y: body.Cy() - controlsH/2, W: controlsW, H: controlsH}
+	mw := ui.TextWidth(chooseMap, a.f.LabelBold) + 40*u
+	s.mapsB = ui.Rect{X: b.Right() - bp - mw, Y: b.Y + bp + 22*u - buttonH/2, W: mw, H: buttonH}
+	body := ui.Rect{X: b.X + bp, Y: b.Y + bp + 54*u, W: inner, H: max(0, b.H-2*bp-54*u)} // 12 px under the heading's button, as Players' seats
+	sideBySide := inner >= 200*u+gap+controlsMin
+	controlsW := inner
 	if sideBySide {
-		// Follow the visible Board area without changing the page's scroll range or moving its controls.
-		top, bottom := max(body.Y, s.viewport.Y), min(body.Bottom(), s.viewport.Bottom())
-		s.previewPanel = ui.Rect{X: body.X, Y: top, W: controls.X - gap - body.X, H: max(0, bottom-top)}
-	} else {
-		s.previewPanel = ui.Rect{X: body.X, Y: body.Y, W: body.W, H: max(128*u, body.H-controlsH-gap)}
-		controls.X, controls.Y = body.X, s.previewPanel.Bottom()+gap
+		controlsW = controlsMin // the preview takes the rest
 	}
-	presetArea := ui.Rect{X: controls.X, Y: controls.Y, W: controls.W, H: presetH}
-	cw := (controls.W - gap) / 2
-	s.colsCtl = ui.Rect{X: controls.X, Y: presetArea.Bottom() + gap, W: cw, H: targetH}
-	s.rowsCtl = ui.Rect{X: controls.X + cw + gap, Y: s.colsCtl.Y, W: cw, H: targetH}
-	if stackDimensions {
-		s.colsCtl.W = controls.W
-		s.rowsCtl = ui.Rect{X: controls.X, Y: s.colsCtl.Bottom() + gap, W: controls.W, H: targetH}
-	}
-	s.minusCol, s.plusCol = step(s.colsCtl.Right(), s.colsCtl.Cy())
-	s.minusRow, s.plusRow = step(s.rowsCtl.Right(), s.rowsCtl.Cy())
-	inset := (targetH - buttonH) / 2
-	pw := (presetArea.W - 8*u) / 2
-	for g := range s.presetPills {
-		y := presetArea.Y + float64(g)*(groupH+24*u)
-		s.shapeLabels[g] = ui.Rect{X: presetArea.X, Y: y, W: presetArea.W, H: 24 * u}
-		for t := range s.presetPills[g] {
-			s.presetPills[g][t] = ui.Rect{X: presetArea.X + float64(t%2)*(pw+8*u), Y: y + 32*u + float64(t/2)*rowPitch + inset, W: pw, H: buttonH}
-		}
+	stackDimensions := v.W < 600*u || controlsW < 2*dimensionMin+gap
+	controlsH := sizePickerH(u, gap, stackDimensions)
+	s.sizePicker, s.previewPanel = sizePicker{}, body
+	switch {
+	case saved:
+		s.pickScroll.Set(body, body.H)
+	case sideBySide:
+		s.pickScroll.Set(body, controlsH)
+		s.previewPanel.W = body.W - controlsW - gap
+		s.sizePicker.layout(a, body.Right()-controlsW, body.Y+max(0, (body.H-controlsH)/2)-s.pickScroll.Offset, controlsW, gap, stackDimensions)
+	default:
+		s.previewPanel.H = max(128*u, body.H-controlsH-gap)
+		s.pickScroll.Set(body, s.previewPanel.H+gap+controlsH)
+		s.previewPanel.Y -= s.pickScroll.Offset
+		s.sizePicker.layout(a, body.X, s.previewPanel.Bottom()+gap, controlsW, gap, stackDimensions)
 	}
 	s.preview = s.previewPanel.Inset(12 * u)
 	s.showPreview = s.preview.W > 0 && s.preview.H > 0
@@ -344,16 +379,6 @@ func (s *setupScene) setPlayers(a *app, n int) {
 	a.set.Players = max(s.minPlayers(), min(core.MaxPlayers, n))
 	a.set.fitSeats()
 	s.menu = -1
-	s.changed(a)
-}
-
-func (s *setupScene) resize(a *app, dc, dr int) {
-	if s.test {
-		return
-	}
-	a.set.Map = nil
-	a.set.Cols = max(core.MinSize, min(core.MaxSize, a.set.Cols+dc))
-	a.set.Rows = max(core.MinSize, min(core.MaxSize, a.set.Rows+dr))
 	s.changed(a)
 }
 
@@ -469,6 +494,22 @@ func (s *setupScene) update(a *app) error {
 		}
 	}
 	s.layout(a)
+	if s.ask != nil { // Continue goes on to Same Wi-Fi, where Windows asks; it isn't shown again
+		yes, back := s.ask.update(a)
+		if yes {
+			a.set.Firewall = true
+			a.set.save()
+			if s.askJoin {
+				a.next = newJoin(a, true, "")
+			} else {
+				s.setWhere(a, whereWifi)
+			}
+		}
+		if yes || back {
+			s.ask = nil
+		}
+		return nil
+	}
 	if s.room != nil {
 		if !a.in.esc && s.room.answerSnack(a) {
 			return nil
@@ -479,7 +520,11 @@ func (s *setupScene) update(a *app) error {
 		}
 	}
 	u, set := a.u, a.set
-	if s.maxScroll > 0 && (a.in.dragY != 0 || a.in.wheel != 0 && s.viewport.Contains(a.in.x, a.in.y)) {
+	// A card's own scrolling takes the wheel and the drag before the page: the Rules strip, the seats, the Map body.
+	if !s.test && s.game.scrolled(a) || s.seatScroll.Update(a.ui()) || s.pickScroll.Update(a.ui()) {
+		s.menu, s.lv = -1, ui.Rect{}
+		s.layout(a)
+	} else if s.maxScroll > 0 && (a.in.dragY != 0 || a.in.wheel != 0 && s.viewport.Contains(a.in.x, a.in.y)) {
 		s.scroll -= a.in.wheel*(ui.CompactButtonTarget+8)*u + a.in.dragY
 		s.menu = -1
 		s.layout(a)
@@ -527,15 +572,6 @@ func (s *setupScene) update(a *app) error {
 	}
 
 	switch {
-	case !s.test && a.clicked(s.mapButton(a)):
-		a.next = newMaps(a, s, func(m *core.MapDefinition) {
-			a.set.Map = m
-			if m != nil {
-				a.set.Cols, a.set.Rows = m.Cols, m.Rows
-			}
-			s.changed(a)
-		})
-		return nil
 	case a.clicked(ui.CompactHit(s.back, u)):
 		s.leave(a)
 		return nil
@@ -554,14 +590,23 @@ func (s *setupScene) update(a *app) error {
 		s.setPlayers(a, set.Players-1)
 	case set.Players < core.MaxPlayers && a.clicked(setupStepHit(s.plusP, u)):
 		s.setPlayers(a, set.Players+1)
-	case set.Cols > core.MinSize && a.clicked(setupStepHit(s.minusCol, u)):
-		s.resize(a, -1, 0)
-	case set.Cols < core.MaxSize && a.clicked(setupStepHit(s.plusCol, u)):
-		s.resize(a, 1, 0)
-	case set.Rows > core.MinSize && a.clicked(setupStepHit(s.minusRow, u)):
-		s.resize(a, 0, -1)
-	case set.Rows < core.MaxSize && a.clicked(setupStepHit(s.plusRow, u)):
-		s.resize(a, 0, 1)
+	case s.updateGame(a):
+		return nil
+	case a.clicked(s.rulesHead):
+		s.fold(foldRules)
+		return nil
+	case a.clicked(s.playersHead) && (a.in.x < setupStepHit(s.minusP, u).X || a.in.x > setupStepHit(s.plusP, u).Right()): // not a greyed count button
+		s.fold(foldPlayers)
+		return nil
+	case s.test:
+	case a.clicked(ui.CompactHit(s.mapsB, u)):
+		s.pickMap(a)
+		return nil
+	case set.Map == nil && s.pickScroll.Viewport.Contains(a.in.x, a.in.y):
+		if c, r, ok := s.pick(a, set.Cols, set.Rows); ok {
+			set.Cols, set.Rows = c, r
+			s.changed(a)
+		}
 	}
 	// Count changes also move the controls. Do not reuse the old rectangles for this click.
 	if set.Players != s.lp {
@@ -570,18 +615,9 @@ func (s *setupScene) update(a *app) error {
 	}
 	for i := range set.Players {
 		switch {
-		case !a.clicked(s.seatHit[i]), s.room != nil && !s.room.editable(i):
+		case !s.seatScroll.Viewport.Contains(a.in.x, a.in.y), !a.clicked(s.seatHit[i]), s.room != nil && !s.room.editable(i):
 		case closing != i:
 			s.menu = i
-		}
-	}
-	for g, group := range s.presetPills {
-		for t, r := range group {
-			if !s.test && a.clicked(ui.CompactHit(r, u)) {
-				set.Map = nil
-				set.Cols, set.Rows = presetSize(g, t)
-				s.changed(a)
-			}
 		}
 	}
 	return nil
@@ -609,6 +645,14 @@ func (s *setupScene) draw(dst *ebiten.Image, a *app) {
 		s.contentOf, s.contentV = dst, v
 		s.content = dst.SubImage(image.Rect(int(v.X), int(v.Y), int(v.Right()), int(v.Bottom()))).(*ebiten.Image)
 	}
+	if !s.test {
+		off := whereOff()
+		if s.locked() {
+			off = 0xff
+		}
+		s.game.draw(s.content, a, a.set.where(), off, false, s.open == foldRules, true)
+		ui.DrawButton(s.content, a.ui(), s.game.join, "Join a room", "", ui.ButtonGround, !s.locked()) // always there; held while this player hosts
+	}
 	s.drawPlayers(s.content, a)
 	s.drawBoard(s.content, a)
 	if s.maxScroll > 0 {
@@ -624,6 +668,9 @@ func (s *setupScene) draw(dst *ebiten.Image, a *app) {
 	}
 	if s.room != nil && s.room.open {
 		s.room.drawDialog(dst, a)
+	}
+	if s.ask != nil {
+		s.ask.draw(dst, a)
 	}
 }
 
@@ -652,9 +699,15 @@ func (s *setupScene) drawPlayers(dst *ebiten.Image, a *app) {
 	sc, f, u, set := a.sc, &a.f, a.u, a.set
 	p := s.players
 	ui.FillRound(dst, p, 24*u, sc.Tile)
+	foldChevron(dst, a, p.Right()-s.blockPad, s.headY, s.open == foldPlayers)
 	ui.DrawText(dst, "Players", f.Heading, p.X+s.blockPad, s.headY, text.AlignStart, sc.Ink)
 	stepper(dst, a, set.Players, s.minPlayers(), core.MaxPlayers, s.minusP, s.plusP)
 
+	if s.open != foldPlayers {
+		return
+	}
+	s.seatScroll.DrawScrollbar(dst, a.ui())
+	dst = s.seatScroll.Clip(dst) // the seats scroll inside the card
 	for i := range set.Players {
 		d, t := s.seatDot[i], s.seatTy[i]
 		label, opt, state := s.seat(a, i)
@@ -699,55 +752,53 @@ func (s *setupScene) drawStart(dst *ebiten.Image, a *app) {
 	ui.DrawButton(dst, a.ui(), s.start, label, "", ui.ButtonInk, ok)
 }
 
+// drawBoard draws the Map block: the classic map as its preview and size picker, or a saved map's thumbnail. Its
+// heading names the map after its size, and its button opens the map picker.
 func (s *setupScene) drawBoard(dst *ebiten.Image, a *app) {
 	sc, u, set := a.sc, a.u, a.set
 	b := s.boardB
 	ui.FillRound(dst, b, 24*u, sc.Tile)
-	y := b.Y + s.blockPad + 14*u
-	ui.DrawText(dst, "Board", a.f.Heading, b.X+s.blockPad, y, text.AlignStart, sc.Ink)
-	g, tier := shapeOf(set.Cols, set.Rows), presetOf(set.Cols, set.Rows)
-	if s.dimC != set.Cols || s.dimR != set.Rows {
-		s.dimC, s.dimR, s.dims = set.Cols, set.Rows, ui.Numbers[set.Cols]+" × "+ui.Numbers[set.Rows]
+	y := b.Y + s.blockPad + 22*u
+	ui.DrawText(dst, "Map", a.f.Heading, b.X+s.blockPad, y, text.AlignStart, sc.Ink)
+	x := b.X + s.blockPad + ui.TextWidth("Map", a.f.Heading) + 12*u
+	room := s.mapsB.X - 12*u - x
+	if s.dimC != set.Cols || s.dimR != set.Rows || s.mapOf != set.Map || s.mapW != room {
+		s.dimC, s.dimR, s.mapOf, s.mapW = set.Cols, set.Rows, set.Map, room
+		s.dims = ui.Numbers[set.Cols] + " × " + ui.Numbers[set.Rows]
+		s.dimsW = ui.TextWidth(s.dims, a.f.Number)
 		s.sizeName = "Custom"
-		if tier >= 0 {
+		if tier := presetOf(set.Cols, set.Rows); tier >= 0 {
 			s.sizeName = boardSizes[tier].name
 		}
+		if set.Map != nil {
+			s.sizeName = cmp.Or(set.Map.Name, "Untitled map")
+		}
+		s.sizeName = ellipsize(s.sizeName, a.f.LabelBold, max(0, room-s.dimsW-10*u))
 	}
-	right := b.Right() - s.blockPad
-	ui.DrawText(dst, s.dims, a.f.Number, right, y, text.AlignEnd, sc.Ink)
-	ui.DrawText(dst, s.sizeName, a.f.LabelBold, right-ui.TextWidth(s.dims, a.f.Number)-10*u, y, text.AlignEnd, sc.Ink)
-
-	// The chosen board as a mini mat, with its shape's presets as dashed outlines from the same corner: graded sizes,
-	// like the nested lines of a sewing pattern.
+	// The size follows the heading where the button leaves it room: the dimensions first, then the map's name.
+	if s.dimsW <= room {
+		ui.DrawText(dst, s.dims, a.f.Number, x, y, text.AlignStart, sc.Dim)
+		if s.sizeName != "…" {
+			ui.DrawText(dst, s.sizeName, a.f.LabelBold, x+s.dimsW+10*u, y, text.AlignStart, sc.Dim)
+		}
+	}
+	ui.DrawButton(dst, a.ui(), s.mapsB, chooseMap, "", ui.ButtonGround, !s.test)
+	s.pickScroll.DrawScrollbar(dst, a.ui())
+	dst = s.pickScroll.Clip(dst) // the body scrolls inside the card
 	if s.previewPanel.H > 0 {
 		ui.FillRound(dst, s.previewPanel, 16*u, sc.Ground)
 	}
+	if set.Map != nil {
+		if s.showPreview {
+			drawMapThumb(dst, a, *set.Map, s.preview)
+		}
+		return
+	}
+	// The chosen board as a mini mat, with its shape's presets as dashed outlines from the same corner.
 	if s.showPreview {
-		pv := s.preview
-		pv.H = max(1, pv.H-48*u)
-		if set.Map != nil {
-			drawMapThumb(dst, a, *set.Map, pv)
-		} else {
-			drawPreview(dst, a, pv)
-		}
+		drawPreview(dst, a, s.preview)
 	}
-
-	for shape, group := range s.presetPills {
-		label := s.shapeLabels[shape]
-		ui.DrawText(dst, shapeNames[shape], a.f.LabelBold, label.X, label.Cy(), text.AlignStart, sc.Ink)
-		for t, r := range group {
-			style := ui.ButtonGround
-			if shape == g && t == tier {
-				style = ui.ButtonChosen
-			}
-			ui.DrawButton(dst, a.ui(), r, boardSizes[t].name, presetDims[shape][t], style, true)
-		}
-	}
-	ui.DrawText(dst, "Columns", a.f.LabelBold, s.colsCtl.X, s.colsCtl.Cy(), text.AlignStart, sc.Ink)
-	stepper(dst, a, set.Cols, core.MinSize, core.MaxSize, s.minusCol, s.plusCol)
-	ui.DrawText(dst, "Rows", a.f.LabelBold, s.rowsCtl.X, s.rowsCtl.Cy(), text.AlignStart, sc.Ink)
-	stepper(dst, a, set.Rows, core.MinSize, core.MaxSize, s.minusRow, s.plusRow)
-	ui.DrawButton(dst, a.ui(), s.mapButton(a), "Maps", "", ui.ButtonGround, !s.test)
+	s.sizePicker.draw(dst, a, set.Cols, set.Rows)
 }
 
 // drawPreview draws the chosen board as a mini mat centred in pv, with its shape's presets as dashed outlines from the
@@ -830,9 +881,77 @@ func (s *setupScene) drawMenu(dst *ebiten.Image, a *app) {
 
 // leave goes back Home, or from a room to its join page, closing the room.
 func (s *setupScene) leave(a *app) {
-	if s.room != nil {
+	if s.locked() { // closing the room keeps Setup, its seats and its board
 		s.room.leave(a)
+		s.setWhere(a, a.set.where())
 		return
 	}
-	a.next = newHome()
+	a.next = s.backTo
+	if a.next == nil {
+		a.next = newHome()
+	}
+}
+
+// locked reports a room that is open or opening, which holds the Play on tiles until it closes.
+func (s *setupScene) locked() bool { return s.room != nil && (s.room.net != nil || s.room.opening) }
+
+// whereOff are the Where options this build can't offer: Online without a server.
+func whereOff() uint8 {
+	if origin == "" {
+		return 1 << whereOnline
+	}
+	return 0
+}
+
+// setWhere moves Setup to This Device, or to a room not yet open on Same Wi-Fi or Online, and remembers it.
+func (s *setupScene) setWhere(a *app, w int) {
+	if a.set.Where != w {
+		a.set.Where = w
+		a.set.save()
+	}
+	s.room, s.menu, s.lv = nil, -1, ui.Rect{}
+	if w != whereDevice {
+		s.room = newRoomSetup(a, w == whereWifi).room
+	}
+}
+
+// updateGame runs the Rules card: Join a room, and the Play on tiles until a room opens. It reports a click it took.
+func (s *setupScene) updateGame(a *app) bool {
+	if s.test || s.locked() {
+		return false
+	}
+	if a.clicked(ui.CompactHit(s.game.join, a.u)) { // to the tab that matches Play on; Same Wi-Fi from This Device
+		lan := a.set.where() != whereOnline
+		if s.ask, s.askJoin = firewallAsk(a, lan), true; s.ask == nil {
+			a.next = newJoin(a, lan, "")
+		}
+		return true
+	}
+	w := s.game.hit(a, 0)
+	if w < 0 || w == a.set.where() || whereOff()&(1<<w) != 0 {
+		return false
+	}
+	if s.ask, s.askJoin = firewallAsk(a, w == whereWifi), false; s.ask == nil {
+		s.setWhere(a, w)
+	}
+	return true
+}
+
+// pickMap opens the map picker; the map it hands back goes to the room too.
+func (s *setupScene) pickMap(a *app) {
+	a.next = newMaps(a, s, func(m *core.MapDefinition) {
+		a.set.Map = m
+		if m != nil {
+			a.set.Cols, a.set.Rows = m.Cols, m.Rows
+		}
+		s.changed(a)
+	})
+}
+
+// fold opens card, closing the other one, or closes it when it was the open one.
+func (s *setupScene) fold(card int) {
+	if s.open == card {
+		card = foldNone
+	}
+	s.open, s.menu, s.lv = card, -1, ui.Rect{}
 }

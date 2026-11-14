@@ -342,9 +342,10 @@ func playRoom(t *testing.T, ctx context.Context, ha, ja *app, r testRoom, drop b
 // the Invite players dialog: the players' plus opens a seat in the hub, Private gives the room a code that joining then needs,
 // and handing a held seat to a bot from its menu lets its player go.
 func TestRoomSetup(t *testing.T) {
-	a := setupTestApp(1040, 640, 1, 2)
+	a := setupTestApp(1800, 1200, 1, 2) // tall enough to show the seats under the Rules card without scrolling
 	a.set.Cols, a.set.Rows, a.set.seats = 5, 5, []int{seatHuman, seatHuman}
 	s := newRoomSetup(a, true)
+	s.open = foldPlayers
 	s.room.private = false
 	click := func(at ui.Rect) {
 		t.Helper()
@@ -381,6 +382,8 @@ func TestRoomSetup(t *testing.T) {
 	s.room.layoutDialog(a)
 	click(s.room.confirmB) // Done
 
+	s.layout(a)
+	s.scroll = s.maxScroll // Players sits under the Rules card
 	s.layout(a)
 	click(s.plusP)
 	wait("the hub never grew a seat", func() bool { return len(n().lobby.Seats) == 3 })
@@ -448,6 +451,7 @@ func TestRoomSetup(t *testing.T) {
 	}
 	defer c.Close()
 	wait("the joiner never showed", func() bool { return s.room.held(int(w.Seat)) })
+	s.open, s.scroll = foldPlayers, 1e9 // the seats, shown and scrolled to: a Done tap may have folded them
 	s.layout(a)
 	click(s.seatHit[w.Seat])
 	if s.menu != int(w.Seat) || s.menuCount(a) != len(seatLabels)+2 {

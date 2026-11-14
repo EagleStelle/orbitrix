@@ -136,7 +136,8 @@ type mapEditor struct {
 	canvas, field, saveB, testB, toolB, dock, info, capacityB, previewB ui.Rect
 	paceR                                                               ui.Rect
 	control                                                             [7]ui.Rect
-	dims                                                                [4]ui.Rect
+	size                                                                sizePicker // the options panel's Map size
+	sizeScroll                                                          ui.Scroll
 	tabs                                                                [3]ui.Rect
 	palette                                                             []ui.Rect
 	paletteTools                                                        []int
@@ -901,29 +902,19 @@ func (e *mapEditor) updateOptions(a *app) error {
 		e.more = false
 		return nil
 	}
-	for i, r := range e.dims {
-		if !a.clicked(r) {
-			continue
-		}
-		c, rows := e.m.Cols, e.m.Rows
-		switch i {
-		case 0:
-			c--
-		case 1:
-			c++
-		case 2:
-			rows--
-		case 3:
-			rows++
-		}
-		if c >= 3 && c <= 40 && rows >= 3 && rows <= 40 {
-			e.checkpoint()
-			e.m = resizeMap(e.m, c, rows)
-			e.pair = -1
-			e.panX, e.panY = 0, 0
-			e.changed()
-		}
+	if e.sizeScroll.Update(a.ui()) {
+		e.layout(a)
+	}
+	if !e.sizeScroll.Viewport.Contains(a.in.x, a.in.y) {
 		return nil
+	}
+	if c, rows, ok := e.size.pick(a, e.m.Cols, e.m.Rows); ok {
+		e.checkpoint()
+		e.m = resizeMap(e.m, c, rows)
+		e.pair = -1
+		e.panX, e.panY = 0, 0
+		e.changed()
+		e.layout(a)
 	}
 	return nil
 }
@@ -958,7 +949,7 @@ func newMapTestSetup(a *app, back scene, m core.MapDefinition) *mapTestSetup {
 	m = m.Clone()
 	s.Map = &m
 	s.Cols, s.Rows = m.Cols, m.Rows
-	setup := newSetup()
+	setup := &setupScene{menu: -1} // always on this device, whatever Setup last played
 	setup.test = true
 	return &mapTestSetup{setup: setup, settings: s, back: back}
 }

@@ -269,23 +269,20 @@ func TestHomeLayout(t *testing.T) {
 				"wordmark": {X: s.x, Y: s.logoY - s.logo.Size/2, W: s.w, H: s.logo.Size},
 				"dots":     {X: s.x, Y: s.dotsY - s.dotR, W: s.w, H: 2 * s.dotR},
 				"play":     s.playRect(),
-				"name":     s.plaque,
+				"name":     s.bar,
 				"mat":      s.demo.b.Bounds(),
-			}
-			// The ways to play take the place of PLAY and its buttons, under the name.
-			modes := map[string]ui.Rect{"wordmark": parts["wordmark"], "dots": parts["dots"], "mat": parts["mat"]}
-			if !s.plaqueOff {
-				modes["name"] = s.plaque
-			}
-			for _, it := range s.modes {
-				modes[it.label] = it.r
 			}
 			for _, it := range s.items {
 				parts[it.label] = it.r
+				if it.r.Right() > s.x+s.w+0.001 || it.r.X < s.x {
+					t.Fatalf("%s leaves the column", it.label)
+				}
+			}
+			if s.bar.H != 2*s.playR || s.playX-s.playR != s.x || s.bar.X <= s.playX+s.playR || math.Abs(s.bar.Right()-(s.x+s.w)) > 0.001 {
+				t.Fatal("the play button, then the name bar, must share one row as wide as the column, at one height")
 			}
 			t.Run(fmt.Sprintf("%.0fx%.0f/u%g", size[0], size[1], u), func(t *testing.T) {
 				checkParts(t, v, parts)
-				checkParts(t, v, modes)
 			})
 		}
 	}
@@ -305,7 +302,7 @@ func TestWantsLandscape(t *testing.T) {
 			t.Errorf("%dx%d game: wantsLandscape != %v", tc.cols, tc.rows, tc.want)
 		}
 	}
-	if wantsLandscape(newHome()) || wantsLandscape(newSetup()) || wantsLandscape(newSettingsMenu(newHome())) {
+	if wantsLandscape(newHome()) || wantsLandscape(newSetup(a)) || wantsLandscape(newSettingsMenu(newHome())) {
 		t.Error("only a game rotates the screen")
 	}
 }

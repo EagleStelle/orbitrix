@@ -2,11 +2,13 @@ package client
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"orbitrix/client/internal/mapstore"
+	"orbitrix/client/internal/ui"
 	"orbitrix/core"
 )
 
@@ -161,5 +163,55 @@ func TestMapCopyNameKeepsUTF8Bound(t *testing.T) {
 	name := mapCopyName(strings.Repeat("界", 21))
 	if len(name) > 64 || !utf8.ValidString(name) || !strings.HasSuffix(name, " (copy)") {
 		t.Fatalf("bad copy name %q", name)
+	}
+}
+
+// The bar offers each selection only what it can do, on every screen size without overlap, and Use hands the
+// classic map back as no map at all.
+func TestMapsBar(t *testing.T) {
+	store := mapstore.Load(
+		func(string) ([]byte, error) { return []byte(`{"version":1,"maps":[]}`), nil },
+		func(string, []byte) error { return nil },
+	)
+	if err := store.Put(-1, core.NewMap(5, 5)); err != nil {
+		t.Fatal(err)
+	}
+	draft := core.NewMap(4, 4)
+	for _, size := range layoutSizes {
+		a := setupTestApp(size[0], size[1], 1, 2)
+		picked, called := &draft, false
+		s := &mapsScene{back: newHome(), selected: selClassic, store: store, draft: &draft,
+			pick: func(m *core.MapDefinition) { picked, called = m, true }}
+		s.refresh()
+		s.layout(a)
+		for i, r := range s.bar {
+			if !containsRect(a.safe(), r) || r.W != r.H || r.W < ui.CompactButtonHeight || overlaps(r, s.view.Viewport) {
+				t.Fatalf("%v: bar button %d %+v leaves the screen, is not round, or covers the grid", size, i, r)
+			}
+			for j := range i {
+				if overlaps(r, s.bar[j]) {
+					t.Fatalf("%v: bar buttons %d and %d overlap", size, j, i)
+				}
+			}
+		}
+		want := map[int][]int{
+			selNone:    {barNew, barImport},
+			selClassic: {barNew, barImport, barUse},
+			selDraft:   {barNew, barImport, barEdit, barDelete},
+			0:          {barNew, barImport, barEdit, barCopy, barShare, barExport, barDelete, barUse},
+		}
+		for sel, on := range want {
+			s.selected = sel
+			for i := range s.bar {
+				if s.can(a, i) != slices.Contains(on, i) {
+					t.Fatalf("selection %d: bar button %d enabled %v", sel, i, s.can(a, i))
+				}
+			}
+		}
+		s.selected = selClassic
+		a.in = input{x: s.bar[barUse].Cx(), y: s.bar[barUse].Cy(), clicked: true}
+		if err := s.update(a); err != nil || !called || picked != nil || a.next != s.back {
+			t.Fatalf("%v: Use on the classic map must hand back no map and return", size)
+		}
 	}
 }

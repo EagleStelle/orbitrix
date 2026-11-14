@@ -178,7 +178,10 @@ func TestEditorResizeValidationAndHistoryAtSizeLimits(t *testing.T) {
 			checkEditorValidation(t, a, e)
 			defer func() { e.mapImage.Deallocate() }()
 			for _, action := range []int{1, 3, 0, 2, 0, 2, 1, 3} {
-				a.in = input{x: e.dims[action].Cx(), y: e.dims[action].Cy(), clicked: true}
+				e.sizeScroll.Offset = e.sizeScroll.MaxScroll() // the steppers sit under the presets
+				e.layout(a)
+				step := [4]ui.Rect{e.size.minusCol, e.size.plusCol, e.size.minusRow, e.size.plusRow}[action]
+				a.in = input{x: step.Cx(), y: step.Cy(), clicked: true}
 				if err := e.update(a); err != nil {
 					t.Fatal(err)
 				}

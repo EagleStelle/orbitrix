@@ -1,6 +1,7 @@
 package client
 
 import (
+	"runtime"
 	"strings"
 
 	"orbitrix/client/internal/ui"
@@ -71,4 +72,13 @@ func wrap(s string, face text.Face, w float64) []string {
 		line = word
 	}
 	return append(lines, line)
+}
+
+// firewallAsk is the warning owed before this device first listens on the network (lan) on Windows, or nil: not on
+// Windows, not on the network, or already given. Its caller shows it and sets Firewall on Continue.
+func firewallAsk(a *app, lan bool) *askDialog {
+	if lan && runtime.GOOS == "windows" && !a.set.Firewall {
+		return &askDialog{text: firewallText, yes: "Continue"}
+	}
+	return nil
 }
