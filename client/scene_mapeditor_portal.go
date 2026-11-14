@@ -10,13 +10,13 @@ func (e *mapEditor) refreshPortal() {
 		return
 	}
 	e.portalAllowed = e.m.AvailablePortalAxes(e.portalCell)
-	switch e.m.InitialPortalAxes()[e.portalCell] {
+	// The saved setting shows while play can ever use it; only a permanently shut axis forces the other.
+	e.portalMode = e.m.Cells[e.portalCell].PortalMode
+	switch e.portalAllowed {
 	case core.HorizontalAxis:
 		e.portalMode = core.PortalHorizontal
 	case core.VerticalAxis:
 		e.portalMode = core.PortalVertical
-	default:
-		e.portalMode = core.PortalBoth
 	}
 }
 

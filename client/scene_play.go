@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -25,26 +26,22 @@ import (
 // AI moves wait aiDelayMin..aiDelayMax ticks (300–600 ms) so people can follow them. Presentation only: the
 // move itself depends on the position, strategy, seed and budget alone.
 const (
-	aiDelayMin   = 18
-	aiDelayMax   = 36
-	calloutHold  = 90  // ticks a finished chain's callout stays up
-	wipeTicks    = 40  // the winner's ink flooding the screen
-	confirmTicks = 180 // a pause button that throws the game away waits this long for its second tap
-	flashTicks   = 30  // a tapped cell the player can't use flashes its outline
+	aiDelayMin  = 18
+	aiDelayMax  = 36
+	calloutHold = 90 // ticks a finished chain's callout stays up
+	wipeTicks   = 40 // the winner's ink flooding the screen
+	flashTicks  = 30 // a tapped cell the player can't use flashes its outline
 )
 
 // The pause menu, in order.
-var pauseItems = [...]string{"Resume", "Restart", "Settings", "Main menu", "Save map"}
-
-// pauseConfirm is what a button that waits for its second tap reads.
-var pauseConfirm = [len(pauseItems)]string{pauseRestart: "Restart?"}
+var pauseItems = [...]string{"Resume", "Restart", "Save map", "Settings", "Main menu"}
 
 const (
 	pauseResume = iota
 	pauseRestart
+	pauseSaveMap
 	pauseSettings
 	pauseMainMenu
-	pauseSaveMap
 )
 
 // playScene is a local game with a landscape turn wheel or a portrait turn dot, a scrolling seat table,
@@ -79,9 +76,8 @@ type playScene struct {
 	biggest          int // longest chain this game, in waves
 
 	paused   bool
-	confirm  int // pause button waiting for its second tap, or -1
-	confirmT int
-	flash    int // cell flashing after a tap the mover can't play there
+	ask      *askDialog // Restart throws the game away, so it asks first, in place of the pause menu
+	flash    int        // cell flashing after a tap the mover can't play there
 	flashT   int
 	over     bool
 	overT    int // ticks since the game ended
@@ -143,21 +139,21 @@ func newPlay(a *app, cols, rows int, seats []int) (*playScene, error) {
 }
 
 // The pause menu of a local game, and of an online one, where only the host could restart and nobody can stop the
-// clock for everyone.
+// clock for everyone. What acts on the game comes first and leaving it last; Save map shows only on a custom map.
 var (
-	pauseLocal  = []int{pauseResume, pauseRestart, pauseSettings, pauseMainMenu}
-	pauseOnline = []int{pauseResume, pauseSettings, pauseMainMenu}
+	pauseLocal  = []int{pauseResume, pauseRestart, pauseSaveMap, pauseSettings, pauseMainMenu}
+	pauseOnline = []int{pauseResume, pauseSaveMap, pauseSettings, pauseMainMenu}
 )
 
 // newPlayOn shows game g, which may be under way.
 func newPlayOn(a *app, g *core.Game, seats []int, labels []string, items []int) *playScene {
 	p := &playScene{
 		cols: g.Geo.Cols, rows: g.Geo.Rows, seats: append([]int(nil), seats...), labels: labels, items: items, game: g,
-		b: boardview.New(g), seed: a.rng.Uint64(), scratch: g.Clone(), aiMove: make(chan int, 1), confirm: -1, pace: -1,
+		b: boardview.New(g), seed: a.rng.Uint64(), scratch: g.Clone(), aiMove: make(chan int, 1), pace: -1,
 		goneP: -1, goneN: -1,
 	}
-	if g.Map != nil {
-		p.items = append(append([]int(nil), items...), pauseSaveMap)
+	if g.Map == nil {
+		p.items = slices.DeleteFunc(slices.Clone(items), func(i int) bool { return i == pauseSaveMap })
 	}
 	// Every orb of a settled board sits in a cell below its capacity, and a player can't own more than all of them.
 	most := 0
@@ -361,28 +357,29 @@ func (p *playScene) advance(a *app) {
 // updatePause runs the pause menu. A local game stands still behind it: no animation ticks, and an AI move that is
 // ready waits. An online game goes on.
 func (p *playScene) updatePause(a *app) error {
-	if p.confirmT--; p.confirmT <= 0 {
-		p.confirm = -1
+	if p.ask != nil {
+		yes, back := p.ask.update(a)
+		if yes || back {
+			p.ask = nil
+		}
+		if yes {
+			p.restartGame(a)
+		}
+		return nil
 	}
 	if a.in.esc {
-		p.paused, p.confirm = false, -1
+		p.paused = false
 		return nil
 	}
 	for k, i := range p.items {
 		if !a.clicked(p.pauseBtn[k]) {
 			continue
 		}
-		// Restart throws the game away, so it asks for a second tap.
-		if i == pauseRestart && p.confirm != i {
-			p.confirm, p.confirmT = i, confirmTicks
-			return nil
-		}
-		p.confirm = -1
 		switch i {
 		case pauseResume:
 			p.paused = false
 		case pauseRestart:
-			p.restartGame(a)
+			p.ask = &askDialog{text: "Restart this game?", yes: "Restart"}
 		case pauseSettings:
 			a.next = newSettingsMenu(p)
 		case pauseMainMenu:
@@ -398,7 +395,7 @@ func (p *playScene) updatePause(a *app) error {
 		return nil
 	}
 	if a.in.clicked && !p.pausePanel.Contains(a.in.x, a.in.y) {
-		p.paused, p.confirm = false, -1
+		p.paused = false
 	}
 	return nil
 }
@@ -949,6 +946,10 @@ func (p *playScene) renderSpinner(a *app) {
 
 // drawPause dims the game and shows the pause menu.
 func (p *playScene) drawPause(dst *ebiten.Image, a *app) {
+	if p.ask != nil {
+		p.ask.draw(dst, a)
+		return
+	}
 	sc, u := a.sc, a.u
 	ui.FillRound(dst, ui.Rect{X: 0, Y: 0, W: a.w, H: a.h}, 0, ui.WithAlpha(sc.Ground, 0.8))
 	ui.FillRound(dst, p.pausePanel, 28*u, sc.Tile)
@@ -959,14 +960,11 @@ func (p *playScene) drawPause(dst *ebiten.Image, a *app) {
 	ui.DrawText(dst, title, a.f.Title, p.pausePanel.Cx(), p.pausePanel.Y+28*u+20*u, text.AlignCenter, sc.Ink)
 	for k, i := range p.items {
 		r := p.pauseBtn[k]
-		style, label := ui.ButtonGround, pauseItems[i]
-		switch {
-		case p.confirm == i:
-			style, label = ui.ButtonInk, pauseConfirm[i]
-		case i == pauseResume:
+		style := ui.ButtonGround
+		if i == pauseResume {
 			style = ui.ButtonInk
 		}
-		ui.DrawButton(dst, a.ui(), r, label, "", style, true)
+		ui.DrawButton(dst, a.ui(), r, pauseItems[i], "", style, true)
 	}
 }
 

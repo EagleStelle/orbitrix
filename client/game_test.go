@@ -111,8 +111,8 @@ func TestOpaqueResultsSkipBoard(t *testing.T) {
 	}
 }
 
-// TestPauseConfirm checks that Restart and Main menu need a second tap within the confirm window.
-func TestPauseConfirm(t *testing.T) {
+// TestPauseRestart checks that Restart asks in its own dialog: Back returns to the pause menu, Restart restarts.
+func TestPauseRestart(t *testing.T) {
 	a := setupTestApp(1040, 640, 1, 2)
 	p, err := newPlay(a, 9, 9, a.set.seats)
 	if err != nil {
@@ -128,19 +128,23 @@ func TestPauseConfirm(t *testing.T) {
 		}
 		a.in = input{x: offScreen, y: offScreen}
 	}
-	tap(pauseRestart)
-	if a.next != nil || p.confirm != pauseRestart {
-		t.Fatal("the first tap on Restart must only ask")
-	}
-	for range confirmTicks {
+	answer := func(i int) {
+		tap(pauseRestart)
+		if a.next != nil || p.ask == nil {
+			t.Fatal("Restart must ask first")
+		}
+		p.ask.layout(a)
+		r := p.ask.b[i]
+		a.in = input{x: r.Cx(), y: r.Cy(), clicked: true}
 		_ = p.updatePause(a)
+		a.in = input{x: offScreen, y: offScreen}
 	}
-	tap(pauseRestart)
-	if a.next != nil {
-		t.Fatal("a tap after the confirm window must ask again")
+	answer(1)
+	if a.next != nil || p.ask != nil || !p.paused {
+		t.Fatal("Back must return to the pause menu")
 	}
-	tap(pauseRestart)
+	answer(0)
 	if _, ok := a.next.(*playScene); !ok {
-		t.Fatal("the second tap must restart")
+		t.Fatal("the answer must restart")
 	}
 }

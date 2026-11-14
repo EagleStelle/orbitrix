@@ -36,7 +36,7 @@ The board fills the screen beside a rail with Menu, a turn wheel showing each pl
 
 Bots wait 300 to 600 ms before moving, so you can follow them. Long chains play back faster and faster; Space or a tap finishes the playback at once.
 
-Menu (or Esc) opens Resume, Restart, Settings and Main menu. Restart asks for a second tap. Online, the menu has Resume, Settings and Main menu, and the game carries on behind it.
+Menu (or Esc) opens Resume, Restart, Save map (on a custom map), Settings and Main menu. Restart asks before it throws the game away. Online, the menu has no Restart, and the game carries on behind it.
 
 When a player wins, their colour floods the screen with the move count and the biggest chain, then Play again, Main menu and Exit.
 

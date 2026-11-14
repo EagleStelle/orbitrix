@@ -265,7 +265,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		p.settle()
 		p.paused, p.overT = c.screen == "pause", wipeTicks+60
 		if c.hover == "confirm" {
-			p.confirm, p.confirmT = pauseRestart, confirmTicks
+			p.ask = &askDialog{text: "Restart this game?", yes: "Restart"}
 		}
 		if c.hover == "flash" {
 			p.paused = false

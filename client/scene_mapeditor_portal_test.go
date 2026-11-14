@@ -92,5 +92,10 @@ func TestEditorPortalDirectionControls(t *testing.T) {
 		if e.portalOpen {
 			t.Fatal("a forced direction must not allow switching")
 		}
+		e.m.Cells[39].Terrain = core.BreakableWall
+		e.changed()
+		if e.portalAllowed != core.BothAxes || e.portalMode != core.PortalHorizontal || !e.setPortalMode(core.PortalBoth) {
+			t.Fatal("a side that can open must leave every direction choosable")
+		}
 	}
 }

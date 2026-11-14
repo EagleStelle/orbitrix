@@ -222,3 +222,94 @@ func TestPortalAxisReopensAfterDestruction(t *testing.T) {
 		t.Fatal("destroyed wall did not reopen the axis in an isolated topology")
 	}
 }
+
+// A side play can open only closes its axis until it does: the editor still offers every direction, and the saved
+// setting comes back once the side opens.
+func TestPortalAxesFollowDynamicSides(t *testing.T) {
+	for name, edit := range map[string]func(*MapDefinition){
+		"Breakable Wall": func(m *MapDefinition) { m.Cells[39].Terrain = BreakableWall },
+		"closed Door": func(m *MapDefinition) {
+			m.Cells[39].Circuit, m.Cells[39].Group, m.Cells[0].Circuit, m.Cells[0].Group = Door, 1, Latch, 1
+		},
+		"closed Gate":       func(m *MapDefinition) { m.Edges = []MapEdge{{A: 32, B: 39, Kind: Gate, Group: 1}} },
+		"Breakable Barrier": func(m *MapDefinition) { m.Edges = []MapEdge{{A: 32, B: 39, Kind: BreakableBarrier}} },
+		"Hole and a Box":    func(m *MapDefinition) { m.Cells[39].Terrain, m.Cells[0].Feature = Hole, Box },
+	} {
+		m := portalMap()
+		edit(&m)
+		if got := m.InitialPortalAxes()[16]; got != VerticalAxis {
+			t.Errorf("%s: starts with axes %v", name, got)
+		}
+		if got := m.AvailablePortalAxes(16); got != BothAxes {
+			t.Errorf("%s: editor offers %v", name, got)
+		}
+	}
+	m := portalMap()
+	m.Cells[39].Terrain = Hole
+	if m.AvailablePortalAxes(16) != VerticalAxis {
+		t.Fatal("a Hole no Box can fill must lock the pair")
+	}
+
+	// A Vertical pair with a vertical side shut runs horizontally only until that side opens.
+	m = portalMap()
+	m.Cells[33].Terrain = BreakableWall
+	m.Cells[16].PortalMode, m.Cells[32].PortalMode = PortalVertical, PortalVertical
+	g, err := NewGameWithMap(m, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Geo.PortalAxes[16] != HorizontalAxis {
+		t.Fatalf("blocked Vertical pair has axes %v", g.Geo.PortalAxes[16])
+	}
+	g.ReplayTerrain([]TerrainEvent{{Cell: 33, Durability: 0}})
+	if g.Geo.PortalAxes[16] != VerticalAxis {
+		t.Fatalf("opened Vertical pair has axes %v", g.Geo.PortalAxes[16])
+	}
+
+	// A Box filling the Hole beside a Portal reopens that axis.
+	m = portalMap()
+	m.Cells[39].Terrain, m.Cells[46].Feature = Hole, Box
+	if g, err = NewGameWithMap(m, 2); err != nil {
+		t.Fatal(err)
+	}
+	g.ReplayTerrain([]TerrainEvent{{Cell: 46, Box: true, To: 39, Shove: -1}})
+	if g.Geo.PortalAxes[16] != BothAxes {
+		t.Fatalf("filled Hole left axes %v", g.Geo.PortalAxes[16])
+	}
+}
+
+// A Spring facing a Portal, or a Box beside one, keeps that axis open: the Spring sends what leaves the Portal back in.
+func TestPortalFacingSpringAndBox(t *testing.T) {
+	m := portalMap()
+	m.Cells[46].Terrain, m.Cells[39].Feature = Wall, Spring // right of Portal 32, facing it
+	m.Cells[15].Feature = Box                               // above Portal 16
+	if issues := m.Validate(); len(issues) != 0 {
+		t.Fatal(issues)
+	}
+	g, err := NewGameWithMap(m, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.InitialPortalAxes()[32] != BothAxes || g.Geo.PortalAxes[16] != BothAxes {
+		t.Fatalf("axes %v/%v", m.InitialPortalAxes()[32], g.Geo.PortalAxes[16])
+	}
+	// 9, left of Portal 16, reaches itself off the Spring; 38 beside the Spring reaches 9 through it and the pair.
+	if got := g.Geo.PortalPath(9, 1); g.Geo.Neighbours(9)[1] != 9 || !slices.Equal(got, []int16{16, 32, 39, 39, 32, 16}) {
+		t.Fatalf("bounce: neighbors %v, path %v", g.Geo.Neighbours(9), got)
+	}
+	if got := g.Geo.PortalPath(38, 3); g.Geo.Neighbours(38)[3] != 9 || !slices.Equal(got, []int16{39, 39, 32, 16}) {
+		t.Fatalf("launch: neighbors %v, path %v", g.Geo.Neighbours(38), got)
+	}
+	seedMapCell(g, 38, 0, 3)
+	seedMapCell(g, 48, 1, 1)
+	g.Played = 2
+	if _, err := g.Apply(38); err != nil || g.Count[9] != 1 || g.Owner[9] != 0 || g.Orbs[0] != 4 {
+		t.Fatalf("launch: 9 has %d, orbs %v, err %v", g.Count[9], g.Orbs, err)
+	}
+	// A Spring side-on to a Portal still closes that axis.
+	m = portalMap()
+	m.Cells[26].Terrain, m.Cells[33].Feature = Wall, Spring // under Portal 32, facing right
+	if m.SpringFacing(33) != 1 || m.InitialPortalAxes()[32] != HorizontalAxis {
+		t.Fatalf("side-on Spring: facing %d, axes %v", m.SpringFacing(33), m.InitialPortalAxes()[32])
+	}
+}

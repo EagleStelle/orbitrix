@@ -34,12 +34,26 @@ func (m MapDefinition) InitialPortalAxes() []PortalAxes {
 	return m.portalAxes(nil, nil, nil, 0)
 }
 
-// AvailablePortalAxes ignores this pair's setting so the editor can offer every usable direction.
+// AvailablePortalAxes ignores this pair's setting so the editor can offer every usable direction. It counts the exits
+// play can open (breaking, circuits, a Box filling a Hole): such a side only closes its axis until it opens.
 func (m MapDefinition) AvailablePortalAxes(cell int) PortalAxes {
 	if cell < 0 || cell >= len(m.Cells) || m.Cells[cell].Feature != Portal {
 		return BothAxes
 	}
-	return m.portalAxes(nil, nil, nil, m.Cells[cell].Group)[cell]
+	future := m.Clone()
+	boxes := slices.ContainsFunc(m.Cells, func(c MapCell) bool { return c.Feature == Box })
+	for i, c := range future.Cells {
+		switch {
+		case c.Circuit == Door:
+			future.Cells[i].InitiallyOpen = true
+		case c.Circuit == Hatch:
+			future.Cells[i].InitiallyOpen = false
+		case c.Terrain == BreakableWall, c.Terrain == Hole && boxes:
+			future.Cells[i].Terrain = Floor
+		}
+	}
+	future.Edges = slices.DeleteFunc(future.Edges, func(e MapEdge) bool { return e.Kind != Barrier })
+	return future.portalAxes(nil, nil, nil, m.Cells[cell].Group)[cell]
 }
 
 func (m MapDefinition) portalAxes(pairs []int16, blocked []uint8, floor func(int) bool, override uint8) []PortalAxes {
@@ -56,7 +70,7 @@ func (m MapDefinition) portalAxes(pairs []int16, blocked []uint8, floor func(int
 			next := m.neighbor(i, d)
 			open := next >= 0
 			if open && m.Cells[next].Feature == Spring {
-				open = false // a Spring closes the axis, as a Hole does
+				open = m.SpringFacing(next) == d^1 // one facing the Portal sends its orbs back in; any other closes the axis
 			} else if open && floor != nil {
 				open = floor(next)
 			} else if open {

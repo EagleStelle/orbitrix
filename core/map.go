@@ -221,7 +221,7 @@ func (m MapDefinition) SpringFacing(cell int) int {
 }
 
 // springFits reports whether a Spring has one Wall or Barrier behind it and, in front with no edge between, a cell that takes
-// orbs: Floor without a Portal, Spring or Door, a Hole or a Landfill.
+// orbs or passes them on: Floor without a Spring or Door, a Hole or a Landfill.
 func (m MapDefinition) springFits(cell int) bool {
 	facing := m.SpringFacing(cell)
 	front := -1
@@ -232,7 +232,7 @@ func (m MapDefinition) springFits(cell int) bool {
 		return false
 	}
 	f := m.Cells[front]
-	if !m.floor(front) && f.Terrain != Hole && f.Terrain != Landfill || f.Feature == Portal || f.Feature == Spring || f.Circuit == Door {
+	if !m.floor(front) && f.Terrain != Hole && f.Terrain != Landfill || f.Feature == Spring || f.Circuit == Door {
 		return false
 	}
 	return !slices.ContainsFunc(m.Edges, func(e MapEdge) bool { return e.A == cell && e.B == front || e.B == cell && e.A == front })
