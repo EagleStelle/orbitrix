@@ -38,7 +38,9 @@ Bots wait 300 to 600 ms before moving, so you can follow them. Long chains play 
 
 Menu (or Esc) opens Resume, Restart, Save map (on a custom map), Settings and Main menu. Restart asks before it throws the game away. Online, the menu has no Restart, and the game carries on behind it.
 
-When a player wins, their colour floods the screen with the move count and the biggest chain, then Play again, Main menu and Exit.
+When every human is out and only bots are left, the game asks whether to continue watching or leave.
+
+When a player wins, their colour floods the screen with the move count, the biggest chain and two boards of every player: Survival (who lasted longest) and Knockouts (how many players each put out), with gold, silver and bronze for the first three. Then Play again, Main menu and Exit.
 
 ### Keys
 

@@ -1,6 +1,7 @@
 package client
 
 import (
+	"cmp"
 	"runtime"
 	"strings"
 
@@ -15,9 +16,9 @@ import (
 const firewallText = "Windows will ask to let Orbitrix on your network. Allow it."
 
 // askDialog is a question in the pause menu's dialog style over a dimmed screen: its words, then the answer (ink)
-// above Back.
+// above Back, or above no where the other answer isn't a way back.
 type askDialog struct {
-	text, yes string
+	text, yes, no string
 
 	lv    ui.Rect // the safe area it was laid out for
 	d     ui.Rect
@@ -56,7 +57,7 @@ func (d *askDialog) draw(dst *ebiten.Image, a *app) {
 		ui.DrawText(dst, l, a.f.Heading, d.d.Cx(), d.d.Y+28*u+(float64(i)+0.5)*26*u, text.AlignCenter, sc.Ink)
 	}
 	ui.DrawButton(dst, a.ui(), d.b[0], d.yes, "", ui.ButtonInk, true)
-	ui.DrawButton(dst, a.ui(), d.b[1], "Back", "", ui.ButtonGround, true)
+	ui.DrawButton(dst, a.ui(), d.b[1], cmp.Or(d.no, "Back"), "", ui.ButtonGround, true)
 }
 
 // wrap breaks s into lines no wider than w in face.

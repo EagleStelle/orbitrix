@@ -110,7 +110,7 @@ func still(s scene) bool {
 	case *setupScene, *settingsMenu:
 		return true
 	case *playScene:
-		return s.paused && s.net == nil || s.over && !s.b.Playing && s.overT >= wipeTicks
+		return (s.paused || s.watch != nil) && s.net == nil || s.over && !s.b.Playing && s.overT >= wipeTicks
 	}
 	return false
 }

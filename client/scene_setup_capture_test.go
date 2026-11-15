@@ -258,12 +258,21 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 			g.err = err
 			return
 		}
+		rng := core.NewRNG(7)
 		for c.screen == "results" && !p.game.Over() {
-			_ = p.game.Simulate(p.game.LegalMoves(nil)[0])
+			mover, moves := p.game.Turn, p.game.LegalMoves(nil)
+			_ = p.game.Simulate(moves[rng.Intn(len(moves))])
+			p.tally(mover)
 		}
-		p.b = boardview.New(p.game)
+		p.b, p.biggest = boardview.New(p.game), 7
+		if c.hover == "watch" { // the human is out and the bots play on
+			p.game.Played, p.game.Orbs[0] = 1<<len(p.seats)-1, 0
+		}
 		p.settle()
-		p.paused, p.overT = c.screen == "pause", wipeTicks+60
+		p.paused, p.overT = c.screen == "pause" && c.hover != "watch", wipeTicks+60
+		if c.hover == "knockouts" {
+			p.tab = 1
+		}
 		if c.hover == "confirm" {
 			p.ask = &askDialog{text: "Restart this game?", yes: "Restart"}
 		}
@@ -382,6 +391,13 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "results-desktop", w: 1440, h: 900, players: 4, screen: "results"},
 		{name: "results-mobile", w: 390, h: 844, players: 4, screen: "results", dark: true},
 		{name: "results-landscape", w: 844, h: 390, players: 4, screen: "results"},
+		{name: "results-12-desktop", w: 1440, h: 900, players: 12, screen: "results", dark: true},
+		{name: "results-12-1040", w: 1040, h: 640, players: 12, screen: "results"},
+		{name: "results-12-mobile", w: 390, h: 844, players: 12, screen: "results", hover: "knockouts"},
+		{name: "results-12-landscape", w: 844, h: 390, players: 12, screen: "results", dark: true},
+		{name: "results-square", w: 640, h: 640, players: 6, screen: "results"},
+		{name: "watch-desktop", w: 1040, h: 640, players: 4, screen: "pause", hover: "watch"},
+		{name: "watch-mobile", w: 390, h: 844, players: 4, screen: "pause", hover: "watch", dark: true},
 		{name: "p6-home-modes", w: 1440, h: 900, players: 4, screen: "modes"},
 		{name: "fold-rules", w: 1440, h: 900, players: 4, screen: "modes", hover: "rules"},
 		{name: "fold-players-12", w: 1040, h: 640, players: 12, screen: "modes", hover: "players"},

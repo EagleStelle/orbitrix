@@ -77,12 +77,22 @@ type playScene struct {
 
 	paused   bool
 	ask      *askDialog // Restart throws the game away, so it asks first, in place of the pause menu
+	watch    *askDialog // every human is out: watch the bots finish, or leave
+	asked    bool       // watch is asked once a game
 	flash    int        // cell flashing after a tap the mover can't play there
 	flashT   int
 	over     bool
 	overT    int // ticks since the game ended
-	results  string
 	winTitle string
+
+	// The results' two boards, Survival then Knockouts. kills and outAt are kept as the game goes; the rest is set
+	// when it ends.
+	kills, outAt [core.MaxPlayers]int       // seats a player put out, and the move a seat went out on (0 while in)
+	stats        [2]string                  // moves, and the biggest chain from ×2
+	order        [2][core.MaxPlayers]int    // seats from first place down
+	word         [2][core.MaxPlayers]string // a seat's place ("1st") or knockouts ("3")
+	medal        [2][core.MaxPlayers]int    // a seat's index in ui.Medals, or past them for none
+	tab          int                        // the board an upright screen shows
 
 	// Online: the room this game is played in. Moves arrive from the host instead of being made here.
 	net      *session
@@ -117,10 +127,14 @@ type playScene struct {
 	pauseBtn                    [len(pauseItems)]ui.Rect
 	again, toHome               ui.Rect
 	exit                        ui.Rect
-	winFace                     *text.GoTextFace
+	winFace, statFace           *text.GoTextFace
 	winX                        float64
 	winTitleY, winDotY, winDotR float64
-	statsY                      float64
+	statsY, statLabelY, statDX  float64    // the stats' numbers, their labels, and each one's distance from winX
+	tabs, cards                 [2]ui.Rect // side by side there are no tabs; upright only cards[0], showing p.tab
+	rankView                    ui.Scroll  // the boards' rows
+	rankPitch, rankChipW        float64    // a row's height and its chip's width
+	rankIn                      float64    // a card's padding
 }
 
 func newPlay(a *app, cols, rows int, seats []int) (*playScene, error) {
@@ -172,14 +186,85 @@ func (p *playScene) settle() {
 	for i := range p.game.Players {
 		p.alive[i] = p.game.Alive(i)
 	}
+	p.tally(-1) // a seat skipped before it placed an orb, or already out in the host's snapshot
+	human, humanIn := false, false
+	for i, s := range p.seats {
+		human, humanIn = human || s == seatHuman, humanIn || s == seatHuman && p.alive[i]
+	}
+	if human && !humanIn && !p.asked && !p.game.Over() {
+		p.asked, p.watch = true, &askDialog{text: "Continue watching?", yes: "Continue", no: "Leave"}
+	}
 	if p.game.Over() && !p.over {
-		p.over, p.shown, p.paused = true, int(p.game.Winner), false
+		p.over, p.shown, p.paused, p.watch = true, int(p.game.Winner), false, nil
 		p.winTitle = p.labels[p.shown] + " wins!"
-		p.results = strconv.Itoa(p.game.Moves) + " moves"
-		if p.biggest >= 2 { // a chain only counts from two waves, as the callout does
-			p.results += ", biggest chain ×" + strconv.Itoa(p.biggest)
+		p.rank()
+	}
+}
+
+// tally notes the seats that went out since it last ran, and credits mover with each of them but itself. A seat
+// nobody put out (mover -1) is nobody's knockout.
+// shortcut: kept by this screen, so a player who joins or resyncs mid-game misses earlier knockouts; move the tally
+// into core's snapshot if that matters.
+func (p *playScene) tally(mover int) {
+	for i := range p.game.Players {
+		if p.outAt[i] == 0 && !p.game.Alive(i) {
+			p.outAt[i] = max(1, p.game.Moves)
+			if mover >= 0 && mover != i {
+				p.kills[mover]++
+			}
 		}
 	}
+}
+
+// rank sets out the results: the stats, and each board's order, words and medals. Seats level on a board share a
+// place, and the next place is skipped, as on a podium. No knockouts earns no medal.
+func (p *playScene) rank() {
+	n := p.game.Players
+	p.stats = [2]string{strconv.Itoa(p.game.Moves), ""}
+	if p.biggest >= 2 { // a chain only counts from two waves, as the callout does
+		p.stats[1] = "×" + strconv.Itoa(p.biggest)
+	}
+	score := [2]func(int) int{
+		func(i int) int { // the winner outlived everyone; the rest by when they went out
+			if i == int(p.game.Winner) {
+				return math.MaxInt
+			}
+			return p.outAt[i]
+		},
+		func(i int) int { return p.kills[i] },
+	}
+	for i := range n {
+		p.order[0][i] = i
+	}
+	for b, s := range score {
+		if b == 1 {
+			p.order[1] = p.order[0] // level on knockouts, whoever lasted longer comes first
+		}
+		slices.SortStableFunc(p.order[b][:n], func(x, y int) int { return s(y) - s(x) })
+		for i := range n {
+			place := 0
+			for j := range n {
+				if s(j) > s(i) {
+					place++
+				}
+			}
+			p.medal[b][i], p.word[b][i] = place, ordinal(place+1)
+			if b == 1 {
+				p.word[b][i] = strconv.Itoa(p.kills[i])
+				if p.kills[i] == 0 {
+					p.medal[b][i] = len(ui.Medals)
+				}
+			}
+		}
+	}
+}
+
+// ordinal is n as a place: 1st, 2nd, 3rd, then 4th to 12th, as far as the seats go.
+func ordinal(n int) string {
+	if n <= 3 {
+		return [...]string{"1st", "2nd", "3rd"}[n-1]
+	}
+	return strconv.Itoa(n) + "th"
 }
 
 func (p *playScene) move(a *app, cell int) {
@@ -191,6 +276,7 @@ func (p *playScene) move(a *app, cell int) {
 	}
 	p.b.State.Events = p.game.TerrainEvents
 	p.b.Start(cell, int8(mover), waves, p.game.ProducedAt, a.snd)
+	p.tally(mover)
 	p.biggest = max(p.biggest, len(waves))
 	if len(waves) >= 2 {
 		p.chainOwner, p.chainHold = mover, 0
@@ -245,6 +331,20 @@ func (p *playScene) update(a *app) error {
 		p.updateGone(a)
 		return nil
 	}
+	if p.watch != nil {
+		esc := a.in.esc // Esc keeps watching: leaving is a button, not a slip
+		switch yes, leave := p.watch.update(a); {
+		case yes || esc:
+			p.watch = nil
+		case leave:
+			p.leave(a)
+			a.next = newHome()
+		}
+		if p.net != nil && a.next == nil { // as behind the pause menu, an online game goes on
+			p.advance(a)
+		}
+		return nil
+	}
 	if a.in.esc {
 		switch {
 		case p.over && !p.b.Playing && p.net != nil: // leaving a finished room is a button, not a slip
@@ -266,6 +366,12 @@ func (p *playScene) update(a *app) error {
 		p.overT++
 		switch {
 		case p.resultsAlpha() == 0: // the buttons have not faded in yet
+		case a.clicked(ui.CompactHit(p.tabs[0], a.u)), a.clicked(ui.CompactHit(p.tabs[1], a.u)):
+			p.tab, p.rankView.Offset = 0, 0
+			if a.in.x >= p.tabs[1].X {
+				p.tab = 1
+			}
+		case p.rankView.Update(a.ui()):
 		case p.canAgain() && a.clicked(p.again):
 			p.restartGame(a)
 		case a.clicked(p.toHome):
@@ -719,65 +825,106 @@ func (p *playScene) layoutPause(a *app, v ui.Rect) {
 	}
 }
 
-// layoutResults places the result: one centred column on the winner's ink, the title as large as the screen allows.
-// On a screen too short for the column the dot shrinks and the buttons stand side by side.
+// layoutResults places the result on the winner's ink. On its side the screen splits: the winner's dot, title,
+// stats and buttons in a left column, the two boards as cards on the right. Upright, or too narrow for both
+// cards, it stacks: the winner, the stats, a tab for each board over one card, and the buttons along the bottom.
+// A screen too short tightens the gaps and shrinks the dot; after that the boards' rows scroll.
 func (p *playScene) layoutResults(a *app, v ui.Rect) {
 	u := a.u
-	bw, bh, gap := 220*u, ui.QuietButtonHeight*u, 12*u // the pause menu's button height and gap
-	size := max(56*u, min(120*u, v.W*0.075, v.H*0.13))
-	// Whoever wins, the title fits across the screen.
-	face, tw := ui.NewFace(ui.SrcDisplay, size, 800), 0.0
-	for _, l := range p.labels {
-		tw = max(tw, ui.TextWidth(l+" wins!", face))
+	pad, gap, bh, statSize := 32*u, 12*u, ui.QuietButtonHeight*u, 40*u
+	face := a.f.Body
+	p.rankIn, p.rankPitch = 20*u, 40*u
+	if p.compact {
+		pad, statSize, face, p.rankIn, p.rankPitch = 16*u, 28*u, a.f.Label, 16*u, 32*u
+		if a.portrait() {
+			p.rankPitch = 36 * u
+		}
 	}
-	if tw > v.W-32*u {
-		size *= (v.W - 32*u) / tw
+	p.statFace = ui.NewFace(ui.SrcDisplay, statSize, 700)
+	p.rankChipW = ui.ChipWidth(a.ui(), "12th", ui.ChipHeight*u)
+	// A row, as drawRanks sets it out: chip, 12 px, dot, 8 px, label. The rows stop 12 px short of their card, so the
+	// scrollbar stands inside its padding.
+	cardW := 2*p.rankIn + p.rankChipW + 12*u + 0.6*p.rankPitch + 8*u + widestLabel(p.labels, face)
+	listH := float64(len(p.seats)) * p.rankPitch
+	head := p.rankIn + 24*u + 12*u // a card's heading
+	btnH := bh
+	if p.canAgain() {
+		btnH += bh + gap
+	}
+
+	col := v.Inset(pad) // where the winner stands
+	// Side by side when both cards leave the winner a column, and whenever the screen is too short to stack.
+	split := !a.portrait() && (col.W-2*cardW-gap-pad >= 240*u || v.H < 560*u)
+	p.tabs, p.cards = [2]ui.Rect{}, [2]ui.Rect{}
+	if split {
+		cardW = min(cardW, (col.W-gap-pad-200*u)/2)
+		cardH := min(head+listH+p.rankIn, col.H)
+		x := col.Right() - 2*cardW - gap
+		for b := range p.cards {
+			p.cards[b] = ui.Rect{X: x + float64(b)*(cardW+gap), Y: v.Cy() - cardH/2, W: cardW, H: cardH}
+		}
+		p.rankView.Set(ui.Rect{X: x, Y: p.cards[0].Y + head, W: 2*cardW + gap - 12*u, H: cardH - head - p.rankIn}, listH)
+		col.W = x - pad - col.X
+	} else {
+		col.H -= btnH + pad/2 + 8*u
+	}
+
+	// Whoever wins, the title fits across its column.
+	size := max(56*u, min(120*u, v.W*0.075, v.H*0.13))
+	tw, fit := 0.0, ui.NewFace(ui.SrcDisplay, size, 800)
+	for _, l := range p.labels {
+		tw = max(tw, ui.TextWidth(l+" wins!", fit))
+	}
+	if tw > col.W {
+		size *= col.W / tw
 	}
 	p.winFace = ui.NewFace(ui.SrcDisplay, size, 800)
-	p.winX = v.Cx()
-	n := 2
-	if platform.CanExit {
-		n = 3
-	}
-	if !p.canAgain() {
-		n--
-	}
-	if v.W >= v.H {
-		bw = min(bw, (v.W-32*u-float64(n-1)*gap)/float64(n))
+	p.winX, p.statDX = col.Cx(), min(80*u, col.W/4)
+
+	// Down the column: dot, title, stats, then the buttons, or the tabs over their card.
+	titleH, statH, tabH := size*1.1, statSize+6*u+18*u, ui.CompactButtonTarget*u
+	tail := btnH
+	if !split {
+		tail = tabH + 8*u + 2*p.rankIn + listH
 	}
 	p.winDotR = max(44*u, min(80*u, v.H*0.08))
-	above := func() float64 { return 2*p.winDotR + 28*u + size*0.6 } // dot top to title centre
-	below := size*0.5 + 34*u + 44*u + float64(n)*bh + float64(n-1)*gap
-	p.winTitleY = v.Y + v.H/2 - 90*u
-	row := false
-	if p.winTitleY-above() < v.Y+16*u || p.winTitleY+below > v.Bottom()-16*u {
-		row = float64(n)*bw+float64(n-1)*gap <= v.W-32*u
-		if row {
-			below = size*0.5 + 34*u + 32*u + bh
+	gaps := [3]float64{28 * u, 28 * u, 40 * u}
+	rest := func() float64 { return gaps[0] + titleH + gaps[1] + statH + gaps[2] + tail }
+	if 2*p.winDotR+rest() > col.H {
+		gaps = [3]float64{10 * u, 16 * u, 18 * u}
+		p.winDotR = max(24*u, min(p.winDotR, (col.H-rest())/2))
+		if over := 2*p.winDotR + rest() - col.H; !split && over > 0 { // the card gives way last, and scrolls
+			tail = max(tabH+8*u+2*p.rankIn+p.rankPitch, tail-over)
 		}
-		p.winDotR = max(24*u, min(p.winDotR, (v.H-32*u-below-28*u-size*0.6)/2))
-		p.winTitleY = v.Y + (v.H-above()-below)/2 + above()
 	}
-	p.statsY = p.winTitleY + size*0.5 + 34*u
-	p.winDotY = p.winTitleY - size*0.6 - 28*u - p.winDotR
-	if row {
-		x := p.winX - (float64(n)*bw+float64(n-1)*gap)/2
-		p.again = ui.Rect{X: x, Y: p.statsY + 32*u, W: bw, H: bh}
-		p.toHome = ui.Rect{X: p.again.Right() + gap, Y: p.again.Y, W: bw, H: bh}
-		p.exit = ui.Rect{X: p.toHome.Right() + gap, Y: p.again.Y, W: bw, H: bh}
-		p.dropAgain()
-		return
-	}
-	p.again = ui.Rect{X: p.winX - bw/2, Y: p.statsY + 44*u, W: bw, H: bh}
-	p.toHome = ui.Rect{X: p.winX - bw/2, Y: p.again.Bottom() + gap, W: bw, H: bh}
-	p.exit = ui.Rect{X: p.winX - bw/2, Y: p.toHome.Bottom() + gap, W: bw, H: bh}
-	p.dropAgain()
-}
+	y := col.Y + (col.H-2*p.winDotR-rest())/2
+	p.winDotY = y + p.winDotR
+	y += 2*p.winDotR + gaps[0]
+	p.winTitleY = y + size*0.6
+	y += titleH + gaps[1]
+	p.statsY, p.statLabelY = y+statSize/2, y+statSize+6*u+9*u
+	y += statH + gaps[2]
 
-// dropAgain moves the other result buttons up into Play again's place when it isn't offered.
-func (p *playScene) dropAgain() {
-	if !p.canAgain() {
-		p.again, p.toHome, p.exit = ui.Rect{}, p.again, p.toHome
+	bw, by := min(280*u, col.W), y
+	if !split {
+		bw, by = min(col.W, 420*u), v.Bottom()-pad-btnH
+		x, half := p.winX-bw/2, (bw-8*u)/2
+		for b := range p.tabs {
+			p.tabs[b] = ui.Rect{X: x + float64(b)*(half+8*u), Y: y + (tabH-ui.CompactButtonHeight*u)/2, W: half, H: ui.CompactButtonHeight * u}
+		}
+		p.cards[0] = ui.Rect{X: x, Y: y + tabH + 8*u, W: bw, H: tail - tabH - 8*u}
+		p.rankView.Set(ui.Rect{X: x, Y: p.cards[0].Y + p.rankIn, W: bw - 12*u, H: p.cards[0].H - 2*p.rankIn}, listH)
+	}
+	// Play again across the top where it is offered; Main menu and Exit share the row under it.
+	p.again, p.toHome, p.exit = ui.Rect{}, ui.Rect{X: p.winX - bw/2, Y: by, W: bw, H: bh}, ui.Rect{}
+	if p.canAgain() {
+		p.again = p.toHome
+		p.toHome.Y += bh + gap
+	}
+	if platform.CanExit {
+		p.toHome.W = (bw - gap) / 2
+		p.exit = p.toHome
+		p.exit.X += p.toHome.W + gap
 	}
 }
 
@@ -812,6 +959,8 @@ func (p *playScene) draw(dst *ebiten.Image, a *app) {
 		p.drawPause(dst, a)
 	case p.goneP >= 0:
 		p.drawGone(dst, a)
+	case p.watch != nil:
+		p.watch.draw(dst, a)
 	}
 }
 
@@ -968,6 +1117,12 @@ func (p *playScene) drawPause(dst *ebiten.Image, a *app) {
 	}
 }
 
+// The results' stats and boards, by name.
+var (
+	statNames = [2]string{"Moves", "Biggest chain"}
+	rankNames = [2]string{"Survival", "Knockouts"}
+)
+
 // drawResults floods the screen with the winner's ink from the board's centre, then shows the result.
 func (p *playScene) drawResults(dst *ebiten.Image, a *app) {
 	sc, f, u := a.sc, &a.f, a.u
@@ -993,11 +1148,43 @@ func (p *playScene) drawResults(dst *ebiten.Image, a *app) {
 		ui.DrawMarkIn(dst, p.shown, x, p.winDotY, p.winDotR, w)
 	}
 	ui.DrawText(dst, p.winTitle, p.winFace, x, p.winTitleY, text.AlignCenter, ui.WithAlpha(ink, alpha))
-	face := f.Body
-	if ui.TextWidth(p.results, face) > p.lv.W-32*u { // a phone held upright
-		face = f.Label
+	// The stats: each number over its name, side by side around the column's centre.
+	n := 1
+	if p.stats[1] != "" {
+		n = 2
 	}
-	ui.DrawText(dst, p.results, face, x, p.statsY, text.AlignCenter, ui.WithAlpha(ink, alpha))
+	for i := range n {
+		sx := x + float64(2*i-n+1)*p.statDX
+		ui.DrawText(dst, p.stats[i], p.statFace, sx, p.statsY, text.AlignCenter, ui.WithAlpha(ink, alpha))
+		ui.DrawText(dst, statNames[i], f.Label, sx, p.statLabelY, text.AlignCenter, ui.WithAlpha(ink, alpha))
+	}
+
+	// The boards: mat-coloured cards, so the medals read on any winner's ink. The chosen tab is filled like its card.
+	tabbed := p.tabs[0].W > 0
+	for b, r := range p.tabs {
+		switch {
+		case !tabbed:
+		case b == p.tab:
+			ui.FillPill(dst, r, ui.WithAlpha(sc.Ground, alpha))
+			ui.PillLabel(dst, a.ui(), r, rankNames[b], "", ui.WithAlpha(sc.Ink, alpha))
+		default:
+			resultButton(dst, a, r, rankNames[b], w, ink, false, alpha)
+		}
+	}
+	rows := p.rankView.Clip(dst)
+	for b, c := range p.cards {
+		if c.W == 0 {
+			break
+		}
+		ui.FillRound(dst, c, 24*u, ui.WithAlpha(sc.Ground, alpha))
+		if tabbed {
+			b = p.tab
+		} else {
+			ui.DrawText(dst, rankNames[b], f.Heading, c.X+p.rankIn, c.Y+p.rankIn+12*u, text.AlignStart, ui.WithAlpha(sc.Ink, alpha))
+		}
+		p.drawRanks(rows, a, c, b, alpha)
+	}
+	p.rankView.DrawScrollbar(dst, a.ui())
 
 	if p.canAgain() {
 		resultButton(dst, a, p.again, "Play again", w, ink, true, alpha)
@@ -1005,6 +1192,40 @@ func (p *playScene) drawResults(dst *ebiten.Image, a *app) {
 	resultButton(dst, a, p.toHome, "Main menu", w, ink, false, alpha)
 	if platform.CanExit {
 		resultButton(dst, a, p.exit, "Exit", w, ink, false, alpha)
+	}
+}
+
+// drawRanks draws board b's rows on card: each seat's place or knockouts as a chip, a medal for the first three
+// and a dim outline for the rest, then its dot and label.
+func (p *playScene) drawRanks(dst *ebiten.Image, a *app, card ui.Rect, b int, alpha float64) {
+	sc, u, v := a.sc, a.u, p.rankView.Viewport
+	face := a.f.Body
+	if p.compact {
+		face = a.f.Label
+	}
+	ch, dr := ui.ChipHeight*u, 0.3*p.rankPitch
+	for k, i := range p.order[b][:len(p.seats)] {
+		cy := v.Y - p.rankView.Offset + (float64(k)+0.5)*p.rankPitch
+		if cy+p.rankPitch < v.Y || cy-p.rankPitch > v.Bottom() {
+			continue
+		}
+		chip := ui.Rect{X: card.X + p.rankIn, Y: cy - ch/2, W: p.rankChipW, H: ch}
+		wordInk := sc.Dim
+		if m := p.medal[b][i]; m < len(ui.Medals) {
+			ui.FillPill(dst, chip, ui.WithAlpha(ui.Medals[m], alpha))
+			wordInk = ui.InkOn(ui.Medals[m])
+		} else {
+			ui.StrokeRound(dst, chip, ch/2, 1.5*u, ui.WithAlpha(sc.Dim, alpha))
+		}
+		ui.DrawText(dst, p.word[b][i], a.f.SmallBold, chip.Cx(), cy, text.AlignCenter, ui.WithAlpha(wordInk, alpha))
+		x := chip.Right() + 12*u + dr
+		ui.FillCircle(dst, x, cy, dr, ui.WithAlpha(sc.Players[i], alpha))
+		if alpha == 1 && a.set.Marks {
+			ui.DrawMark(dst, i, x, cy, dr, sc.Players[i])
+		}
+		x += dr + 8*u
+		scale := min(1, (card.Right()-p.rankIn-x)/max(1, ui.TextWidth(p.labels[i], face)))
+		ui.DrawScaledText(dst, p.labels[i], face, x, cy, text.AlignStart, scale, ui.WithAlpha(sc.Ink, alpha))
 	}
 }
 

@@ -130,6 +130,14 @@ func TestPlayLayout(t *testing.T) {
 						checkParts(t, p.pausePanel, pause)
 						results := map[string]ui.Rect{"again": p.again, "home": p.toHome, "exit": p.exit,
 							"dot": {X: p.winX - p.winDotR, Y: p.winDotY - p.winDotR, W: 2 * p.winDotR, H: 2 * p.winDotR}}
+						for i, r := range append(p.tabs[:], p.cards[:]...) {
+							if r.W > 0 {
+								results[fmt.Sprint("board part ", i)] = r
+							}
+						}
+						if p.cards[0].W <= 0 || p.rankView.Viewport.H < p.rankPitch-0.01 {
+							t.Fatal("the boards must show at least one row")
+						}
 						checkParts(t, v, results)
 						for _, l := range p.labels {
 							if ui.TextWidth(l+" wins!", p.winFace) > v.W {

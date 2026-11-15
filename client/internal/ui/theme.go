@@ -78,6 +78,9 @@ var (
 	PureWhite = hex(0xFFFFFF)
 )
 
+// Medals are gold, silver and bronze, the same in both modes: the results' first three places.
+var Medals = [3]color.RGBA{hex(0xFFD700), hex(0xC0C0C0), hex(0xCD7F32)}
+
 // inkOn returns near-black or white, whichever contrasts more with c.
 func InkOn(c color.RGBA) color.RGBA {
 	l := Luminance(c)
