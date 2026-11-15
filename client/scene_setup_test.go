@@ -331,3 +331,63 @@ func TestSetupCardsScrollInside(t *testing.T) {
 		}
 	}
 }
+
+// On the classic map a die button stands left of Choose a map, clear of it and the heading; a tap rolls a playable
+// map at the size chosen. A roll keeps the die and the size picker, where a new size rolls again, and survives a
+// restart; a map from the picker ends it.
+func TestSetupRandomize(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for _, size := range [][2]float64{{1040, 640}, {390, 844}, {844, 390}, {320, 568}} {
+		a, s := setupTestApp(size[0], size[1], 1, 2), &setupScene{menu: -1, open: foldPlayers}
+		a.set.Cols, a.set.Rows = 7, 10
+		tap := func(r ui.Rect) {
+			t.Helper()
+			a.in = input{x: r.Cx(), y: r.Cy(), clicked: true}
+			if err := s.update(a); err != nil {
+				t.Fatal(err)
+			}
+			s.lv = ui.Rect{}
+			s.layout(a)
+		}
+		rolled := func(cols, rows int) *core.MapDefinition {
+			t.Helper()
+			m := a.set.Map
+			if m == nil || !a.set.isRolled() || m.Cols != cols || m.Rows != rows || len(m.Validate()) != 0 {
+				t.Fatalf("%v: no playable %d×%d roll in use", size, cols, rows)
+			}
+			return m
+		}
+		s.layout(a)
+		s.scroll = s.maxScroll
+		s.layout(a)
+		r := s.randomB
+		heading := s.boardB.X + s.blockPad + ui.TextWidth("Map", a.f.Heading)
+		if r.W == 0 || r.W != r.H || overlaps(r, s.mapsB) || r.X < heading {
+			t.Fatalf("%v: die button %+v is missing, not round, or covers its neighbors", size, r)
+		}
+		tap(r)
+		first := rolled(7, 10)
+		if s.randomB != r {
+			t.Fatalf("%v: the die button moved or left after a roll", size)
+		}
+		if tap(r); rolled(7, 10) == first {
+			t.Fatalf("%v: a second tap did not roll again", size)
+		}
+		s.pickScroll.Reveal(ui.CompactHit(s.presetPills[shapeBalanced][0], a.u))
+		s.lv = ui.Rect{}
+		s.layout(a)
+		tap(s.presetPills[shapeBalanced][0])
+		cols, rows := presetSize(shapeBalanced, 0)
+		rolled(cols, rows)
+		if again := loadSettings(&a.rng); !again.isRolled() || again.Map.Cols != cols {
+			t.Fatalf("%v: the roll did not survive a restart", size)
+		}
+		saved := core.NewMap(6, 6)
+		a.set.Map = &saved
+		s.lv = ui.Rect{}
+		if s.layout(a); a.set.isRolled() || s.randomB.W != 0 {
+			t.Fatalf("%v: a map from the picker kept the die button", size)
+		}
+	}
+}

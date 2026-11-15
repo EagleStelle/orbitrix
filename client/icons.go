@@ -14,6 +14,7 @@ import (
 const (
 	iconNew    = iota // a plus
 	iconImport        // an arrow into a tray
+	iconRandom        // a die showing three: Setup's Randomize
 	iconEdit          // a pencil
 	iconCopy          // two sheets
 	iconShare         // three joined points
@@ -73,6 +74,11 @@ func drawIcon(dst *ebiten.Image, icon int, x, y, u float64, ink, ground color.RG
 		line(-4, -5, 0, -9)
 		line(4, -5, 0, -9)
 		tray()
+	case iconRandom:
+		box(-9, -9, 18)
+		for _, p := range [3]float64{-4.5, 0, 4.5} {
+			ui.FillCircle(dst, x+p*u, y-p*u, 2*u, ink)
+		}
 	case iconEdit:
 		ui.Line(dst, x-3*u, y+3*u, x+6*u, y-6*u, 5.5*u, ink) // the shaft
 		line(-8.5, 8.5, -7, 7)                               // its point

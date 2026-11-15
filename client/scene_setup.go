@@ -155,6 +155,7 @@ type setupScene struct {
 	sizePicker
 	game                   gameBlock
 	mapsB                  ui.Rect // the Map heading's button, which opens the map picker
+	randomB                ui.Rect // left of it on the classic map or a roll: rolls a random map at the size chosen
 	lmap                   bool
 	lstrip                 float64    // the Rules strip's offset when laid out
 	seatScroll, pickScroll ui.Scroll  // the seats and the Map body, each scrolling inside its card
@@ -194,7 +195,7 @@ func (s *setupScene) layout(a *app) {
 	if s.room != nil && s.room.net != nil {
 		ln = s.room.net.lobbyN
 	}
-	saved := a.set.Map != nil
+	saved := a.set.Map != nil && !a.set.isRolled() // a map from the picker; a roll keeps the classic map's controls
 	if v == s.lv && a.u == s.lu && a.set.Players == s.lp && s.scroll == s.lscroll && snacking == s.lsnack && ln == s.ln && saved == s.lmap && s.game.strip.Offset == s.lstrip {
 		return
 	}
@@ -313,10 +314,15 @@ func (s *setupScene) layout(a *app) {
 	}
 
 	// The Map card's body scrolls inside the card when it is shorter than what it holds: the classic map's size
-	// picker beside its preview, or the preview over the picker; a saved map's thumbnail fills it.
+	// picker beside its preview, or the preview over the picker, which a rolled map keeps; a saved map's thumbnail
+	// fills it.
 	b := s.boardB
 	mw := ui.TextWidth(chooseMap, a.f.LabelBold) + 40*u
 	s.mapsB = ui.Rect{X: b.Right() - bp - mw, Y: b.Y + bp + 22*u - buttonH/2, W: mw, H: buttonH}
+	s.randomB = ui.Rect{}
+	if !saved {
+		s.randomB = ui.Rect{X: s.mapsB.X - 8*u - buttonH, Y: s.mapsB.Y, W: buttonH, H: buttonH}
+	}
 	body := ui.Rect{X: b.X + bp, Y: b.Y + bp + 54*u, W: inner, H: max(0, b.H-2*bp-54*u)} // 12 px under the heading's button, as Players' seats
 	sideBySide := inner >= 200*u+gap+controlsMin
 	controlsW := inner
@@ -602,10 +608,16 @@ func (s *setupScene) update(a *app) error {
 	case a.clicked(ui.CompactHit(s.mapsB, u)):
 		s.pickMap(a)
 		return nil
-	case set.Map == nil && s.pickScroll.Viewport.Contains(a.in.x, a.in.y):
+	case a.clicked(ui.CompactHit(s.randomB, u)):
+		s.roll(a)
+		return nil
+	case (set.Map == nil || set.isRolled()) && s.pickScroll.Viewport.Contains(a.in.x, a.in.y):
 		if c, r, ok := s.pick(a, set.Cols, set.Rows); ok {
-			set.Cols, set.Rows = c, r
-			s.changed(a)
+			if set.Cols, set.Rows = c, r; set.isRolled() {
+				s.roll(a) // a roll is resized by rolling again
+			} else {
+				s.changed(a)
+			}
 		}
 	}
 	// Count changes also move the controls. Do not reuse the old rectangles for this click.
@@ -762,6 +774,9 @@ func (s *setupScene) drawBoard(dst *ebiten.Image, a *app) {
 	ui.DrawText(dst, "Map", a.f.Heading, b.X+s.blockPad, y, text.AlignStart, sc.Ink)
 	x := b.X + s.blockPad + ui.TextWidth("Map", a.f.Heading) + 12*u
 	room := s.mapsB.X - 12*u - x
+	if s.randomB.W > 0 {
+		room = s.randomB.X - 12*u - x
+	}
 	if s.dimC != set.Cols || s.dimR != set.Rows || s.mapOf != set.Map || s.mapW != room {
 		s.dimC, s.dimR, s.mapOf, s.mapW = set.Cols, set.Rows, set.Map, room
 		s.dims = ui.Numbers[set.Cols] + " × " + ui.Numbers[set.Rows]
@@ -783,6 +798,9 @@ func (s *setupScene) drawBoard(dst *ebiten.Image, a *app) {
 		}
 	}
 	ui.DrawButton(dst, a.ui(), s.mapsB, chooseMap, "", ui.ButtonGround, !s.test)
+	if s.randomB.W > 0 {
+		iconButton(dst, a, s.randomB, iconRandom, ui.ButtonGround, !s.test)
+	}
 	s.pickScroll.DrawScrollbar(dst, a.ui())
 	dst = s.pickScroll.Clip(dst) // the body scrolls inside the card
 	if s.previewPanel.H > 0 {
@@ -792,10 +810,11 @@ func (s *setupScene) drawBoard(dst *ebiten.Image, a *app) {
 		if s.showPreview {
 			drawMapThumb(dst, a, *set.Map, s.preview)
 		}
-		return
-	}
-	// The chosen board as a mini mat, with its shape's presets as dashed outlines from the same corner.
-	if s.showPreview {
+		if !set.isRolled() {
+			return
+		}
+	} else if s.showPreview {
+		// The chosen board as a mini mat, with its shape's presets as dashed outlines from the same corner.
 		drawPreview(dst, a, s.preview)
 	}
 	s.sizePicker.draw(dst, a, set.Cols, set.Rows)
@@ -935,6 +954,14 @@ func (s *setupScene) updateGame(a *app) bool {
 		s.setWhere(a, w)
 	}
 	return true
+}
+
+// roll puts a fresh random map at the size chosen in use. It stays a roll, keeping the die and the size picker,
+// until a map is chosen in the picker.
+func (s *setupScene) roll(a *app) {
+	m := core.RandomMap(a.set.Cols, a.set.Rows, a.rng.Uint64())
+	a.set.Map, a.set.rolled = &m, &m
+	s.changed(a)
 }
 
 // pickMap opens the map picker; the map it hands back goes to the room too.

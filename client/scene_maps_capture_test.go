@@ -138,9 +138,14 @@ var mapCaptureCases = []mapCaptureCase{
 	{"options-mobile", 390, 844, false, false, false, "options", brushFloor},
 	{"board-desktop", 1040, 640, false, false, true, "game", brushFloor},
 	{"board-mobile-dark", 390, 844, true, true, true, "game", brushFloor},
+	{"random-desktop", 1040, 640, false, false, false, "random", brushFloor},
 	{"library-mobile", 390, 844, false, false, false, "library", brushFloor},
 	{"library-desktop", 1040, 640, false, false, false, "library", brushFloor},
 	{"library-desktop-dark", 1040, 640, true, false, false, "library", brushFloor},
+	{"setup-classic-mobile", 390, 844, false, false, false, "setup-classic", brushFloor},
+	{"setup-classic-desktop", 1040, 640, false, false, false, "setup-classic", brushFloor},
+	{"setup-rolled-mobile", 390, 844, false, false, false, "setup-rolled", brushFloor},
+	{"setup-rolled-desktop-dark", 1040, 640, true, false, false, "setup-rolled", brushFloor},
 	{"setup-map-mobile", 390, 844, false, false, false, "setup-map", brushFloor},
 	{"setup-map-desktop", 1040, 640, false, false, false, "setup-map", brushFloor},
 	{"large-desktop", 1040, 640, false, false, false, "large", brushWall},
@@ -520,6 +525,13 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 		lib := &mapsScene{back: newHome(), selected: 1, store: store}
 		lib.refresh()
 		s = lib
+	case "setup-rolled":
+		roll := core.RandomMap(9, 13, 7)
+		a.set.Map, a.set.rolled = &roll, &roll
+		a.set.Cols, a.set.Rows = roll.Cols, roll.Rows
+		s = &setupScene{menu: -1, open: foldPlayers}
+	case "setup-classic":
+		s = &setupScene{menu: -1, open: foldPlayers}
 	case "setup-map":
 		m.Name = "Twin rivers"
 		a.set.Map = &m
@@ -565,6 +577,10 @@ func (g *mapCaptureGame) Draw(*ebiten.Image) {
 			if len(e.issues) > 0 {
 				e.snack = snackbar{message: e.issues[0].Message, ticks: snackIn} // fully shown
 			}
+		}
+		if c.mode == "random" {
+			e.m = core.RandomMap(13, 11, 7)
+			e.changed()
 		}
 		if c.mode == "issue" {
 			e.m.Cells[3*m.Rows+3].Feature = core.Link

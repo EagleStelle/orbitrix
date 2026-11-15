@@ -46,7 +46,12 @@ type settings struct {
 	// Where is where Setup last played: whereDevice, whereWifi or whereOnline; where() is the one this build offers.
 	Where int `json:"where,omitempty"`
 
+	// Rolled: Map is a roll of Setup's die, which keeps the size picker. rolled is that map, so choosing any other
+	// map ends it without a reset.
+	Rolled bool `json:"rolled,omitempty"`
+
 	seats      []int // parsed Seats
+	rolled     *core.MapDefinition
 	mapChecked *core.MapDefinition
 	mapOK      bool
 }
@@ -61,6 +66,9 @@ type rejoin struct {
 
 // maxName caps a player's name in bytes: within the wire's proto.MaxName, and short enough for a seat pill.
 const maxName = 16
+
+// isRolled reports whether the map in use is one Setup's die rolled, not one chosen from the library.
+func (s *settings) isRolled() bool { return s.Map != nil && s.Map == s.rolled }
 
 // name is what this player goes by: the name they gave on Home, or Human.
 func (s *settings) name() string { return cmp.Or(strings.TrimSpace(s.Name), seatLabels[seatHuman]) }
@@ -125,7 +133,7 @@ func loadSettings(rng *core.RNG) *settings {
 	s.Rows = clampInt(s.Rows, core.MinSize, core.MaxSize, 9)
 	s.Players = clampInt(s.Players, core.MinPlayers, core.MaxPlayers, 2)
 	if s.Map != nil {
-		if data, err := platform.Load("maps.json"); err == nil {
+		if data, err := platform.Load("maps.json"); err == nil && !s.Rolled { // a roll is no library map, whatever its name
 			library := mapstore.Load(func(string) ([]byte, error) { return data, nil }, platform.Save)
 			if i := s.selectedMapIndex(library.Maps); library.LoadErr == nil && i >= 0 && len(library.Maps[i].Validate()) == 0 {
 				m := library.Maps[i].Clone()
@@ -136,6 +144,9 @@ func loadSettings(rng *core.RNG) *settings {
 			s.Map = nil
 		} else {
 			s.Cols, s.Rows = s.Map.Cols, s.Map.Rows
+			if s.Rolled {
+				s.rolled = s.Map
+			}
 		}
 	}
 	if len(s.Name) > maxName {
@@ -207,6 +218,7 @@ func (s *settings) fitSeats() {
 }
 
 func (s *settings) save() {
+	s.Rolled = s.isRolled()
 	s.Seats = s.Seats[:0]
 	for _, opt := range s.seats {
 		s.Seats = append(s.Seats, seatName(opt))

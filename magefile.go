@@ -26,7 +26,7 @@ const out = "dist"
 
 // version is the release version, matching versionName in android/build.gradle.kts. The release workflow refuses a
 // tag that differs from either.
-const version = "1.0.0"
+const version = "1.1.0"
 
 // ldflags strips debug info and stamps ORBITRIX_SERVER (https://your.site), the server native clients play online
 // through; without it they offer no Online. The web build ignores the stamp and uses the server it was loaded from.

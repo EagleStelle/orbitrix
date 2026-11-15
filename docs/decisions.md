@@ -113,6 +113,7 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - A win stops the chain on the spot, so a finished board can hold cells over capacity. The 10,000-wave cap likewise leaves over-capacity cells to the next move's first wave.
 - Counts stay below twice the capacity, so `uint8` can't overflow; `Restore` rejects snapshots that break this.
 - A test pins the empty 9×9 state hash. Changing the hash or the game state's layout breaks desync detection between versions, so it must go with a protocol version bump.
+- `RandomMap` knows no placement rules: it keeps a piece only while `Validate` passes, so a new piece needs just a roll there. Its piece cap exists because validating a draft is slow on the largest boards; rejected alternative: hand-written fit checks per piece.
 
 ## Bots
 

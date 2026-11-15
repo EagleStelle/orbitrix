@@ -2,6 +2,7 @@ package client
 
 import (
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -213,5 +214,23 @@ func TestMapsBar(t *testing.T) {
 		if err := s.update(a); err != nil || !called || picked != nil || a.next != s.back {
 			t.Fatalf("%v: Use on the classic map must hand back no map and return", size)
 		}
+	}
+}
+
+// Randomize in the editor's Map size panel rolls a playable map at the same size under the same name, and Undo
+// brings the old one back.
+func TestEditorRandomize(t *testing.T) {
+	a := setupTestApp(1040, 640, 1, 2)
+	m := core.NewMap(9, 7)
+	m.Name = "Mine"
+	e := newMapEditor(a, newHome(), m, nil)
+	e.more = true
+	e.layout(a)
+	a.in = input{x: e.option[1].Cx(), y: e.option[1].Cy(), clicked: true}
+	if err := e.update(a); err != nil || e.more || !e.dirty || len(e.issues) != 0 || e.m.Cols != 9 || e.m.Rows != 7 || e.m.Name != "Mine" || len(e.undo) != 1 {
+		t.Fatalf("Randomize left more=%v dirty=%v issues=%d %d×%d %q undo=%d", e.more, e.dirty, len(e.issues), e.m.Cols, e.m.Rows, e.m.Name, len(e.undo))
+	}
+	if e.history(false); !reflect.DeepEqual(e.m, m) {
+		t.Fatal("Undo did not restore the map Randomize replaced")
 	}
 }

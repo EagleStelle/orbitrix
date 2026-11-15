@@ -146,7 +146,7 @@ type mapEditor struct {
 	wide, portrait                                                      bool
 	tools, more, channelsOpen, capacities, preview                      bool
 	options                                                             ui.Rect
-	option                                                              [1]ui.Rect
+	option                                                              [2]ui.Rect // Done, Randomize
 	channelB, channelPanel                                              ui.Rect
 	initialB                                                            ui.Rect
 	portalPanel                                                         ui.Rect
@@ -900,6 +900,14 @@ func (e *mapEditor) updateCanvas(a *app, pressed, down bool) {
 func (e *mapEditor) updateOptions(a *app) error {
 	if a.in.esc || a.clicked(e.option[0]) {
 		e.more = false
+		return nil
+	}
+	if a.clicked(e.option[1]) { // a fresh roll at this size; Undo brings the old map back
+		e.checkpoint()
+		e.m = core.RandomMap(e.m.Cols, e.m.Rows, a.rng.Uint64())
+		e.m.Name = e.name.value()
+		e.pair, e.more = -1, false
+		e.changed()
 		return nil
 	}
 	if e.sizeScroll.Update(a.ui()) {

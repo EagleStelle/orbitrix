@@ -201,16 +201,18 @@ func (e *mapEditor) layout(a *app) {
 			break
 		}
 	}
-	// Map size: the size picker Setup shares, scrolling over Done when the screen is short.
+	// Map size: the size picker Setup shares, scrolling over Randomize and Done when the screen is short.
 	ow, og := min(400*u, v.W), 12*u
 	stackSize := ow-2*og < 2*sizeDimensionMin(a)+og
 	pickH := sizePickerH(u, og, stackSize)
-	bodyH := max(44*u, min(pickH, v.H-2*og-36*u-56*u-og))
-	e.options = ui.Rect{X: v.Cx() - ow/2, Y: v.Cy() - (36*u+bodyH+56*u+og)/2, W: ow, H: 36*u + bodyH + 56*u + og}
+	foot := 2*56*u + og // Randomize over Done
+	bodyH := max(44*u, min(pickH, v.H-2*og-36*u-foot))
+	e.options = ui.Rect{X: v.Cx() - ow/2, Y: v.Cy() - (36*u+bodyH+foot)/2, W: ow, H: 36*u + bodyH + foot}
 	sizeView := ui.Rect{X: e.options.X + og, Y: e.options.Y + 36*u, W: ow - 2*og, H: bodyH}
 	e.sizeScroll.Set(sizeView, pickH)
 	e.size.layout(a, sizeView.X, sizeView.Y-e.sizeScroll.Offset, sizeView.W, og, stackSize)
-	e.option[0] = ui.Rect{X: sizeView.X, Y: sizeView.Bottom() + og, W: sizeView.W, H: 44 * u}
+	e.option[1] = ui.Rect{X: sizeView.X, Y: sizeView.Bottom() + og, W: sizeView.W, H: 44 * u}
+	e.option[0] = ui.Rect{X: sizeView.X, Y: e.option[1].Bottom() + og, W: sizeView.W, H: 44 * u}
 	e.channelPanel = ui.Rect{X: v.Cx() - min(304*u, v.W)/2, Y: v.Cy() - 122*u, W: min(304*u, v.W), H: 244 * u}
 	cw := (e.channelPanel.W - 32*u) / 4
 	for i := range e.channels {
@@ -727,6 +729,13 @@ func (e *mapEditor) drawDock(dst *ebiten.Image, a *app) {
 	}
 }
 
+// editorDone draws a panel's Done: the app's ink pill, labelled in the face dialogs' quiet buttons use. The display
+// face belongs to a screen's one primary action, which here is Save.
+func editorDone(dst *ebiten.Image, a *app, r ui.Rect) {
+	ink := ui.DrawButtonSurface(dst, a.ui(), r, ui.ButtonInk, true, a.over(ui.CompactHit(r, a.u)))
+	ui.PillLabel(dst, a.ui(), r, "Done", "", ink)
+}
+
 func (e *mapEditor) drawOptions(dst *ebiten.Image, a *app) {
 	sc, u := a.sc, a.u
 	ui.FillRound(dst, a.safe(), 0, ui.WithAlpha(sc.Ground, .8))
@@ -734,7 +743,8 @@ func (e *mapEditor) drawOptions(dst *ebiten.Image, a *app) {
 	ui.DrawText(dst, fmt.Sprintf("Map size  %d × %d", e.m.Cols, e.m.Rows), a.f.LabelBold, e.options.X+16*u, e.options.Y+18*u, text.AlignStart, sc.Ink)
 	e.size.draw(e.sizeScroll.Clip(dst), a, e.m.Cols, e.m.Rows)
 	e.sizeScroll.DrawScrollbar(dst, a.ui())
-	editorControl(dst, a, e.option[0], "Done", false, true, true)
+	ui.DrawButton(dst, a.ui(), e.option[1], "Randomize", "", ui.ButtonGround, true) // a pill, as the sizes above it
+	editorDone(dst, a, e.option[0])
 }
 func (e *mapEditor) drawChannels(dst *ebiten.Image, a *app) {
 	sc, u := a.sc, a.u
@@ -751,7 +761,7 @@ func (e *mapEditor) drawChannels(dst *ebiten.Image, a *app) {
 		ui.FillRound(dst, ui.Rect{X: r.Cx() - 15*u, Y: r.Cy() - 15*u, W: 30 * u, H: 30 * u}, 0, boardview.PartnerColor(sc, uint8(g)))
 
 	}
-	editorControl(dst, a, e.channelDone, "Done", false, true, true)
+	editorDone(dst, a, e.channelDone)
 }
 
 func editorActionSave(dst *ebiten.Image, a *app, r ui.Rect) {

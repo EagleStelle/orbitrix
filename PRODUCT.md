@@ -76,7 +76,7 @@ fill empty seats with AI, and enjoy following a chain reaction as it plays out.
   embedded assets are the OFL fonts Unbounded and Archivo in `client/fonts/` with their licences. The README's logos
   in `docs/` are generated from the same logo code.
 - Target: 60 FPS on a 40×40 board with 12 players in a long chain, on a mid-range Android phone and desktop Chrome.
-- Released as 1.0.0 through GitHub releases (Windows, Android, macOS, Linux) and the website's downloads; the server
+- Released as 1.1.0 through GitHub releases (Windows, Android, macOS, Linux) and the website's downloads; the server
   image is on Docker Hub. Store listings are undecided.
 - Developer docs: `README.md` and `docs/` (usage, installation, deployment, architecture, structure, decisions, API,
   testing). Licence: GPL-3.0.
