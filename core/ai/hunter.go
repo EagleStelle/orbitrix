@@ -23,7 +23,7 @@ func (b *Bot) hunter() int { return tactic{b: b, branch: 8, hunt: true, prey: b.
 func (b *Bot) prey() int8 {
 	prey, most := core.NoOwner, int32(-1)
 	for i := 1; i < b.g.Players; i++ {
-		if p := (int(b.me) + i) % b.g.Players; b.g.Alive(p) && b.g.Orbs[p] > most {
+		if p := (int(b.me) + i) % b.g.Players; b.g.Alive(p) && !b.g.Allied(int8(p), b.me) && b.g.Orbs[p] > most {
 			prey, most = int8(p), b.g.Orbs[p]
 		}
 	}
@@ -123,7 +123,7 @@ func (t *tactic) captures(n *core.Game, ours bool, ply int) []scored {
 		}
 		haul := 0
 		for _, j := range geo.Neighbours(i) {
-			if q := n.Owner[j]; q != core.NoOwner && q != o && (ours || q == b.me) {
+			if q := n.Owner[j]; q != core.NoOwner && !n.Allied(q, o) && (ours || q == b.me) {
 				haul += int(n.Count[j]) + 1
 			}
 		}

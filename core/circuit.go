@@ -102,9 +102,7 @@ func (g *Game) dropHatches(wave int, record bool) {
 		if g.TerrainAt(i) != Hole {
 			continue
 		}
-		if g.Count[i] > 0 {
-			g.Orbs[g.Owner[i]] -= int32(g.Count[i])
-			g.Count[i], g.Owner[i] = 0, NoOwner
+		if g.Lift(i, nil) != 0 {
 			if record {
 				g.TerrainEvents = append(g.TerrainEvents, TerrainEvent{Wave: wave, Cell: i})
 			}

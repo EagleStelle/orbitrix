@@ -13,7 +13,7 @@ import (
 
 // Version is the first byte of every message. Peers on different versions can't talk; a host answers a Hello from
 // another version with Bye{ReasonVersion}, which every version decodes alike (version, type, reason).
-const Version = 3
+const Version = 4
 
 // Limits checked when decoding.
 const (
@@ -62,6 +62,8 @@ const (
 	TypeMoveApplied
 	TypeSnapshot
 	TypeBye
+	// Player to host.
+	TypeTeam
 )
 
 // Msg is one message. Every type below implements it.
@@ -81,6 +83,9 @@ type Ready struct{ On bool }
 
 // Move places the player's orb at column C, row R.
 type Move struct{ C, R uint8 }
+
+// Team moves the player to another team in the lobby of a team game, if it has room.
+type Team struct{ Team uint8 }
 
 // Resync asks the host for a Snapshot after a state hash mismatch.
 type Resync struct{}
@@ -113,6 +118,7 @@ type Seat struct {
 	AI    uint8 // ai.Strategy when State is SeatAI
 	Ready bool
 	Name  string
+	Team  uint8 // in a team game
 }
 
 // Lobby is the room as it stands. The host sends it on every seat change, in the lobby and during a game.
@@ -120,8 +126,11 @@ type Lobby struct {
 	Cols, Rows uint8
 	TurnTimer  uint16 // seconds a human has to move; 0 means no limit
 	Playing    bool
-	Seats      []Seat
-	Map        *core.MapDefinition // nil selects the ordinary rectangular board
+	// Teams is how many teams a team game has, 2 to core.MaxTeams, and TeamCap the most players on each; both are 0
+	// in a game of every player for themselves.
+	Teams, TeamCap uint8
+	Seats          []Seat
+	Map            *core.MapDefinition // nil selects the ordinary rectangular board
 }
 
 // MoveApplied reports a move the host accepted, numbered by Seq from 1 each game, with the state hash after it.
@@ -163,6 +172,7 @@ func (Ready) Type() Type       { return TypeReady }
 func (Move) Type() Type        { return TypeMove }
 func (Resync) Type() Type      { return TypeResync }
 func (Leave) Type() Type       { return TypeLeave }
+func (Team) Type() Type        { return TypeTeam }
 func (Welcome) Type() Type     { return TypeWelcome }
 func (Lobby) Type() Type       { return TypeLobby }
 func (MoveApplied) Type() Type { return TypeMoveApplied }
@@ -180,13 +190,15 @@ func Append(dst []byte, m Msg) []byte {
 		dst = appendBool(dst, m.On)
 	case Move:
 		dst = append(dst, m.C, m.R)
+	case Team:
+		dst = append(dst, m.Team)
 	case Welcome:
 		dst = append(append(dst, m.Seat), m.Token[:]...)
 	case Lobby:
 		dst = binary.BigEndian.AppendUint16(append(dst, m.Cols, m.Rows), m.TurnTimer)
-		dst = append(appendBool(dst, m.Playing), byte(len(m.Seats)))
+		dst = append(appendBool(dst, m.Playing), m.Teams, m.TeamCap, byte(len(m.Seats)))
 		for _, s := range m.Seats {
-			dst = appendStr(appendBool(append(dst, byte(s.State), s.AI), s.Ready), s.Name)
+			dst = append(appendStr(appendBool(append(dst, byte(s.State), s.AI), s.Ready), s.Name), s.Team)
 		}
 		dst = appendMap(dst, m.Map)
 	case MoveApplied:
@@ -208,6 +220,8 @@ func Append(dst []byte, m Msg) []byte {
 		dst = appendBytes(dst, g.Pressed)
 		dst = appendBytes(dst, g.EdgeDurability)
 		dst = appendBytes(dst, g.Boxes)
+		dst = appendBytes(dst, g.Team)
+		dst = appendBytes(dst, g.Mix)
 	case Bye:
 		dst = append(dst, byte(m.Reason))
 	}
@@ -236,6 +250,11 @@ func Decode(b []byte) (Msg, error) {
 		m = Move{C: r.u8(), R: r.u8()}
 	case TypeResync:
 		m = Resync{}
+	case TypeTeam:
+		m = Team{Team: r.u8()}
+		if m.(Team).Team >= core.MaxTeams {
+			r.fail()
+		}
 	case TypeLeave:
 		m = Leave{}
 	case TypeWelcome:
@@ -372,15 +391,15 @@ func (r *reader) mapDefinition() *core.MapDefinition {
 }
 
 func (r *reader) lobby() Lobby {
-	l := Lobby{Cols: r.u8(), Rows: r.u8(), TurnTimer: r.u16(), Playing: r.bool()}
+	l := Lobby{Cols: r.u8(), Rows: r.u8(), TurnTimer: r.u16(), Playing: r.bool(), Teams: r.u8(), TeamCap: r.u8()}
 	n := int(r.u8())
-	if n > core.MaxPlayers {
+	if n > core.MaxPlayers || l.Teams == 1 || l.Teams > core.MaxTeams || (l.Teams == 0) != (l.TeamCap == 0) {
 		r.fail()
 		return l
 	}
 	for i := 0; i < n && !r.bad; i++ {
-		s := Seat{State: SeatState(r.u8()), AI: r.u8(), Ready: r.bool(), Name: r.str(MaxName)}
-		if s.State >= numSeatStates {
+		s := Seat{State: SeatState(r.u8()), AI: r.u8(), Ready: r.bool(), Name: r.str(MaxName), Team: r.u8()}
+		if s.State >= numSeatStates || s.Team >= max(l.Teams, 1) {
 			r.fail()
 		}
 		l.Seats = append(l.Seats, s)
@@ -408,5 +427,7 @@ func (r *reader) snapshot() Snapshot {
 	g.Pressed = r.bytes(core.MaxSize * core.MaxSize)
 	g.EdgeDurability = r.bytes(2 * core.MaxSize * (core.MaxSize - 1))
 	g.Boxes = r.bytes(core.MaxSize * core.MaxSize)
+	g.Team = r.bytes(core.MaxPlayers)
+	g.Mix = r.bytes(core.MaxSize * core.MaxSize * core.MaxPlayers)
 	return s
 }

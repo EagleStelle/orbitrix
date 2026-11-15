@@ -111,7 +111,7 @@ func (g *Game) mapGeometry() *Geometry {
 		}
 	}
 	m, n := g.Map, len(g.Map.Cells)
-	geo := &Geometry{Cols: m.Cols, Rows: m.Rows, Cap: make([]uint8, n), Degree: make([]uint8, n), Nbr: make([]int16, n*MaxConnections)}
+	geo := &Geometry{Cols: m.Cols, Rows: m.Rows, Cap: make([]uint8, n), Degree: make([]uint8, n), Routes: make([]uint8, n), Nbr: make([]int16, n*MaxConnections)}
 	var blocked [MaxSize * MaxSize * 4]uint8
 	for i, e := range m.Edges {
 		if e.Kind == Gate && CircuitOpen(e.InitiallyOpen, g.CircuitOn[e.Group]) || e.Kind == BreakableBarrier && g.EdgeDurability[i] == 0 {
@@ -151,6 +151,7 @@ func (g *Game) mapGeometry() *Geometry {
 				holes[nholes] = int16(j)
 				holePaths[nholes] = slices.Clone(path)
 				nholes++
+				geo.Routes[i] |= 16 << d
 			}
 			if j >= 0 && g.TerrainAt(j) == Floor {
 				slot := MaxConnections*i + int(geo.Degree[i])
@@ -192,6 +193,7 @@ func (g *Game) mapGeometry() *Geometry {
 				}
 			}
 		}
+		geo.Routes[i] |= outlets
 		geo.Cap[i] = geo.Degree[i] + uint8(nholes)
 		if c.Feature == Reservoir && geo.Cap[i] > 0 { // shut in by Gates, it holds its orbs like Floor
 			geo.Cap[i]++ // its extra orb
@@ -250,8 +252,7 @@ func (g *Game) terrainWave(wave int, record bool) {
 					g.Durability[i] = 0
 					changed = true
 					if g.Count[i] > 0 && g.Map.Cells[i].Terrain == BreakableFloor { // its orbs fall into the new Void
-						g.Orbs[g.Owner[i]] -= int32(g.Count[i])
-						g.Count[i], g.Owner[i] = 0, NoOwner
+						g.Lift(i, nil)
 					}
 					if len(g.Boxes) != 0 && g.Map.Cells[i].Terrain == BreakableFloor {
 						g.Boxes[i] &^= BoxHere // one that bounced onto it this wave falls too
@@ -320,8 +321,8 @@ func (g *Game) collapseSinkholes(wave int, record bool) bool {
 			if g.Map.Cells[i].Terrain != Sinkhole || g.Durability[i] == 0 || !g.Geo.Playable(i) || g.Count[i] < g.Geo.Cap[i] {
 				continue
 			}
-			g.Orbs[g.Owner[i]] -= int32(g.Count[i])
-			g.Count[i], g.Owner[i], g.Durability[i] = 0, NoOwner, 0
+			g.Lift(i, nil)
+			g.Durability[i] = 0
 			if record {
 				g.TerrainEvents = append(g.TerrainEvents, TerrainEvent{Wave: wave, Cell: i})
 			}

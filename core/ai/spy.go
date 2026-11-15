@@ -44,7 +44,7 @@ func (b *Bot) spy() int {
 
 	strongest := -1 // first opponent with the most orbs, if any has some
 	for p := 0; p < g.Players; p++ {
-		if p != int(me) && g.Orbs[p] > 0 && (strongest < 0 || g.Orbs[p] > g.Orbs[strongest]) {
+		if !g.Allied(int8(p), me) && g.Orbs[p] > 0 && (strongest < 0 || g.Orbs[p] > g.Orbs[strongest]) {
 			strongest = p
 		}
 	}
@@ -52,7 +52,7 @@ func (b *Bot) spy() int {
 	lead := func(t [core.MaxPlayers]int32) float64 {
 		var worst int32
 		for p := 0; p < g.Players; p++ {
-			if p != int(me) {
+			if !g.Allied(int8(p), me) {
 				worst = max(worst, t[p])
 			}
 		}

@@ -16,6 +16,8 @@ type Snapshot struct {
 	CircuitOn           []uint8
 	Pressed             []uint8
 	Boxes               []uint8
+	// A team game only: each player's team, and Game.Mix.
+	Team, Mix []uint8
 }
 
 // Snapshot returns a copy of g's state that shares no memory with g.
@@ -24,6 +26,9 @@ func (g *Game) Snapshot() Snapshot {
 		Cols: g.Geo.Cols, Rows: g.Geo.Rows, Players: g.Players,
 		Turn: g.Turn, Moves: g.Moves, Played: g.Played, Winner: g.Winner,
 		Count: append([]uint8(nil), g.Count...), Owner: append([]int8(nil), g.Owner...),
+	}
+	if g.Mix != nil {
+		s.Team, s.Mix = append([]uint8(nil), g.Team[:g.Players]...), append([]uint8(nil), g.Mix...)
 	}
 	if g.Map != nil {
 		m := g.Map.Clone()
@@ -56,6 +61,14 @@ func Restore(s Snapshot) (*Game, error) {
 	n := g.Geo.Cells()
 	if len(s.Count) != n || len(s.Owner) != n {
 		return nil, fmt.Errorf("restore: invalid orb state lengths")
+	}
+	if s.Team != nil {
+		if err := g.SetTeams(s.Team); err != nil {
+			return nil, fmt.Errorf("restore: %w", err)
+		}
+	}
+	if len(s.Mix) != len(g.Mix) {
+		return nil, fmt.Errorf("restore: invalid team orb state length")
 	}
 	if g.Map != nil {
 		if len(s.Durability) != n || len(s.Pressed) != n || len(s.EdgeDurability) != len(g.Map.Edges) {
@@ -141,7 +154,19 @@ func Restore(s Snapshot) (*Game, error) {
 		case g.Map != nil && g.Map.Cells[i].Terrain == Sinkhole && g.Geo.Playable(i) && c >= g.Geo.Cap[i]:
 			return nil, fmt.Errorf("restore: Sinkhole %d holds %d orbs, capacity %d", i, c, g.Geo.Cap[i])
 		}
-		if o != NoOwner {
+		if g.Mix != nil {
+			sum := 0
+			for q, m := range s.Mix[i*s.Players : (i+1)*s.Players] {
+				if m != 0 && (!g.Allied(o, int8(q)) || m > s.Mix[i*s.Players+int(o)]) {
+					return nil, fmt.Errorf("restore: cell %d owner %d does not hold the most orbs of one team", i, o)
+				}
+				sum += int(m)
+				g.Orbs[q] += int32(m)
+			}
+			if sum != int(c) {
+				return nil, fmt.Errorf("restore: cell %d has %d orbs, its colours %d", i, c, sum)
+			}
+		} else if o != NoOwner {
 			g.Orbs[o] += int32(c)
 		}
 		if g.Geo.Playable(i) && c >= g.Geo.Cap[i] {
@@ -150,6 +175,7 @@ func Restore(s Snapshot) (*Game, error) {
 	}
 	copy(g.Count, s.Count)
 	copy(g.Owner, s.Owner)
+	copy(g.Mix, s.Mix)
 	g.Turn, g.Moves, g.Played, g.Winner = s.Turn, s.Moves, s.Played, s.Winner
 	return g, nil
 }
@@ -169,6 +195,14 @@ func (g *Game) Hash() uint64 {
 	for i, c := range g.Count {
 		h = (h ^ uint64(c)) * prime
 		h = (h ^ uint64(uint8(g.Owner[i]))) * prime
+	}
+	if g.Mix != nil {
+		for _, v := range g.Team[:g.Players] {
+			h = (h ^ uint64(v)) * prime
+		}
+		for _, v := range g.Mix {
+			h = (h ^ uint64(v)) * prime
+		}
 	}
 	if g.Map != nil {
 		for i, c := range g.Map.Cells {

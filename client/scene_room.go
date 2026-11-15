@@ -323,6 +323,8 @@ func (h *hostRoom) apply(a *app) {
 		}
 		if err := n.room.Configure(cfg.Cols, cfg.Rows, cfg.Seats); err != nil {
 			log.Printf("room: %v", err)
+		} else if err := n.room.SetTeams(cfg.Teams, cfg.TeamCap, cfg.Team); err != nil {
+			log.Printf("room teams: %v", err)
 		}
 	}
 	if n.lan != nil {
@@ -347,7 +349,7 @@ func (h *hostRoom) canAct(a *app) bool {
 		return false
 	case n == nil:
 		return hasHuman(a.set.seats) && !h.opening && h.noteT == 0 && !cantHost()
-	case !n.got || n.seat < 0:
+	case !n.got || n.seat < 0, !a.set.rivals():
 		return false
 	}
 	for _, st := range n.lobby.Seats {
@@ -394,6 +396,8 @@ func (h *hostRoom) actionLabel(a *app) string {
 		return "Needs a human seat"
 	case n == nil:
 		return "Open room"
+	case !a.set.rivals():
+		return "Needs two teams"
 	case !h.canAct(a):
 		return "Waiting for players"
 	case h.openSeats() > 0:
@@ -651,8 +655,18 @@ func (r *roomScene) update(a *app) error {
 		a.net, a.next = nil, newJoin(a, n.wifi(), "")
 	case a.clicked(r.action) && n.got && n.seat >= 0:
 		n.link.Send(proto.Ready{On: !n.lobby.Seats[n.seat].Ready})
+	case n.got && n.seat >= 0 && n.lobby.Teams != 0 && !n.lobby.Playing && r.view.Viewport.Contains(a.in.x, a.in.y) && a.clicked(ui.CompactHit(r.teamChip(a, n.seat), a.u)):
+		if t, ok := nextTeam(n.teams(), n.seat, int(n.lobby.Teams), int(n.lobby.TeamCap)); ok {
+			n.link.Send(proto.Team{Team: t}) // the host's room moves this player, if the team still has room
+		}
 	}
 	return nil
+}
+
+// teamChip is where seat i's team chip sits in a team game: where its name would start.
+func (r *roomScene) teamChip(a *app, i int) ui.Rect {
+	row, u := r.rows[i], a.u
+	return ui.Rect{X: row.X + seatChoiceX*u, Y: row.Cy() - ui.ChipHeight*u/2, W: teamChipW(a), H: ui.ChipHeight * u}
 }
 
 func (r *roomScene) draw(dst *ebiten.Image, a *app) {
@@ -672,15 +686,20 @@ func (r *roomScene) draw(dst *ebiten.Image, a *app) {
 	if n.wifi() {
 		where = whereWifi
 	}
-	r.game.draw(b, a, where, 0, true, true, false)
+	r.game.draw(b, a, where, 0, addonsOn(int(n.lobby.Teams)), true, true, false)
 	ui.FillRound(b, r.block, 24*u, sc.Tile)
 	ui.DrawText(b, "Players", f.Heading, r.block.X+r.bp, r.block.Y+r.bp+10*u, text.AlignStart, sc.Ink)
 	for i, st := range n.lobby.Seats {
 		row := r.rows[i]
 		ui.FillPill(b, row, sc.Ground)
 		ui.SeatDot(b, sc, i, row.X+24*u, row.Cy(), 8*u, false, a.set.Marks)
-		name := n.playerLabel(i)
-		ui.DrawText(b, name, f.LabelBold, row.X+seatChoiceX*u, row.Cy(), text.AlignStart, sc.Ink)
+		name, nameX := n.playerLabel(i), row.X+seatChoiceX*u
+		if n.lobby.Teams != 0 { // this player's own is the one a tap changes
+			chip := r.teamChip(a, i)
+			drawTeamChip(b, a, chip, st.Team, sc.Ink, sc.Ground, i == n.seat)
+			nameX = chip.Right() + 6*u
+		}
+		ui.DrawText(b, name, f.LabelBold, nameX, row.Cy(), text.AlignStart, sc.Ink)
 		right := row.Right() - 16*u
 		if st.State == proto.SeatAI {
 			drawPips(b, 1+int(st.AI), right, row.Cy(), u, sc.Ink)

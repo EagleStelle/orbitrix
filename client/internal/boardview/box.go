@@ -32,17 +32,17 @@ func (v *view) moveBoxes(events []core.TerrainEvent) {
 			continue
 		}
 		if e.Shove >= 0 {
-			c, o := v.Count[e.To], v.Owner[e.To]
-			v.inkChanged(e.To, core.NoOwner)
-			v.Count[e.To], v.Owner[e.To] = 0, core.NoOwner
+			var stack [core.MaxPlayers]uint8
+			o := v.Owner[e.To]
+			v.Lift(e.To, &stack)
 			if t := v.Replay.TerrainAt(e.Shove); t == core.Floor {
-				for c > 0 && v.shielded(e.Shove, o, -1) {
-					c--
-				}
-				if c > 0 {
-					v.inkChanged(e.Shove, o)
-					v.Owner[e.Shove] = o
-					v.Count[e.Shove] += c
+				for q, c := range stack {
+					for c > 0 && v.shielded(e.Shove, int8(q), -1) {
+						c--
+					}
+					if c > 0 {
+						v.arrive(e.Shove, int8(q), c)
+					}
 				}
 			} else {
 				v.dropped = append(v.dropped, fallingOrb{hole: int16(e.Shove), owner: o, landfill: t == core.Landfill})
@@ -61,15 +61,15 @@ func (v *view) moveBoxes(events []core.TerrainEvent) {
 		}
 	}
 	v.pending = v.pending[:0]
+	if v.Mix != nil {
+		v.Cells.Land(nil, nil)
+	}
 }
 
 func (v *view) land(i int, owner int8) {
-	if v.shielded(i, owner, -1) {
-		return
+	if !v.shielded(i, owner, -1) {
+		v.arrive(i, owner, 1)
 	}
-	v.inkChanged(i, owner)
-	v.Owner[i] = owner
-	v.Count[i]++
 }
 
 // boxSlide is a Box, or the stack it shoves, moving during the wave in flight: from from to to through the Portal and

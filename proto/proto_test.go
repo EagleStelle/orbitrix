@@ -17,6 +17,16 @@ func samples(t testing.TB) []Msg {
 	if _, err := g.Apply(5); err != nil {
 		t.Fatal(err)
 	}
+	teams, err := core.NewGame(4, 3, 3)
+	if err == nil {
+		err = teams.SetTeams([]uint8{0, 1, 0})
+	}
+	if err == nil {
+		_, err = teams.Apply(5)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
 	return []Msg{
 		Hello{Name: "Ana ✨", Code: "K7M2QX", Token: Token{1, 2, 3, 15: 9}},
 		Hello{},
@@ -25,6 +35,7 @@ func samples(t testing.TB) []Msg {
 		Move{C: 39, R: 0},
 		Resync{},
 		Leave{},
+		Team{Team: core.MaxTeams - 1},
 		Welcome{Seat: 11, Token: Token{0: 0xff, 15: 1}},
 		Lobby{Cols: 40, Rows: 13, TurnTimer: 90, Playing: true, Seats: []Seat{
 			{State: SeatHere, Ready: true, Name: "Host"},
@@ -32,9 +43,11 @@ func samples(t testing.TB) []Msg {
 			{State: SeatSkipped, Name: "Bo"},
 		}},
 		Lobby{Cols: 3, Rows: 3},
+		Lobby{Cols: 5, Rows: 5, Teams: 3, TeamCap: 2, Seats: []Seat{{State: SeatHere, Name: "Host", Team: 2}, {State: SeatAI}}},
 		MoveApplied{Seq: 1 << 30, Player: 2, C: 4, R: 7, Hash: 0xdeadbeefcafef00d},
 		MoveApplied{Seq: 3, Player: 1, C: Pass, R: Pass},
 		Snapshot{Seq: 12, Game: g.Snapshot()},
+		Snapshot{Seq: 1, Game: teams.Snapshot()},
 		Bye{Reason: ReasonKicked},
 	}
 }
@@ -68,8 +81,11 @@ func TestDecodeRejects(t *testing.T) {
 		"bad reason":    {Version, byte(TypeBye), byte(numReasons)},
 		"long name":     long,
 		"bad utf-8":     append(Append(nil, Hello{})[:2], 1, 0xff, 0),
-		"13 seats":      {Version, byte(TypeLobby), 9, 9, 0, 0, 0, 13},
-		"bad seat":      {Version, byte(TypeLobby), 9, 9, 0, 0, 0, 1, byte(numSeatStates), 0, 0, 0},
+		"13 seats":      {Version, byte(TypeLobby), 9, 9, 0, 0, 0, 0, 0, 13},
+		"bad seat":      {Version, byte(TypeLobby), 9, 9, 0, 0, 0, 0, 0, 1, byte(numSeatStates), 0, 0, 0, 0},
+		"one team":      {Version, byte(TypeLobby), 9, 9, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0},
+		"no such team":  {Version, byte(TypeLobby), 9, 9, 0, 0, 0, 2, 1, 1, byte(SeatOpen), 0, 0, 0, 2, 0, 0, 0, 0},
+		"team 6":        {Version, byte(TypeTeam), core.MaxTeams},
 		"short board":   Append(nil, Snapshot{Game: core.Snapshot{Cols: 3, Rows: 3}})[:20],
 	} {
 		if _, err := Decode(b); !errors.Is(err, ErrInvalid) {

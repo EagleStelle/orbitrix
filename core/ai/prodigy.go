@@ -113,7 +113,7 @@ func (b *Bot) prodigy() int {
 		var values [core.MaxPlayers]float64
 		cost := 1
 		if sim.Over() {
-			values[sim.Winner] = 1
+			values = winners(sim)
 		} else {
 			k := prodigyInnerMoves
 			if node == 0 {
@@ -163,7 +163,7 @@ func (b *Bot) winningMove() (int, bool) {
 			continue
 		}
 		b.play(&b.sim, b.g, m)
-		if b.sim.Over() && b.sim.Winner == b.me {
+		if b.sim.Won(b.me) {
 			return m, true
 		}
 	}

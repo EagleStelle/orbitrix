@@ -135,23 +135,28 @@ type setupScene struct {
 	test bool      // private editor test preferences are never persisted
 
 	// Layout in device px, recomputed when the screen size or the room's lobby changes.
-	lv                    ui.Rect
-	lu, lscroll           float64
-	lp, ln                int
-	viewport              ui.Rect
-	scroll, maxScroll     float64
-	blockPad              float64
-	back                  ui.Rect
-	titleX, titleY        float64
-	players, boardB       ui.Rect
-	invite                ui.Rect // the single room settings and invitation button
-	lsnack                bool    // the join request snackbar was showing
-	headY                 float64
-	minusP, plusP         ui.Rect
-	seatDot, seatTy       [core.MaxPlayers]ui.Rect
-	seatHit               [core.MaxPlayers]ui.Rect
-	preview, previewPanel ui.Rect
-	showPreview           bool
+	lv                ui.Rect
+	lu, lscroll       float64
+	lp, ln            int
+	viewport          ui.Rect
+	scroll, maxScroll float64
+	blockPad          float64
+	back              ui.Rect
+	titleX, titleY    float64
+	players, boardB   ui.Rect
+	invite            ui.Rect // the single room settings and invitation button
+	lsnack            bool    // the join request snackbar was showing
+	headY             float64
+	minusP, plusP     ui.Rect
+	// A team game's Teams and Per team steppers, where their labels start and their centre lines, and each seat's chip.
+	minusT, plusT, minusC, plusC ui.Rect
+	teamX, teamY                 [2]float64
+	teamChip                     [core.MaxPlayers]ui.Rect
+	lteams                       int
+	seatDot, seatTy              [core.MaxPlayers]ui.Rect
+	seatHit                      [core.MaxPlayers]ui.Rect
+	preview, previewPanel        ui.Rect
+	showPreview                  bool
 	sizePicker
 	game                   gameBlock
 	mapsB                  ui.Rect // the Map heading's button, which opens the map picker
@@ -196,9 +201,10 @@ func (s *setupScene) layout(a *app) {
 		ln = s.room.net.lobbyN
 	}
 	saved := a.set.Map != nil && !a.set.isRolled() // a map from the picker; a roll keeps the classic map's controls
-	if v == s.lv && a.u == s.lu && a.set.Players == s.lp && s.scroll == s.lscroll && snacking == s.lsnack && ln == s.ln && saved == s.lmap && s.game.strip.Offset == s.lstrip {
+	if v == s.lv && a.u == s.lu && a.set.Players == s.lp && s.scroll == s.lscroll && snacking == s.lsnack && ln == s.ln && saved == s.lmap && s.game.strip.Offset == s.lstrip && a.set.Teams == s.lteams {
 		return
 	}
+	s.lteams = a.set.Teams
 	s.lv, s.lu, s.lp, s.lsnack, s.ln, s.lmap = v, a.u, a.set.Players, snacking, ln, saved
 	u := a.u
 	pad, gap, bp := 20*u, 16*u, 20*u
@@ -227,9 +233,13 @@ func (s *setupScene) layout(a *app) {
 	// Visible controls match Back; their larger hit rows preserve touch usability.
 	buttonH, targetH := ui.CompactButtonHeight*u, ui.CompactButtonTarget*u
 	rowPitch := targetH + 8*u
+	chip := 0.0 // a team game's chip before each seat's label, and the space after it
+	if a.set.Teams != 0 {
+		chip = teamChipW(a) + 6*u
+	}
 	minSeatW := 220 * u
 	for _, label := range seatLabels {
-		minSeatW = max(minSeatW, seatChoiceX*u+ui.TextWidth(label, a.f.LabelBold)+(52+pipsW)*u)
+		minSeatW = max(minSeatW, seatChoiceX*u+chip+ui.TextWidth(label, a.f.LabelBold)+(52+pipsW)*u)
 	}
 	right := (52 + pipsW) * u // what follows a player's name: in a room, their state where an AI's shows pips
 	if s.room != nil {
@@ -237,7 +247,7 @@ func (s *setupScene) layout(a *app) {
 	}
 	for i := range a.set.Players {
 		if label, opt, _ := s.seat(a, i); opt == seatHuman {
-			minSeatW = max(minSeatW, seatChoiceX*u+ui.TextWidth(label, a.f.LabelBold)+right)
+			minSeatW = max(minSeatW, seatChoiceX*u+chip+ui.TextWidth(label, a.f.LabelBold)+right)
 		}
 	}
 	dimensionMin := sizeDimensionMin(a)
@@ -265,7 +275,16 @@ func (s *setupScene) layout(a *app) {
 	}
 	// Players never grows past what the screen shows under Rules: its seats scroll inside the card instead.
 	seatsH := float64(rows) * rowPitch
-	playerH := 2*bp + 44*u + min(seatsH, max(rowPitch, s.viewport.H-gameH-2*bp-44*u)) // one row at least
+	// A team game's two steppers sit over the seats: side by side where the card is wide enough, else stacked.
+	teamRows := 0
+	if a.set.Teams != 0 && s.open == foldPlayers {
+		teamRows = 2
+		if pinner >= 2*(ui.TextWidth("Per team", a.f.LabelBold)+12*u+numberW(a)+(ui.CompactButtonHeight+ui.CompactButtonTarget)*u)+gap {
+			teamRows = 1
+		}
+	}
+	teamsH := float64(teamRows) * rowPitch
+	playerH := 2*bp + 44*u + teamsH + min(seatsH, max(rowPitch, s.viewport.H-gameH-2*bp-44*u-teamsH)) // one row at least
 
 	// Map is exactly as tall as the screen shows. Side by side it never moves, and the page scrolls only when an
 	// open Rules card pushes Players off the screen; stacked, the page scrolls down to it.
@@ -290,7 +309,26 @@ func (s *setupScene) layout(a *app) {
 
 	p := s.players
 	s.headY = p.Y + bp + 22*u
-	s.seatScroll.Set(ui.Rect{X: p.X + bp, Y: p.Y + bp + 52*u, W: pinner, H: max(0, p.H-2*bp-52*u)}, max(0, seatsH-8*u)) // down to the card's padding
+	s.seatScroll.Set(ui.Rect{X: p.X + bp, Y: p.Y + bp + 52*u + teamsH, W: pinner, H: max(0, p.H-2*bp-52*u-teamsH)}, max(0, seatsH-8*u)) // down to the card's padding
+	for k := range s.teamX {                                                                                                            // Teams, then Per team
+		row, left, end := 0, p.X+bp, p.Right()-bp
+		switch {
+		case teamRows == 2:
+			row = k
+		case k == 0:
+			end = p.X + bp + (pinner-gap)/2
+		default:
+			left = p.X + bp + (pinner+gap)/2
+		}
+		s.teamX[k], s.teamY[k] = left, p.Y+bp+52*u+float64(row)*rowPitch+targetH/2
+		minus, plus := stepRects(a, end+2*u, s.teamY[k]) // its + ends flush with end
+		if k == 0 {
+			s.minusT, s.plusT = minus, plus
+		} else {
+			s.minusC, s.plusC = minus, plus
+		}
+	}
+	clear(s.teamChip[:])
 	colW := (pinner - float64(cols-1)*gap) / float64(cols)
 	clear(s.seatHit[:])
 	clear(s.seatTy[:])
@@ -303,6 +341,9 @@ func (s *setupScene) layout(a *app) {
 		r := ui.Rect{X: x, Y: cy - buttonH/2, W: colW, H: buttonH}
 		s.seatTy[i], s.seatHit[i] = r, ui.CompactHit(r, u)
 		s.seatDot[i] = ui.Rect{X: x + 16*u, Y: cy - 8*u, W: 16 * u, H: 16 * u}
+		if a.set.Teams != 0 {
+			s.teamChip[i] = ui.Rect{X: x + seatChoiceX*u, Y: cy - ui.ChipHeight*u/2, W: teamChipW(a), H: ui.ChipHeight * u}
+		}
 	}
 	s.minusP, s.plusP = stepRects(a, p.Right()-bp-foldRoom*u, s.headY) // left of the chevron
 	// A tap on a heading, clear of its buttons, folds its card.
@@ -357,7 +398,7 @@ func (s *setupScene) canStart(a *app) bool {
 	if s.room != nil {
 		return s.room.canAct(a)
 	}
-	return mapCanStart(a.set)
+	return mapCanStart(a.set) && a.set.rivals()
 }
 
 func hasHuman(seats []int) bool { return slices.Contains(seats, seatHuman) }
@@ -372,6 +413,7 @@ func (s *setupScene) minPlayers() int {
 
 // changed saves a change to the seats or the board, and hands it to the room this player hosts.
 func (s *setupScene) changed(a *app) {
+	a.set.fitTeams()
 	if s.test {
 		return
 	}
@@ -469,6 +511,9 @@ func (s *setupScene) swapSeats(a *app, i, j int) {
 		}
 	}
 	a.set.seats[i], a.set.seats[j] = a.set.seats[j], a.set.seats[i]
+	if a.set.Teams != 0 { // a player keeps their team
+		a.set.Team[i], a.set.Team[j] = a.set.Team[j], a.set.Team[i]
+	}
 	s.menu = -1
 	s.changed(a)
 }
@@ -483,6 +528,9 @@ func (s *setupScene) removeSeat(a *app, i int) {
 		}
 	}
 	a.set.seats = slices.Delete(a.set.seats, i, i+1)
+	if a.set.Teams != 0 {
+		a.set.Team = slices.Delete(a.set.Team, i, i+1)
+	}
 	a.set.Players--
 	s.menu = -1
 	s.changed(a)
@@ -596,7 +644,7 @@ func (s *setupScene) update(a *app) error {
 		s.setPlayers(a, set.Players-1)
 	case set.Players < core.MaxPlayers && a.clicked(setupStepHit(s.plusP, u)):
 		s.setPlayers(a, set.Players+1)
-	case s.updateGame(a):
+	case s.updateTeams(a), s.updateGame(a):
 		return nil
 	case a.clicked(s.rulesHead):
 		s.fold(foldRules)
@@ -662,7 +710,7 @@ func (s *setupScene) draw(dst *ebiten.Image, a *app) {
 		if s.locked() {
 			off = 0xff
 		}
-		s.game.draw(s.content, a, a.set.where(), off, false, s.open == foldRules, true)
+		s.game.draw(s.content, a, a.set.where(), off, addonsOn(a.set.Teams), false, s.open == foldRules, true)
 		ui.DrawButton(s.content, a.ui(), s.game.join, "Join a room", "", ui.ButtonGround, !s.locked()) // always there; held while this player hosts
 	}
 	s.drawPlayers(s.content, a)
@@ -718,6 +766,12 @@ func (s *setupScene) drawPlayers(dst *ebiten.Image, a *app) {
 	if s.open != foldPlayers {
 		return
 	}
+	if set.Teams != 0 {
+		ui.DrawText(dst, "Teams", f.LabelBold, s.teamX[0], s.teamY[0], text.AlignStart, sc.Ink)
+		stepper(dst, a, set.Teams, 2, core.MaxTeams, s.minusT, s.plusT)
+		ui.DrawText(dst, "Per team", f.LabelBold, s.teamX[1], s.teamY[1], text.AlignStart, sc.Ink)
+		stepper(dst, a, set.TeamCap, set.minTeamCap(), core.MaxPlayers-1, s.minusC, s.plusC)
+	}
 	s.seatScroll.DrawScrollbar(dst, a.ui())
 	dst = s.seatScroll.Clip(dst) // the seats scroll inside the card
 	for i := range set.Players {
@@ -731,7 +785,13 @@ func (s *setupScene) drawPlayers(dst *ebiten.Image, a *app) {
 		}
 		ink := ui.DrawButtonSurface(dst, a.ui(), t, style, true, hot)
 		ui.SeatDot(dst, sc, i, d.Cx(), d.Cy(), d.W/2, false, set.Marks)
-		ui.DrawText(dst, label, f.LabelBold, t.X+seatChoiceX*u, t.Cy(), text.AlignStart, ink)
+		labelX := t.X + seatChoiceX*u
+		if set.Teams != 0 {
+			fill, _ := ui.ButtonColors(sc, style, true, hot)
+			drawTeamChip(dst, a, s.teamChip[i], set.Team[i], ink, fill, true)
+			labelX = s.teamChip[i].Right() + 6*u
+		}
+		ui.DrawText(dst, label, f.LabelBold, labelX, t.Cy(), text.AlignStart, ink)
 		right := t.Right() - 36*u
 		if !editable {
 			right = t.Right() - 16*u
@@ -758,8 +818,10 @@ func (s *setupScene) drawStart(dst *ebiten.Image, a *app) {
 	switch {
 	case s.room != nil:
 		label = s.room.actionLabel(a)
-	case !ok:
+	case !mapCanStart(a.set):
 		label = "Board too small"
+	case !ok:
+		label = "Needs two teams"
 	}
 	ui.DrawButton(dst, a.ui(), s.start, label, "", ui.ButtonInk, ok)
 }
@@ -934,9 +996,56 @@ func (s *setupScene) setWhere(a *app, w int) {
 	}
 }
 
-// updateGame runs the Rules card: Join a room, and the Play on tiles until a room opens. It reports a click it took.
+// updateTeams runs a team game's part of Players: the Teams and Per team steppers, and each seat's chip, which a tap
+// moves to the next team with room. It reports a click it took.
+func (s *setupScene) updateTeams(a *app) bool {
+	set, u := a.set, a.u
+	if set.Teams == 0 || s.open != foldPlayers {
+		return false
+	}
+	switch {
+	case set.Teams > 2 && a.clicked(setupStepHit(s.minusT, u)):
+		set.Teams--
+	case set.Teams < core.MaxTeams && a.clicked(setupStepHit(s.plusT, u)):
+		set.Teams++
+	case set.TeamCap > set.minTeamCap() && a.clicked(setupStepHit(s.minusC, u)):
+		set.TeamCap--
+	case set.TeamCap < core.MaxPlayers-1 && a.clicked(setupStepHit(s.plusC, u)):
+		set.TeamCap++
+	default:
+		for i := range set.Players {
+			if s.seatScroll.Viewport.Contains(a.in.x, a.in.y) && a.clicked(ui.CompactHit(s.teamChip[i], u)) {
+				if t, ok := nextTeam(set.Team, i, set.Teams, set.TeamCap); ok {
+					set.Team[i] = t
+					s.changed(a)
+				}
+				return true // a tap on a chip never opens the seat's menu
+			}
+		}
+		return false
+	}
+	s.menu, s.lv = -1, ui.Rect{}
+	s.changed(a)
+	return true
+}
+
+// updateGame runs the Rules card: the Teams add-on, Join a room, and the Play on tiles until a room opens. It reports
+// a click it took.
 func (s *setupScene) updateGame(a *app) bool {
-	if s.test || s.locked() {
+	if s.test {
+		return false
+	}
+	if s.game.hit(a, len(gameRows)-1) == 0 { // Teams: it changes in an open room too, until Start
+		if a.set.Teams == 0 {
+			a.set.Teams = 2
+		} else {
+			a.set.Teams = 0
+		}
+		s.menu = -1
+		s.changed(a)
+		return true
+	}
+	if s.locked() {
 		return false
 	}
 	if a.clicked(ui.CompactHit(s.game.join, a.u)) { // to the tab that matches Play on; Same Wi-Fi from This Device

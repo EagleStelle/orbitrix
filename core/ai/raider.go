@@ -66,7 +66,7 @@ func (b *Bot) raiderAttack() int {
 	g, me := b.g, b.me
 	prey, strongest := -1, int32(0)
 	for p := 0; p < g.Players; p++ {
-		if p == int(me) || g.Orbs[p] == 0 {
+		if g.Allied(int8(p), me) || g.Orbs[p] == 0 {
 			continue
 		}
 		strongest = max(strongest, g.Orbs[p])
@@ -138,7 +138,7 @@ func (b *Bot) raiderScore(m int, losing bool) (score float64, suicidal bool) {
 		switch o := b.g.Owner[j]; {
 		case o == b.me:
 			mine++
-		case o != core.NoOwner:
+		case b.enemy(int(j)):
 			enemies++
 			if b.primed(int(j)) {
 				threats++

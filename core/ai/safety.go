@@ -36,11 +36,11 @@ func (b *Bot) openingMove(cell int) int {
 	// An explosion can remove the threat or create its own backup; judge the resulting board.
 	if b.primed(cell) && b.left > 0 {
 		b.play(&b.sim, b.g, cell)
-		if b.sim.Over() && b.sim.Winner == b.me {
+		if b.sim.Won(b.me) {
 			return cell
 		}
 		b.dist[1] = b.distances(b.dist[1], func(i int) bool {
-			return b.sim.Owner[i] != core.NoOwner && b.sim.Owner[i] != b.me
+			return b.sim.Owner[i] != core.NoOwner && !b.sim.Allied(b.sim.Owner[i], b.me)
 		})
 		danger = b.openingThreats(&b.sim, -1)
 		for i, o := range b.sim.Owner {
@@ -75,7 +75,7 @@ func (b *Bot) openingThreats(g *core.Game, added int) []bool {
 	q := b.queue[:0]
 	count, capacity := g.Count[:len(g.Owner)], g.Geo.Cap[:len(g.Owner)] // lets the compiler drop bounds checks
 	for i, o := range g.Owner {
-		if o != core.NoOwner && o != b.me && count[i]+1 >= capacity[i] {
+		if o != core.NoOwner && !g.Allied(o, b.me) && count[i]+1 >= capacity[i] {
 			danger[i] = true
 			incoming[i] = 1
 			q = append(q, int16(i))

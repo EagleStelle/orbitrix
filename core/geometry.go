@@ -35,6 +35,9 @@ type Geometry struct {
 	Outlets []uint8
 	// Aims holds each Turret's open Floor routes the same way: the sides it can face. Nil without Turrets.
 	Aims []uint8
+	// Routes holds each cell's open routes by direction (left, right, up, down): bit d into Floor, bit 4+d into a Hole
+	// or unfilled Landfill.
+	Routes []uint8
 	// Nbr holds MaxConnections slots per cell, of which Degree are active.
 	Nbr []int16
 	// PortalRoutes holds entry/exit pairs per connection, only on maps with active Portal routes.
@@ -52,12 +55,13 @@ func NewGeometry(cols, rows int) (*Geometry, error) {
 		return nil, fmt.Errorf("board %dx%d: each side must be %d..%d", cols, rows, MinSize, MaxSize)
 	}
 	n := cols * rows
-	g := &Geometry{Cols: cols, Rows: rows, Cap: make([]uint8, n), Degree: make([]uint8, n), Nbr: make([]int16, MaxConnections*n)}
+	g := &Geometry{Cols: cols, Rows: rows, Cap: make([]uint8, n), Degree: make([]uint8, n), Routes: make([]uint8, n), Nbr: make([]int16, MaxConnections*n)}
 	for i := 0; i < n; i++ {
 		c, r := g.Coords(i)
-		for _, d := range [4][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+		for k, d := range [4][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
 			nc, nr := c+d[0], r+d[1]
 			if nc >= 0 && nc < cols && nr >= 0 && nr < rows {
+				g.Routes[i] |= 1 << k
 				g.Nbr[MaxConnections*i+int(g.Cap[i])] = int16(g.Index(nc, nr))
 				g.Cap[i]++
 			}
@@ -109,6 +113,27 @@ func (g *Geometry) Outlet(i int, state uint8) (slot int, next uint8) {
 
 // clockwise lists the route directions (left, right, up, down) clockwise from up.
 var clockwise = [4]uint8{2, 1, 3, 0}
+
+// Clockwise appends to dst cell i's target slots in the order a team game deals a mixed cell's orbs to them: its
+// routes clockwise from up, then a Link and a Spillway's own pit.
+func (g *Geometry) Clockwise(i int, dst []uint8) []uint8 {
+	floor, pits := g.Routes[i]&15, g.Routes[i]>>4
+	for _, d := range clockwise {
+		switch below := uint8(1)<<d - 1; {
+		case floor&(1<<d) != 0: // Floor routes fill the slots in direction order, then the pits do
+			dst = append(dst, uint8(bits.OnesCount8(floor&below)))
+		case pits&(1<<d) != 0:
+			dst = append(dst, g.Degree[i]+uint8(bits.OnesCount8(pits&below)))
+		}
+	}
+	for slot := uint8(bits.OnesCount8(floor)); slot < g.Degree[i]; slot++ {
+		dst = append(dst, slot)
+	}
+	for slot := int(g.Degree[i]) + bits.OnesCount8(pits); slot < len(g.Targets(i)); slot++ {
+		dst = append(dst, uint8(slot))
+	}
+	return dst
+}
 
 // NextOutlet returns the first open route in mask clockwise from a Reservoir's arrow step (0 up, 1 right, 2 down,
 // 3 left), as a direction (left, right, up, down), and the step after it; -1 for an empty mask.

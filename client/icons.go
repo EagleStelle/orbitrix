@@ -32,6 +32,7 @@ const (
 	iconRealtime // a lightning bolt
 	iconFog      // staggered fog lines
 	iconTiles    // dealt cards
+	iconTeams    // two orbs, one in front of the other
 	iconEnd
 )
 
@@ -149,6 +150,12 @@ func drawIcon(dst *ebiten.Image, icon int, x, y, u float64, ink, ground color.RG
 		line(-8, -12, 3, -12)
 		ui.StrokeRound(dst, ui.Rect{X: x - 5*u, Y: y - 7*u, W: 16 * u, H: 20 * u}, 4*u, w, ink)
 		ui.FillRound(dst, ui.Rect{X: x, Y: y, W: 6 * u, H: 6 * u}, 1.5*u, ink)
+	case iconTeams:
+		// The orb behind stops short of the one in front, so they read as two that keep apart, not as Combine's pair.
+		iconPath.Reset()
+		iconPath.Arc(float32(x-4.5*u), float32(y-4.5*u), float32(8*u), math.Pi/4+0.97, 9*math.Pi/4-0.97, vector.Clockwise)
+		ui.StrokePath(dst, &iconPath, w, ink)
+		ui.FillCircle(dst, x+4.5*u, y+4.5*u, 8*u, ink)
 	case iconUse:
 		ui.Line(dst, x-8*u, y+u, x-2.5*u, y+6.5*u, 2.75*u, ink)
 		ui.Line(dst, x-2.5*u, y+6.5*u, x+8*u, y-5.5*u, 2.75*u, ink)

@@ -142,6 +142,9 @@ func newPlay(a *app, cols, rows int, seats []int) (*playScene, error) {
 	if a.set.Map != nil {
 		g, err = core.NewGameWithMap(*a.set.Map, len(seats))
 	}
+	if err == nil && a.set.Teams != 0 {
+		err = g.SetTeams(a.set.Team)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("new game: %w", err)
 	}
@@ -197,6 +200,9 @@ func (p *playScene) settle() {
 	if p.game.Over() && !p.over {
 		p.over, p.shown, p.paused, p.watch = true, int(p.game.Winner), false, nil
 		p.winTitle = p.labels[p.shown] + " wins!"
+		if p.game.Mix != nil {
+			p.winTitle = "Team " + teamLetters[p.game.Team[p.shown]] + " wins!"
+		}
 		p.rank()
 	}
 }
@@ -225,8 +231,8 @@ func (p *playScene) rank() {
 		p.stats[1] = "×" + strconv.Itoa(p.biggest)
 	}
 	score := [2]func(int) int{
-		func(i int) int { // the winner outlived everyone; the rest by when they went out
-			if i == int(p.game.Winner) {
+		func(i int) int { // the winner, or every player of the winning team, outlived everyone; the rest by when they went out
+			if p.game.Won(int8(i)) {
 				return math.MaxInt
 			}
 			return p.outAt[i]
@@ -296,6 +302,9 @@ func (p *playScene) restartGame(a *app) {
 	g, err := core.NewGame(p.cols, p.rows, len(p.seats))
 	if p.game.Map != nil {
 		g, err = core.NewGameWithMap(*p.game.Map, len(p.seats))
+	}
+	if err == nil && p.game.Mix != nil {
+		err = g.SetTeams(p.game.Team[:p.game.Players])
 	}
 	if err == nil {
 		np := newPlayOn(a, g, p.seats, p.labels, pauseLocal)
@@ -685,9 +694,18 @@ func (p *playScene) seatInsets(a *app) (in, sp, gap, dot float64) {
 func (p *playScene) seatTableWidth(a *app) float64 {
 	name, bold := p.seatFaces(a)
 	in, sp, gap, dot := p.seatInsets(a)
-	row := 2*in + 2*dot + sp + widestLabel(p.labels, name) + gap + max(ui.TextWidth(p.orbsMax, bold), ui.ChipWidth(a.ui(), "Out", p.chipH(a)))
+	row := 2*in + 2*dot + sp + p.teamRoom(a) + widestLabel(p.labels, name) + gap + max(ui.TextWidth(p.orbsMax, bold), ui.ChipWidth(a.ui(), "Out", p.chipH(a)))
 	cols := float64(p.tableCols)
 	return cols*row + (cols-1)*8*a.u
+}
+
+// teamRoom is the room a team game's chip takes before each seat's type, with the space after it.
+func (p *playScene) teamRoom(a *app) float64 {
+	if p.game.Mix == nil {
+		return 0
+	}
+	_, sp, _, _ := p.seatInsets(a)
+	return teamChipW(a) + sp
 }
 
 // widestLabel is the width of the widest of labels, set in face.
@@ -1004,9 +1022,15 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 		if !alive {
 			ink = sc.Dim
 		}
-		ui.DrawText(seatsDst, label, name, r.X+in+2*dr+sp, r.Cy(), text.AlignStart, ink)
+		lx := r.X + in + 2*dr + sp
+		if team := p.teamRoom(a); team > 0 {
+			h := p.chipH(a)
+			drawTeamChip(seatsDst, a, ui.Rect{X: lx, Y: r.Cy() - h/2, W: team - sp, H: h}, p.game.Team[i], ink, sc.Ground, false)
+			lx += team
+		}
+		ui.DrawText(seatsDst, label, name, lx, r.Cy(), text.AlignStart, ink)
 		if alive {
-			room := r.W - 2*in - 2*dr - sp - ui.TextWidth(label, name) - gap
+			room := r.Right() - in - lx - ui.TextWidth(label, name) - gap
 			scale := min(1, room/max(1, ui.TextWidth(p.orbS[i], bold)))
 			ui.DrawScaledText(seatsDst, p.orbS[i], bold, r.Right()-in, r.Cy(), text.AlignEnd, scale, ink)
 		} else {

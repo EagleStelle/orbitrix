@@ -190,7 +190,7 @@ func (t *sovSearch) root() int {
 			}
 			child := &b.nodes[0]
 			t.play(child, b.g, int(cands[i].cell), int(b.me), 1)
-			if child.Over() && child.Winner == b.me {
+			if child.Won(b.me) {
 				s.score = sovWin
 				return int(cands[i].cell)
 			}
@@ -479,7 +479,7 @@ func (t *sovSearch) captures(n *core.Game, ours bool, ply int) []sovMove {
 			continue
 		}
 		for _, j := range geo.Neighbours(i) {
-			if q := n.Owner[j]; q != core.NoOwner && q != o && (ours || q == me) {
+			if q := n.Owner[j]; q != core.NoOwner && !n.Allied(q, o) && (ours || q == me) {
 				m := sovMove{score: int32(t.s.cache[int(o)*cells+i]), cell: int16(i), player: o}
 				list = sovInsert(list, m, sovCaptures)
 				break
@@ -505,7 +505,7 @@ func (t *sovSearch) moves(n *core.Game, p int8, list []sovMove, limit int) []sov
 }
 
 func (t *sovSearch) terminal(n *core.Game, ply int) int32 {
-	if n.Over() && n.Winner == t.b.me {
+	if n.Won(t.b.me) {
 		return sovWin - int32(ply)
 	}
 	return -sovWin + int32(ply)

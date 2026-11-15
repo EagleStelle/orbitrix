@@ -9,10 +9,13 @@ import (
 // the position before the move and replays the recorded waves one by one as they animate, with the same two-pass
 // rule as core (all exploding cells launch, then all neighbours receive), so it ends equal to the game.
 type view struct {
-	Geo   *core.Geometry
-	Count []uint8
-	Owner []int8
-	from  []int8 // owner of each cell of the wave in flight, as it launched
+	Geo *core.Geometry
+	core.Cells
+	from []int8 // owner of each cell of the wave in flight, as it launched
+	deal []int8 // a team game's colours of that wave's orbs, by cell and target slot as core.Cells.Pop gives them
+	// The cells whose map art takes their holder's ink, and the holder each was drawn with.
+	inked []int16
+	ink   []int8
 
 	// replay keeps terrain at the displayed wave, independent of the fully
 	// resolved game's topology. Its orb arrays are not used for playback.
@@ -31,7 +34,7 @@ type view struct {
 // or falling woody notes as it breaks.
 func (v *view) shielded(i int, owner int8, from int16) bool {
 	hit, state := core.Shielded(v.Replay.Pressed[i], owner)
-	if !hit {
+	if !hit || v.Mix != nil && v.Allied(core.Holder(v.Replay.Pressed[i]), owner) { // a teammate's orb goes in
 		return false
 	}
 	v.Replay.Pressed[i] = state
@@ -45,7 +48,7 @@ func (v *view) shielded(i int, owner int8, from int16) bool {
 
 func NewView(g *core.Game) *view {
 	n := g.Geo.Cells()
-	v := &view{Geo: g.Geo, Count: make([]uint8, n), Owner: make([]int8, n), from: make([]int8, 0, n)}
+	v := &view{Geo: g.Geo, from: make([]int8, 0, n)}
 	v.sync(g)
 	return v
 }
@@ -63,12 +66,46 @@ func (v *view) sync(g *core.Game) {
 		v.Replay = nil
 	}
 	v.revision++
-	copy(v.Count, g.Count)
-	copy(v.Owner, g.Owner)
+	v.Cells.CopyFrom(&g.Cells)
+	v.inked, v.ink = v.inked[:0], v.ink[:0]
+	if g.Map != nil {
+		for i, c := range g.Map.Cells {
+			if mapOwnerInked(c.Feature) {
+				v.inked, v.ink = append(v.inked, int16(i)), append(v.ink, v.Owner[i])
+			}
+		}
+	}
+}
+
+// reink has the map art drawn again once a device's holder, whose ink it takes, has changed.
+func (v *view) reink() {
+	for k, i := range v.inked {
+		if o := v.Owner[i]; o != v.ink[k] {
+			v.ink[k] = o
+			v.revision++
+		}
+	}
+}
+
+// arrive gives cell i n of owner's orbs, which capture it; a team game's land together at the next Cells.Land.
+func (v *view) arrive(i int, owner int8, n uint8) {
+	if v.Mix != nil {
+		v.Send(i, owner, n)
+	} else {
+		v.Add(i, owner, n)
+	}
+}
+
+// flew is the colour of the orb the k-th cell of the wave in flight sent out of target slot, core.MaxConnections for
+// a Reservoir's extra orb: its owner's, or in a team game the one core.Cells.Pop dealt.
+func (v *view) flew(k, slot int) int8 {
+	if v.Mix == nil || k < v.shots {
+		return v.from[k]
+	}
+	return v.deal[k*(core.MaxConnections+1)+slot]
 }
 
 func (v *view) Place(cell int, p int8) []core.TerrainEvent {
-	v.inkChanged(cell, p)
 	v.wave = 0
 	if v.Replay != nil {
 		for i, c := range v.Replay.Map.Cells {
@@ -77,32 +114,36 @@ func (v *view) Place(cell int, p int8) []core.TerrainEvent {
 			}
 		}
 	}
-	v.Owner[cell] = p
-	v.Count[cell]++
+	v.Add(cell, p, 1)
 	return v.applyTerrain(-1)
 }
 
 // launch takes the orbs every cell in w releases, as core does. The launched orbs are in flight until land; those
 // aimed at Holes or a Spillway's pit never land.
 func (v *view) Launch(w core.Wave) {
-	v.from = v.from[:0]
+	v.from, v.deal = v.from[:0], v.deal[:0]
 	for k, e := range w {
-		v.from = append(v.from, v.Owner[e])
-		if k < v.shots {
-			continue // a Turret's shot is a new orb
+		p := v.Owner[e]
+		v.from = append(v.from, p)
+		var deal [core.MaxConnections + 1]int8
+		switch {
+		case k < v.shots: // a Turret's shot is a new orb
+		case v.Mix != nil:
+			deal = v.Pop(v.Geo, int(e))
+		default:
+			v.Remove(int(e), p, v.Geo.Released(int(e)))
 		}
-		v.Count[e] -= v.Geo.Released(int(e))
-		if v.Geo.Outlets != nil && v.Geo.Outlets[e] != 0 {
+		if v.Mix != nil {
+			v.deal = append(v.deal, deal[:]...)
+		}
+		if k >= v.shots && v.Geo.Outlets != nil && v.Geo.Outlets[e] != 0 {
 			var makes bool
 			if makes, v.Replay.Pressed[e] = core.ReservoirMakes(v.Replay.Pressed[e]); makes {
-				v.Count[e]++
+				v.Add(int(e), p, 1)
 			}
 		}
-		if v.Count[e] == 0 {
-			v.inkChanged(int(e), core.NoOwner) // an emptied Spillway returns to neutral ink
-			v.Owner[e] = core.NoOwner
-		}
 	}
+	v.reink() // an emptied Spillway returns to neutral ink
 }
 
 // land gives one orb to each neighbour of every cell in w, and a Reservoir's extra orb to the side its arrow points
@@ -110,7 +151,7 @@ func (v *view) Launch(w core.Wave) {
 func (v *view) Land(w core.Wave) []core.TerrainEvent {
 	v.hits, v.shields = v.hits[:0], 0
 	for k, e := range w {
-		to := v.Geo.Neighbours(int(e))
+		to, degree := v.Geo.Neighbours(int(e)), int(v.Geo.Degree[e])
 		if k < v.shots {
 			var slot int
 			slot, v.Replay.Durability[e] = v.Geo.Aim(int(e), v.Replay.Durability[e])
@@ -123,19 +164,25 @@ func (v *view) Land(w core.Wave) []core.TerrainEvent {
 			to = append(append(buf[:0], to...), to[slot])
 			v.revision++ // its arrow turned
 		}
-		for _, n := range to {
+		for slot, n := range to {
+			if slot == degree {
+				slot = core.MaxConnections // a Reservoir's extra orb
+			}
+			owner := v.flew(k, slot)
 			if v.boxed(int(n)) {
-				v.pending = append(v.pending, boxPending{box: n, from: e, owner: v.from[k]})
+				v.pending = append(v.pending, boxPending{box: n, from: e, owner: owner})
 				continue
 			}
-			if v.Replay != nil && v.shielded(int(n), v.from[k], e) {
+			if v.Replay != nil && v.shielded(int(n), owner, e) {
 				continue
 			}
-			v.inkChanged(int(n), v.from[k])
-			v.Owner[n] = v.from[k]
-			v.Count[n]++
+			v.arrive(int(n), owner, 1)
 		}
 	}
+	if v.Mix != nil {
+		v.Cells.Land(nil, nil)
+	}
+	v.reink()
 	events := v.applyTerrain(v.wave)
 	v.wave++
 	v.shots = 0
@@ -170,16 +217,13 @@ func (v *view) Produce(p int8, crushed []int16) (bool, []int16) {
 			}
 		case c.Feature == core.Crusher:
 			crushed = append(crushed, int16(i))
-			if v.Count[i] == 1 {
-				v.inkChanged(i, core.NoOwner)
-				v.Owner[i] = core.NoOwner
-			}
-			v.Count[i]--
+			v.Remove(i, p, 1)
 		case v.Count[i] < 255:
-			v.Count[i]++
+			v.Add(i, p, 1)
 			made = true
 		}
 	}
+	v.reink()
 	return made, crushed
 }
 
@@ -192,15 +236,6 @@ func (v *view) settle() {
 		if c.Feature.IsMaker() && v.Count[i] == 0 {
 			v.Replay.Pressed[i] = 0
 		}
-	}
-}
-
-func (v *view) inkChanged(cell int, owner int8) {
-	if v.Replay == nil {
-		return
-	}
-	if mapOwnerInked(v.Replay.Map.Cells[cell].Feature) && (v.Count[cell] == 0 || v.Owner[cell] != owner) {
-		v.revision++
 	}
 }
 
@@ -220,10 +255,11 @@ func (v *view) applyTerrain(wave int) []core.TerrainEvent {
 		for _, e := range v.Events[:end] {
 			if c := e.Cell; !e.Edge && !e.Switch && !e.Box && c >= 0 && e.Durability == 0 && v.Count[c] > 0 && (v.Replay.Map.Cells[c].Terrain == core.BreakableFloor || v.Replay.Map.Cells[c].Terrain == core.Sinkhole || v.Replay.Map.Cells[c].Circuit == core.Hatch) {
 				v.dropped = append(v.dropped, fallingOrb{hole: int16(c), owner: v.Owner[c]})
-				v.Count[c], v.Owner[c] = 0, core.NoOwner
+				v.Lift(c, nil)
 			}
 		}
 	}
+	v.reink()
 	events := v.Events[:end]
 	v.Events = v.Events[end:]
 	return events

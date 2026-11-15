@@ -103,7 +103,8 @@ Decisions that future changes have to respect, and why. How things work is in [a
   importable without rewriting stored maps. New exports always use format 2.
   Match snapshots carry durability, `Pressed`, and independent `CircuitOn` polarity, all covered by the hash.
   Protocol 3 and map format 2 were already introduced after public release v1.0.0 (protocol 1, no custom maps), so
-  this circuit change reuses those unreleased identifiers. Compare against the last public release before bumping:
+  this circuit change reuses those unreleased identifiers. Teams, built after public release v1.1.0 (protocol 3),
+  bumped the protocol to 4. Compare against the last public release before bumping:
   reuse an existing post-release bump; bump when the public release's identifier would otherwise be reused for an
   incompatible change. All peers must run the same development build; equal unreleased identifiers do not prove
   compatibility. Portable-map import compatibility is separate.
@@ -113,6 +114,9 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - A win stops the chain on the spot, so a finished board can hold cells over capacity. The 10,000-wave cap likewise leaves over-capacity cells to the next move's first wave.
 - Counts stay below twice the capacity, so `uint8` can't overflow; `Restore` rejects snapshots that break this.
 - A test pins the empty 9×9 state hash. Changing the hash or the game state's layout breaks desync detection between versions, so it must go with a protocol version bump.
+- Teams is one state on top of the classic one, not a second engine. `Cells.Mix` (each colour's orbs per cell) exists only in a team game; `Count` stays the total and `Owner` the colour with the most orbs, so capacity, devices, switches and the bots read a team game as they read any other. Classic games allocate no `Mix`, run the original `explode` and keep their hash. Rejected: always carrying per-colour counts, which slows every bot's search and changes the pinned hash.
+- `Cells` is shared by `Game` and the client's replay view, so the team rules (`Pop`, `Send`, `Land`) exist once. A new way for orbs to enter or leave a cell must go through its methods in both.
+- A team game's arrivals of one wave land together (`Send` then `Land`), because teammates split a captured cell evenly; landing them one by one would make the split depend on cell order.
 - `RandomMap` knows no placement rules: it keeps a piece only while `Validate` passes, so a new piece needs just a roll there. Its piece cap exists because validating a draft is slow on the largest boards; rejected alternative: hand-written fit checks per piece.
 
 ## Bots
@@ -122,6 +126,7 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - A move must depend only on (position, seed, budget). Sovereign clears its transposition table every move for this reason, and its network runs in integers so every platform computes the same moves.
 - Shared survival protection covers only a first placement or a position of at most one cell and two orbs, so each bot otherwise keeps its own risk appetite.
 - Spy stays a heuristic. Reply search would turn it into another search bot.
+- In a team game the bots share only the rules: a team win counts as their win and teammates are neither threats nor targets. Search still lets a teammate reply as a rival would, and Prodigy's and Sovereign's networks, trained on games of every player for themselves, read a shared cell as its owner's. Team-aware networks need retraining.
 - Network weights are generated Go source, rewritten by training only when the new weights win, so the repo holds no data files.
 - Sovereign uses Tactician search on custom maps until its network can represent map topology; its existing
   rectangular pattern table cannot represent every map neighborhood or a fifth Link connection. Prodigy fully
@@ -192,6 +197,7 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - The host's room page is This Device's Setup scene, so local and room setup share one implementation.
 - Seats keep one backing array of capacity 12, and seat holds use room-wide numbers, so a grace timer never acts on a seat that moved.
 - Two humans never swap seats; `hub.Room.SwapSeats` refuses it as well as the UI.
+- In a team game the room's lobby holds the line-up: a player's `Team` message and the host's `SetTeams` both change it there, and the host's Setup copies it back before sending its own. The hub checks capacity on every change, and that two teams have players only at Start.
 - A player name is at most 16 bytes, short enough for a seat pill and within `proto.MaxName`'s 24.
 
 ## Server and deployment

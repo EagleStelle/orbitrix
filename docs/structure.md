@@ -12,6 +12,7 @@ orbitrix/
 │   ├── geometry.go             Capacity and neighbour tables, Index and Coords
 │   ├── rng.go                  splitmix64 RNG
 │   ├── snapshot.go             Snapshot, Restore and Hash
+│   ├── teams.go                Cells (the orbs on a board) and the team game's rules
 │   ├── testdata/fuzz/          Saved fuzz inputs
 │   └── ai/                     The bots
 │       ├── ai.go               Bot, Choose, Strategy, Parse, budgets and the shared helpers (simulate, tally)

@@ -37,7 +37,7 @@ func (t tactic) deepen() int {
 			}
 			child := &b.nodes[0]
 			b.play(child, b.g, cands[i].cell)
-			if child.Over() && child.Winner == b.me {
+			if child.Won(b.me) {
 				return cands[i].cell
 			}
 			v, done := t.minimax(child, depth-1, value, math.Inf(1), 1)
@@ -173,7 +173,7 @@ func insertTop(list []scored, s scored, k int) []scored {
 func (t *tactic) evaluate(n *core.Game, ply int) float64 {
 	me, geo := t.b.me, n.Geo
 	if n.Over() {
-		if n.Winner == me {
+		if n.Won(me) {
 			return tacticWin - float64(ply)
 		}
 		return -tacticWin + float64(ply)
@@ -193,7 +193,7 @@ func (t *tactic) evaluate(n *core.Game, ply int) float64 {
 		}
 		enemies := 0
 		for _, j := range geo.Neighbours(i) {
-			if eo := n.Owner[j]; eo != core.NoOwner && eo != o {
+			if eo := n.Owner[j]; eo != core.NoOwner && !n.Allied(eo, o) {
 				enemies++
 				if n.Count[j]+1 >= geo.Cap[j] {
 					value -= float64(4*c + 6)
@@ -206,7 +206,7 @@ func (t *tactic) evaluate(n *core.Game, ply int) float64 {
 				near := false
 				for _, j := range geo.Neighbours(i) {
 					for _, k := range geo.Neighbours(int(j)) {
-						if eo := n.Owner[k]; eo != core.NoOwner && eo != o {
+						if eo := n.Owner[k]; eo != core.NoOwner && !n.Allied(eo, o) {
 							near = true
 						}
 					}
@@ -221,7 +221,7 @@ func (t *tactic) evaluate(n *core.Game, ply int) float64 {
 	var opponents, sum, strongest float64
 	strongest = math.Inf(-1)
 	for p := 0; p < n.Players; p++ {
-		if p == int(me) || !n.Alive(p) {
+		if n.Allied(int8(p), me) || !n.Alive(p) {
 			continue
 		}
 		opponents++

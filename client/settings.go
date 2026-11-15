@@ -45,6 +45,11 @@ type settings struct {
 	Firewall bool `json:"firewall,omitempty"`
 	// Where is where Setup last played: whereDevice, whereWifi or whereOnline; where() is the one this build offers.
 	Where int `json:"where,omitempty"`
+	// Teams is how many teams the game has, 2 to core.MaxTeams, or 0 with the Teams add-on off; TeamCap is the most
+	// players on a team, and Team each seat's team.
+	Teams   int     `json:"teams,omitempty"`
+	TeamCap int     `json:"teamCap,omitempty"`
+	Team    []uint8 `json:"team,omitempty"`
 
 	// Rolled: Map is a roll of Setup's die, which keeps the size picker. rolled is that map, so choosing any other
 	// map ends it without a reset.
@@ -165,6 +170,7 @@ func loadSettings(rng *core.RNG) *settings {
 	} else {
 		s.fitSeats()
 	}
+	s.fitTeams()
 	return s
 }
 
@@ -215,6 +221,56 @@ func (s *settings) fitSeats() {
 		s.seats = append(s.seats, 1+(len(s.seats)-1+int(ai.NumStrategies))%int(ai.NumStrategies))
 	}
 	s.seats = s.seats[:s.Players]
+}
+
+// minTeamCap is the least a team game's teams must hold to seat every player.
+func (s *settings) minTeamCap() int { return (s.Players + s.Teams - 1) / s.Teams }
+
+// fitTeams keeps a team game's line-up one its settings allow: a team for every seat and no team over TeamCap, which
+// grows to seat every player. A seat that is new, or whose team is gone or full, joins the emptiest team.
+func (s *settings) fitTeams() {
+	if s.Teams == 0 {
+		return
+	}
+	s.Teams = max(2, min(core.MaxTeams, s.Teams))
+	s.TeamCap = max(s.minTeamCap(), min(core.MaxPlayers-1, s.TeamCap))
+	kept := min(len(s.Team), s.Players)
+	for len(s.Team) < s.Players {
+		s.Team = append(s.Team, 0)
+	}
+	s.Team = s.Team[:s.Players]
+	var size [core.MaxTeams]int
+	var homeless uint16
+	for i, t := range s.Team {
+		if i < kept && int(t) < s.Teams && size[t] < s.TeamCap {
+			size[t]++
+		} else {
+			homeless |= 1 << i
+		}
+	}
+	for i := range s.Team {
+		if homeless&(1<<i) == 0 {
+			continue
+		}
+		t := 0
+		for k := 1; k < s.Teams; k++ {
+			if size[k] < size[t] {
+				t = k
+			}
+		}
+		s.Team[i] = uint8(t)
+		size[t]++
+	}
+}
+
+// rivals reports whether the seats can play each other: always with Teams off, else once two teams have players.
+func (s *settings) rivals() bool {
+	for _, t := range s.Team {
+		if s.Teams != 0 && t != s.Team[0] {
+			return true
+		}
+	}
+	return s.Teams == 0
 }
 
 func (s *settings) save() {

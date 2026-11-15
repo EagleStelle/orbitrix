@@ -29,7 +29,7 @@ func (b *Bot) gambler() int {
 	my := float64(g.Orbs[me])
 	var strongest int32
 	for p := 0; p < g.Players; p++ {
-		if p != int(me) {
+		if !g.Allied(int8(p), me) {
 			strongest = max(strongest, g.Orbs[p])
 		}
 	}

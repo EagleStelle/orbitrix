@@ -8,6 +8,16 @@
 - Explosions resolve in waves. Every full cell explodes at once, then the cells those orbs filled explode in the next wave, and so on.
 - You are out when you have no orbs left after your first turn. Once everyone has had a turn, the moment only one player has orbs on the board, that player wins, even in the middle of a chain.
 
+### Teams
+
+With the Teams add-on on, players keep their own colours and play in teams of rivals.
+
+- Teammates never capture each other. An orb that explodes into a teammate's cell joins the orbs there, so a cell can hold several colours of one team. Orbs that reach a rival's cell capture it as usual; when two teammates' orbs arrive together they share the captured orbs evenly, the odd one going to the lower seat.
+- You still place only on empty cells and on cells where you have an orb of your own. A teammate's cell opens to you once one of your orbs has landed in it.
+- A cell of several colours explodes orb by orb: the colour with the fewest orbs there goes first (the lower seat on a tie) and the one with the most last, to the neighbours clockwise from the one above. Orbs left over stay with the colours not yet reached.
+- On a map, a device works for the colour with the most orbs in its cell, and a Vault's shield lets teammates' orbs in.
+- A player with no orbs left is out even while their team plays on. The game ends the moment only one team has orbs, and every player of that team wins.
+
 ## Home
 
 Home shows the ORBITRIX wordmark, the twelve seat colours, a live bot game on the mat, and the round play button with the name bar to its right, with Maps, Settings and Exit under them. Exit is missing in the browser.
@@ -22,9 +32,10 @@ The play button (or Enter in the name bar) opens Setup.
 - Rules: square option tiles, each an icon over its label, in three groups stacked one a row.
   - Join a room, in the heading, is always there: it opens the join page, with Same Wi-Fi and Online tabs, a list of rooms and a code.
   - Play on: This Device (alone against bots, or with friends passing one device around), Same Wi-Fi (native LAN rooms, browser joining by QR, and browser rooms joined by invite and reply links) or Online (rooms through the site's server; in the web build and in native builds made with `ORBITRIX_SERVER`). Same Wi-Fi and Online turn Start into Open room. The choice is remembered. While a room is open the group is held; Back closes the room and keeps your setup.
-  - Mode (Turn-based) and Add-ons, extras that can be on together: Real-time, Drop, Combine, Fog of war and Tiles are listed dimmed until they are built.
+  - Mode (Turn-based) and Add-ons, extras that can be on together. Teams is built; Real-time, Drop, Combine, Fog of war and Tiles are listed dimmed until they are.
 
 - Players: the heading's − and + set the count from 2 to 12. Each seat is Human or one of the twelve bots, with its difficulty shown as five pips. The seat dropdown also has Swap position, which moves you into that seat and gives the bot there yours (two humans never trade), and Remove player, which takes the seat out and moves the seats after it up.
+- Teams: with the add-on on, Players gains two steppers, Teams (2 to 6) and Per team (the most players on a team), and every seat a chip with its team's letter, A to F. Tap a chip to move that seat to the next team with room. In a room each player taps their own chip, and the host can move anyone. Start reads "Needs two teams" while every player is on one team.
 - Map: on a screen on its side it fills the right, with Rules and Players stacked on the left; upright, everything stacks. Long lists scroll inside their own card: the seats in Players, the sizes in Map. The classic map is a mini-board preview, then eighteen presets in Portrait, Balanced and Landscape sections, each with six sizes from Coaster (5×7) to Floor (13×18). Columns and Rows go from 3 to 40; a size that matches no preset reads Custom. Choose a map in the heading opens Maps; the die button beside it, there on the classic map and on a rolled one, rolls a random map at that size, and changing the size rolls again; with a saved map chosen the block shows its thumbnail and name instead of the size controls.
 - Start reads "Board too small" when there are more players than cells.
 
@@ -39,6 +50,8 @@ Bots wait 300 to 600 ms before moving, so you can follow them. Long chains play 
 Menu (or Esc) opens Resume, Restart, Save map (on a custom map), Settings and Main menu. Restart asks before it throws the game away. Online, the menu has no Restart, and the game carries on behind it.
 
 When every human is out and only bots are left, the game asks whether to continue watching or leave.
+
+In a team game each seat shows its team's letter, a cell shows every orb in its own colour, and the results read "Team A wins!" in the colour of the player who made the winning move, with the whole team in 1st place.
 
 When a player wins, their colour floods the screen with the move count, the biggest chain and two boards of every player: Survival (who lasted longest) and Knockouts (how many players each put out), with gold, silver and bronze for the first three. Then Play again, Main menu and Exit.
 

@@ -17,16 +17,14 @@ type Wave []int16
 // Game is the full rules state. Count, Owner, Orbs and the scalar fields are exported for fast reads by the AI
 // and the client; change them only through methods, or the per-player tallies stop matching the board.
 type Game struct {
-	Geo            *Geometry
-	Count          []uint8 // orbs in each cell
-	Owner          []int8  // owner of each cell, NoOwner when empty
+	Geo *Geometry
+	Cells
 	Players        int
-	Turn           int               // player to move
-	Played         uint16            // bit p is set once player p has had a turn
-	Moves          int               // moves applied so far
-	Winner         int8              // NoOwner until someone wins
-	Orbs           [MaxPlayers]int32 // orbs on the board per player
-	Map            *MapDefinition    // immutable design; nil is a classic rectangle
+	Turn           int            // player to move
+	Played         uint16         // bit p is set once player p has had a turn
+	Moves          int            // moves applied so far
+	Winner         int8           // NoOwner until someone wins; in a team game a player of the winning team
+	Map            *MapDefinition // immutable design; nil is a classic rectangle
 	Durability     []uint8
 	EdgeDurability []uint8   // indexed by Map.Edges; only BreakableBarrier uses durability
 	CircuitOn      [256]bool // polarity: outputs reverse their individual starting states
@@ -52,6 +50,7 @@ type Game struct {
 	cur, next []int16 // cells exploding in this wave / the next one
 	arrived   []uint8 // at least one orb received in this placement or wave
 	from      []int8  // owner of each cur cell at the start of the wave
+	deal      []int8  // a team game's colours of each cur cell's orbs, dealWidth per cell
 	waveCells []int16 // every recorded wave, back to back
 	waveEnds  []int32 // end of each wave in waveCells
 	waves     []Wave
@@ -89,7 +88,7 @@ func (g *Game) setGeometry(geo *Geometry) {
 	if len(g.Count) == n {
 		return
 	}
-	g.Count, g.Owner = make([]uint8, n), make([]int8, n)
+	g.Count, g.Owner, g.Mix = make([]uint8, n), make([]int8, n), nil
 	g.arrived = make([]uint8, n)
 	g.cur, g.next, g.from = make([]int16, 0, n), make([]int16, 0, n), make([]int8, 0, n)
 }
@@ -98,10 +97,9 @@ func (g *Game) setGeometry(geo *Geometry) {
 // Simulate, is the AI's allocation-free way to try a move.
 func (g *Game) CopyFrom(src *Game) {
 	g.setGeometry(src.Geo)
-	copy(g.Count, src.Count)
-	copy(g.Owner, src.Owner)
+	g.Cells.CopyFrom(&src.Cells)
 	g.Players, g.Turn, g.Played, g.Moves, g.Winner = src.Players, src.Turn, src.Played, src.Moves, src.Winner
-	g.Orbs, g.Exploded, g.unstable = src.Orbs, src.Exploded, src.unstable
+	g.Exploded, g.unstable = src.Exploded, src.unstable
 	g.Map, g.CircuitOn = src.Map, src.CircuitOn
 	g.topology = src.topology
 	g.Durability = append(g.Durability[:0], src.Durability...)
@@ -125,10 +123,10 @@ func (g *Game) Over() bool { return g.Winner != NoOwner }
 func (g *Game) Alive(p int) bool { return g.Orbs[p] > 0 || g.Played&(1<<p) == 0 }
 
 // Legal reports whether the current player may place an orb in cell: the game isn't over and the cell is
-// empty or already theirs.
+// empty or holds orbs of theirs, which in a team game a teammate's cell does only once theirs have landed there.
 func (g *Game) Legal(cell int) bool {
 	return !g.Over() && g.Placeable(cell) && g.Count[cell] < 255 &&
-		(g.Owner[cell] == NoOwner || g.Owner[cell] == int8(g.Turn))
+		(g.Owner[cell] == NoOwner || g.Has(cell, int8(g.Turn)))
 }
 
 // Placeable reports whether cell i can take an orb at all: playable, and no Box stands on it.
@@ -143,7 +141,7 @@ func (g *Game) LegalMoves(dst []int) []int {
 	}
 	p := int8(g.Turn)
 	for i, o := range g.Owner {
-		if g.Placeable(i) && g.Count[i] < 255 && (o == NoOwner || o == p) {
+		if g.Placeable(i) && g.Count[i] < 255 && (o == NoOwner || g.Has(i, p)) {
 			dst = append(dst, i)
 		}
 	}
@@ -201,9 +199,7 @@ func (g *Game) play(cell int, record bool) error {
 			g.Pressed[e] &^= ReservoirMade // each may make an orb again
 		}
 	}
-	g.Owner[cell] = p
-	g.Count[cell]++
-	g.Orbs[p]++
+	g.Add(cell, p, 1)
 	topologyChanged := false
 	if g.Map != nil {
 		clear(g.arrived)
@@ -350,14 +346,9 @@ func (g *Game) produce(p int8, record bool, wave int) {
 				g.shots++
 			}
 		case f == Crusher:
-			g.Count[i]--
-			g.Orbs[p]--
-			if g.Count[i] == 0 {
-				g.Owner[i] = NoOwner
-			}
+			g.Remove(i, p, 1)
 		case g.Count[i] < 255:
-			g.Count[i]++
-			g.Orbs[p]++
+			g.Add(i, p, 1)
 			if g.Count[i] == g.Geo.Cap[i] {
 				g.next = append(g.next, e)
 			}
@@ -429,6 +420,10 @@ func (g *Game) resolve(record bool, first int) int {
 // up its orbs, then every neighbour receives. After the first pass only receiving raises counts, so a cell
 // reaches capacity at most once per wave and g.next needs no de-duplication.
 func (g *Game) explode() {
+	if g.Mix != nil {
+		g.explodeTeams()
+		return
+	}
 	geo := g.Geo
 	if g.Map != nil {
 		clear(g.arrived)
@@ -506,6 +501,9 @@ func (g *Game) explode() {
 func (g *Game) checkWin() bool {
 	if g.Played != 1<<g.Players-1 {
 		return false
+	}
+	if g.Mix != nil {
+		return g.checkTeamWin()
 	}
 	winner := NoOwner
 	for p := 0; p < g.Players; p++ {

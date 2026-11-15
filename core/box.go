@@ -48,9 +48,8 @@ func (g *Game) moveBoxes(wave int, record bool) (filled bool) {
 	}
 	// explode left the held orbs on the Boxes' cells, and in the next wave if they filled it: terrainWave rebuilds it.
 	for _, p := range g.pushes {
-		if b := p.box; g.Count[b] != 0 {
-			g.Orbs[g.Owner[b]] -= int32(g.Count[b])
-			g.Count[b], g.Owner[b], g.arrived[b] = 0, NoOwner, 0
+		if b := int(p.box); g.Lift(b, nil) != 0 {
+			g.arrived[b] = 0
 		}
 	}
 	moves := g.boxMoves[:0]
@@ -107,12 +106,15 @@ func (g *Game) moveBoxes(wave int, record bool) (filled bool) {
 		}
 		to := int(m.to)
 		if m.shove >= 0 {
-			s, c, o := int(m.shove), g.Count[to], g.Owner[to]
-			g.Count[to], g.Owner[to] = 0, NoOwner
-			g.Orbs[o] -= int32(c)
+			var stack [MaxPlayers]uint8
+			s, c := int(m.shove), g.Lift(to, &stack)
 			switch g.TerrainAt(s) {
 			case Floor:
-				g.gain(s, o, c)
+				for o, c := range stack {
+					if c != 0 {
+						g.gain(s, int8(o), c)
+					}
+				}
 				g.arrived[s] = 1
 			case Landfill: // absorbed as fill, like orbs sent into it
 				g.Durability[s] -= min(c, g.Durability[s])
@@ -134,6 +136,9 @@ func (g *Game) moveBoxes(wave int, record bool) (filled bool) {
 			g.Boxes[to] |= BoxHere
 			g.arrived[to] = 1 // presses a switch
 		}
+	}
+	if g.Mix != nil {
+		g.Land(nil, nil) // the orbs Boxes held or shoved arrive together, as a wave's do
 	}
 	g.boxMoves = moves
 	return filled
@@ -270,11 +275,15 @@ func (g *Game) restoreBoxes(boxes, count []uint8) error {
 // gain adds c of owner's orbs to cell i, capturing it as arriving orbs do; a Vault's shield takes what it can.
 func (g *Game) gain(i int, owner int8, c uint8) {
 	for hit := true; hit && c > 0; {
-		if hit, g.Pressed[i] = Shielded(g.Pressed[i], owner); hit {
+		if hit, g.Pressed[i] = g.shielded(i, owner); hit {
 			c--
 		}
 	}
 	if c == 0 {
+		return
+	}
+	if g.Mix != nil {
+		g.Send(i, owner, c)
 		return
 	}
 	if o := g.Owner[i]; o != owner {
@@ -303,21 +312,21 @@ func sign(v int8) int8 {
 func (g *Game) collectPushes() {
 	g.pushes = g.pushes[:0]
 	geo := g.Geo
-	push := func(k int, e int16, slot int) {
+	push := func(k int, e int16, slot int, owner int8) {
 		if n := geo.Nbr[MaxConnections*int(e)+slot]; g.Boxes[n]&BoxHere != 0 {
-			g.pushes = append(g.pushes, boxPush{box: n, from: e, owner: g.from[k], dir: geo.Dirs[MaxConnections*int(e)+slot]})
+			g.pushes = append(g.pushes, boxPush{box: n, from: e, owner: owner, dir: geo.Dirs[MaxConnections*int(e)+slot]})
 		}
 	}
 	for k, e := range g.cur {
 		if k < g.shots {
-			push(k, e, geo.LastAim(int(e), g.Durability[e])) // a Turret's one shot
+			push(k, e, geo.LastAim(int(e), g.Durability[e]), g.from[k]) // a Turret's one shot
 			continue
 		}
 		for slot := range geo.Degree[e] {
-			push(k, e, int(slot))
+			push(k, e, int(slot), g.sender(k, int(slot)))
 		}
 		if geo.Outlets != nil && geo.Outlets[e] != 0 {
-			push(k, e, geo.LastOutlet(int(e), g.Pressed[e])) // its extra orb
+			push(k, e, geo.LastOutlet(int(e), g.Pressed[e]), g.sender(k, MaxConnections)) // its extra orb
 		}
 	}
 }

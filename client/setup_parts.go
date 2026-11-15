@@ -1,6 +1,7 @@
 package client
 
 import (
+	"image/color"
 	"unicode/utf8"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -27,7 +28,47 @@ var gameRows = [...]struct {
 }{
 	{"Play on", []string{"This Device", "Same Wi-Fi", "Online"}, []int{iconDevice, iconWifi, iconOnline}, 0b111},
 	{"Mode", []string{"Turn-based", "Real-time"}, []int{iconTurns, iconRealtime}, 0b01},
-	{"Add-ons", []string{"Drop", "Combine", "Fog of war", "Tiles"}, []int{iconDrop, iconCombine, iconFog, iconTiles}, 0},
+	{"Add-ons", []string{"Teams", "Drop", "Combine", "Fog of war", "Tiles"}, []int{iconTeams, iconDrop, iconCombine, iconFog, iconTiles}, 0b00001},
+}
+
+// addonsOn are the add-ons a game of teams teams (0 for none) has on, a bit per option of the Add-ons group.
+func addonsOn(teams int) uint8 {
+	if teams != 0 {
+		return 1
+	}
+	return 0
+}
+
+// teamLetters name a team game's teams on the chip each seat carries.
+var teamLetters = [core.MaxTeams]string{"A", "B", "C", "D", "E", "F"}
+
+// teamChipW is a team chip's width, the same for every letter.
+func teamChipW(a *app) float64 { return ui.ChipWidth(a.ui(), "D", ui.ChipHeight*a.u) }
+
+// drawTeamChip draws team's letter in r: a solid pill of ink where a tap changes the team, an outline where it only
+// shows it.
+func drawTeamChip(dst *ebiten.Image, a *app, r ui.Rect, team uint8, ink, ground color.RGBA, solid bool) {
+	if solid {
+		ui.FillPill(dst, r, ink)
+		ink = ground
+	} else {
+		ui.StrokeRound(dst, r, r.H/2, 1.5*a.u, ink)
+	}
+	ui.DrawText(dst, teamLetters[team], a.f.SmallBold, r.Cx(), r.Cy(), text.AlignCenter, ink)
+}
+
+// nextTeam is the team a tap moves seat i to: the next one with room, if any has.
+func nextTeam(team []uint8, i, teams, capacity int) (uint8, bool) {
+	var size [core.MaxTeams]int
+	for _, t := range team {
+		size[t]++
+	}
+	for k := 1; k < teams; k++ {
+		if t := (int(team[i]) + k) % teams; size[t] < capacity {
+			return uint8(t), true
+		}
+	}
+	return team[i], false
 }
 
 // The Rules card's option tiles are squares, ruleTile px a side and ruleGap apart; its groups stack ruleRowGap apart.
@@ -44,7 +85,7 @@ type gameBlock struct {
 	r     ui.Rect
 	bp    float64
 	strip ui.Scroll                 // the groups' rows, scrolling sideways together
-	tiles [len(gameRows)][4]ui.Rect // by group and option
+	tiles [len(gameRows)][5]ui.Rect // by group and option
 	ly    [len(gameRows)]float64    // each group's label
 	join  ui.Rect                   // the heading's Join a room button
 
@@ -102,10 +143,11 @@ func (g *gameBlock) hit(a *app, i int) int {
 	return -1
 }
 
-// draw draws the card with where chosen. Options in whereOff are dimmed; locked dims every group, for a joiner.
+// draw draws the card with where chosen and the add-ons in addons on. Options in whereOff are dimmed; locked dims
+// every group, for a joiner.
 // Its caller draws the heading's Join a room button over it. A foldable card shows its chevron; collapsed (not open),
 // only its heading is drawn.
-func (g *gameBlock) draw(dst *ebiten.Image, a *app, where int, whereOff uint8, locked, open, foldable bool) {
+func (g *gameBlock) draw(dst *ebiten.Image, a *app, where int, whereOff, addons uint8, locked, open, foldable bool) {
 	sc, u := a.sc, a.u
 	ui.FillRound(dst, g.r, 24*u, sc.Tile)
 	ui.DrawText(dst, "Rules", a.f.Heading, g.r.X+g.bp, g.r.Y+g.bp+22*u, text.AlignStart, sc.Ink)
@@ -127,7 +169,7 @@ func (g *gameBlock) draw(dst *ebiten.Image, a *app, where int, whereOff uint8, l
 			on, off = 1<<where, whereOff
 		}
 		if i == len(gameRows)-1 {
-			on = 0 // add-ons are each on or off, any number together, and none is built
+			on = addons // each is on or off, any number together
 		}
 		if locked {
 			off = 0xff

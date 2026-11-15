@@ -270,23 +270,35 @@ func (b *Bot) charge(units, explosions int) {
 	b.boom %= unitExplosions
 }
 
-// others sums the orbs of every player except the one to move.
+// others sums the orbs of every player except the one to move and, in a team game, their teammates.
 func (b *Bot) others(t [core.MaxPlayers]int32) int32 {
 	var n int32
 	for p := 0; p < b.g.Players; p++ {
-		if p != int(b.me) {
+		if !b.g.Allied(int8(p), b.me) {
 			n += t[p]
 		}
 	}
 	return n
 }
 
+// winners gives every winner of a finished game the full reward: the winner and, in a team game, their teammates.
+func winners(g *core.Game) (values [core.MaxPlayers]float64) {
+	for p := range g.Players {
+		if g.Won(int8(p)) {
+			values[p] = 1
+		}
+	}
+	return values
+}
+
 // wins reports whether no opponent has orbs left in t.
 func (b *Bot) wins(t [core.MaxPlayers]int32) bool { return b.others(t) == 0 }
 
-func (b *Bot) mine(i int) bool                { return b.g.Owner[i] == b.me }
-func (b *Bot) empty(i int) bool               { return b.g.Placeable(i) && b.g.Owner[i] == core.NoOwner }
-func (b *Bot) enemy(i int) bool               { return b.g.Owner[i] != core.NoOwner && !b.mine(i) }
+func (b *Bot) mine(i int) bool  { return b.g.Owner[i] == b.me }
+func (b *Bot) empty(i int) bool { return b.g.Placeable(i) && b.g.Owner[i] == core.NoOwner }
+func (b *Bot) enemy(i int) bool {
+	return b.g.Owner[i] != core.NoOwner && !b.g.Allied(b.g.Owner[i], b.me)
+}
 func (b *Bot) count(i int) int                { return int(b.g.Count[i]) }
 func (b *Bot) capacity(i int) int             { return int(b.geo.Cap[i]) }
 func (b *Bot) corner(i int) bool              { return b.geo.Cap[i] == 2 }

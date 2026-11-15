@@ -51,7 +51,7 @@ func (b *Bot) voyager() int {
 			_ = sim.Simulate(int(tree[child].cell)) // shortlisted cells are legal
 			exploded += sim.Exploded
 			path, node = append(path, child), child
-			if len(path) == 2 && sim.Over() && sim.Winner == b.me {
+			if len(path) == 2 && sim.Won(b.me) {
 				return int(tree[child].cell) // immediate win
 			}
 			if fresh {
@@ -93,8 +93,7 @@ func (b *Bot) voyager() int {
 // Finished games use exact win/loss rewards; eliminated players always receive zero.
 func positionShares(g *core.Game) (values [core.MaxPlayers]float64) {
 	if g.Over() {
-		values[g.Winner] = 1
-		return values
+		return winners(g)
 	}
 	var order [core.MaxPlayers]int
 	for p := 0; p < g.Players; p++ {
@@ -116,7 +115,7 @@ func positionShares(g *core.Game) (values [core.MaxPlayers]float64) {
 			value += 2
 		}
 		for _, j := range g.Geo.Neighbours(i) {
-			if q := g.Owner[j]; q != core.NoOwner && q != p && g.Count[j]+1 >= g.Geo.Cap[j] {
+			if q := g.Owner[j]; q != core.NoOwner && !g.Allied(q, p) && g.Count[j]+1 >= g.Geo.Cap[j] {
 				// A ready cell can capture its attacker first when its owner's turn comes sooner.
 				if c+1 >= cp && order[p] < order[q] {
 					continue
@@ -265,7 +264,7 @@ func (b *Bot) rolloutMove(g *core.Game) int {
 			if g.Count[i]+1 >= g.Geo.Cap[i] {
 				score = 2
 				for _, j := range g.Geo.Neighbours(i) {
-					if q := g.Owner[j]; q != core.NoOwner && q != p {
+					if q := g.Owner[j]; q != core.NoOwner && !g.Allied(q, p) {
 						score = 3
 						break
 					}

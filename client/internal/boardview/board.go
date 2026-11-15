@@ -520,7 +520,7 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 				c = mapArtFloorColor(sc, design)
 			}
 		}
-		if turn >= 0 && int(o) == turn {
+		if turn >= 0 && o != core.NoOwner && b.State.Has(i, int8(turn)) {
 			c = ui.Mix(c, sc.Players[turn], tileTint)
 		}
 		x, y := b.Centre(i)
@@ -542,11 +542,24 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 		if b.moving != nil && b.moving[i]&slidStack != 0 {
 			cx, cy = b.slideAt(i, true, f) // shoved along with its Box
 		}
-		owner := int(b.State.Owner[i])
-		if !b.State.Geo.Playable(i) {
+		owner, shut := int(b.State.Owner[i]), !b.State.Geo.Playable(i)
+		if shut {
 			owner = int(core.NoOwner) // presentation only; the saved owner regains control on reopening
 		}
+		// A team game's cell shows each orb in its own colour, the lower seats' first.
+		mix, q, left := b.State.Mix, -1, 0
+		if stride := len(mix) / len(b.State.Count); mix != nil {
+			mix = mix[i*stride : (i+1)*stride]
+		}
 		for _, p := range b.Orbs.update(i, int(n), int(b.State.Geo.Cap[i]), tms, b.base) {
+			if mix != nil && !shut {
+				for left == 0 && q+1 < len(mix) {
+					q++
+					left = int(mix[q])
+				}
+				left--
+				owner = q
+			}
 			b.Orb(cx+p[0]*b.k, cy+p[1]*b.k, owner)
 		}
 	}
@@ -597,14 +610,16 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 				continue
 			}
 			for connection, target := range b.State.Geo.Targets(int(e)) {
-				x, y := b.flightPosition(int(e), connection, b.bounce(int(target), b.State.from[k], f))
-				b.Orb(x, y, int(b.State.from[k]))
+				owner := b.State.flew(k, connection)
+				x, y := b.flightPosition(int(e), connection, b.bounce(int(target), owner, f))
+				b.Orb(x, y, int(owner))
 			}
 			if outlets := b.State.Geo.Outlets; outlets != nil && outlets[e] != 0 {
 				// A Reservoir's extra orb trails the one flying the way its arrow points.
 				slot, _ := b.State.Geo.Outlet(int(e), b.State.Replay.Pressed[e])
-				x, y := b.flightPosition(int(e), slot, b.bounce(int(b.State.Geo.Targets(int(e))[slot]), b.State.from[k], f*.8))
-				b.Orb(x, y, int(b.State.from[k]))
+				owner := b.State.flew(k, core.MaxConnections)
+				x, y := b.flightPosition(int(e), slot, b.bounce(int(b.State.Geo.Targets(int(e))[slot]), owner, f*.8))
+				b.Orb(x, y, int(owner))
 			}
 		}
 	}
@@ -657,9 +672,9 @@ func (b *Board) dropIntoHoles() sound.Effects {
 		if k < b.State.shots {
 			continue // a Turret fires only at Floor
 		}
-		for _, hole := range geo.Targets(int(e))[geo.Degree[e]:] {
+		for h, hole := range geo.Targets(int(e))[geo.Degree[e]:] {
 			landfill := b.State.Replay != nil && b.State.Replay.TerrainAt(int(hole)) == core.Landfill
-			b.falls = append(b.falls, fallingOrb{hole: hole, owner: b.State.from[k], start: b.Clock, landfill: landfill})
+			b.falls = append(b.falls, fallingOrb{hole: hole, owner: b.State.flew(k, int(geo.Degree[e])+h), start: b.Clock, landfill: landfill})
 			effects = sound.Fall
 		}
 	}

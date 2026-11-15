@@ -2,6 +2,7 @@ package hub_test
 
 import (
 	"errors"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -469,5 +470,45 @@ func TestNewRejects(t *testing.T) {
 		if _, err := hub.New(cfg); err == nil {
 			t.Errorf("%s: no error", name)
 		}
+	}
+}
+
+// TestTeams sets a lobby's teams: a player moves to a team with room and not to a full one, a line-up on one team
+// doesn't start, and the game that does start is the team game.
+func TestTeams(t *testing.T) {
+	room := newRoom(t, hub.Config{Seats: humans(2, hub.Seat{AI: ai.Jester}), Teams: 2, TeamCap: 2, Team: []uint8{0, 0, 1}})
+	a, b := join(t, room, "", proto.Token{}), join(t, room, "", proto.Token{})
+	b.send(proto.Team{Team: 1})
+	l := a.lobbyWhere(func(l proto.Lobby) bool { return l.Seats[1].Team == 1 })
+	if l.Teams != 2 || l.TeamCap != 2 || l.Seats[0].Team != 0 || l.Seats[2].Team != 1 {
+		t.Fatalf("lobby: %+v", l)
+	}
+	a.send(proto.Team{Team: 1}) // full: ignored
+	a.send(proto.Ready{On: true})
+	if l := a.lobbyWhere(func(l proto.Lobby) bool { return l.Seats[0].Ready }); l.Seats[0].Team != 0 {
+		t.Fatal("joined a full team")
+	}
+	if room.SetTeams(2, 1, []uint8{0, 1, 1}) == nil || room.SetTeams(2, 2, []uint8{0, 1}) == nil {
+		t.Fatal("a line-up over capacity, or of the wrong length")
+	}
+	if err := room.SetTeams(3, 3, []uint8{2, 2, 2}); err != nil {
+		t.Fatal(err)
+	}
+	b.send(proto.Ready{On: true})
+	a.lobbyWhere(func(l proto.Lobby) bool { return l.Seats[1].Ready })
+	if room.Start() == nil {
+		t.Fatal("started with every player on one team")
+	}
+	if err := room.SetTeams(2, 2, []uint8{0, 0, 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := room.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if s := waitFor[proto.Snapshot](a); !slices.Equal(s.Game.Team, []uint8{0, 0, 1}) {
+		t.Fatalf("snapshot teams %v", s.Game.Team)
+	}
+	if room.SetTeams(0, 0, nil) != hub.ErrState {
+		t.Fatal("teams set mid-game")
 	}
 }
