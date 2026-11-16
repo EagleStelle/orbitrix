@@ -70,7 +70,14 @@ func TestPlayLayout(t *testing.T) {
 						parts := map[string]ui.Rect{"menu": ui.CompactHit(p.menu, u), "board viewport": p.boardView.Viewport,
 							"name": p.name, "callout": p.callout}
 						stackTop, stackBottom := p.name.Y, p.callout.Bottom() // the legend's end of the name and chip
-						for team, r := range p.legend {
+						legend := p.legend[:]
+						if p.legendView.MaxScroll() > 0 { // a scrolling legend is its viewport, the mover's team in view
+							legend = []ui.Rect{p.peek[2]}
+							if a.portrait() || p.peek[2].H < ui.ChipHeight*u-0.01 || !containsRect(p.peek[2].Inset(-0.01), p.legend[p.game.Team[p.shown]]) {
+								t.Fatalf("only a short rail's legend scrolls, keeping a line and the mover's team in view: %+v", p.peek[2])
+							}
+						}
+						for team, r := range legend {
 							if r.W > 0 {
 								parts[fmt.Sprint("team ", team)] = r
 								stackTop, stackBottom = min(stackTop, r.Y), max(stackBottom, r.Bottom())
@@ -116,9 +123,12 @@ func TestPlayLayout(t *testing.T) {
 							spinner := ui.Rect{X: p.spinX - p.spinR, Y: p.spinY - p.spinR, W: d, H: d}
 							parts["spinner"] = spinner
 							if p.tokR != 0 || d > p.menu.W+0.01 || math.Abs(p.menu.W-p.callout.W) > 0.01 || math.Abs(p.spinX-p.menu.Cx()) > 0.01 ||
-								p.name.Y < spinner.Bottom()+12*u-0.01 || p.callout.Y < p.name.Bottom()+8*u-0.01 ||
-								stackBottom > p.callout.Bottom() && p.peek[2].Y < p.callout.Bottom()+12*u-0.01 {
-								t.Fatal("landscape must stack the wheel, the name, the chip, then the legend")
+								p.name.Y < spinner.Bottom()+12*u-0.01 || p.peek[2].Y < p.name.Bottom()+8*u-0.01 || p.callout.Y < p.peek[2].Y-0.01 ||
+								p.peek[2].H > 0 && p.callout.Y < p.peek[2].Bottom()+12*u-0.01 {
+								t.Fatal("landscape must stack the wheel, the name, the legend, then the chip")
+							}
+							if d < menuWidth(a)-0.01 && p.legendView.MaxScroll() > 0 && p.peek[2].H > ui.ChipHeight*u+0.01 {
+								t.Fatalf("a %g px wheel must not give way to a legend that could scroll more", d)
 							}
 							if pad := v.Bottom() - p.boardView.Viewport.Bottom(); d < p.menu.W-0.01 && stackBottom < v.Bottom()-pad-0.01 {
 								t.Fatalf("a %g px wheel must fill the %g px rail while the rail has height to spare", d, p.menu.W)

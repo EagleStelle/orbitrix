@@ -67,7 +67,8 @@ type playScene struct {
 	orbs      [core.MaxPlayers]int
 	orbS      [core.MaxPlayers]string
 	orbLabels [core.MaxPlayers]boardview.Counter
-	spin      float64 // spinner pointer angle, chasing the shown player's wedge
+	spin      float64                  // spinner pointer angle, chasing the shown player's wedge
+	share     [core.MaxPlayers]float64 // each seat's part of the wheel, by slice; they sum to 1
 
 	chain, chainHold int // waves shown in the current or last chain, and ticks left to show it
 	chainOwner       int
@@ -121,6 +122,7 @@ type playScene struct {
 	rowRect                     [core.MaxPlayers]ui.Rect // the dialog's seat rows
 	tableCols                   int                      // and their columns
 	boardView, seatView         ui.Scroll
+	legendView                  ui.Scroll // the legend scrolls where a short rail can't hold all its lines
 	listShown                   int
 	tokX, tokY, tokR            float64       // upright: the mover's dot beside Menu; tokR 0 elsewhere
 	orbsMax                     string        // as many 8s as the most orbs this board holds at rest has digits
@@ -194,6 +196,7 @@ func (p *playScene) settle() {
 	for i := range p.game.Players {
 		p.alive[i] = p.game.Alive(i)
 	}
+	p.slice()
 	p.tally(-1) // a seat skipped before it placed an orb, or already out in the host's snapshot
 	human, humanIn := false, false
 	for i, s := range p.seats {
@@ -559,7 +562,10 @@ func (p *playScene) tickRail() {
 	if d < 0 {
 		d += 2 * math.Pi
 	}
-	if d > 2*math.Pi-1e-3 || d < 1e-3 {
+	if d > 1.5*math.Pi {
+		d -= 2 * math.Pi // the slice moved back under the pointer: follow it, not once around
+	}
+	if math.Abs(d) < 1e-3 {
 		p.spin = p.wedgeAngle(p.shown)
 	} else {
 		p.spin += d * 0.16
@@ -575,9 +581,16 @@ func (p *playScene) tickRail() {
 	}
 
 	var orbs [core.MaxPlayers]int
-	for i, o := range p.b.State.Owner {
-		if o != core.NoOwner {
-			orbs[o] += int(p.b.State.Count[i])
+	if mix := p.b.State.Mix; mix != nil { // a team game's cell holds several colours: count each player's own
+		stride := len(mix) / len(p.b.State.Count)
+		for i, n := range mix {
+			orbs[i%stride] += int(n)
+		}
+	} else {
+		for i, o := range p.b.State.Owner {
+			if o != core.NoOwner {
+				orbs[o] += int(p.b.State.Count[i])
+			}
 		}
 	}
 	for i := range p.seats {
@@ -585,12 +598,41 @@ func (p *playScene) tickRail() {
 			p.orbs[i], p.orbS[i] = orbs[i], strconv.Itoa(orbs[i])
 		}
 	}
+	p.slice()
 }
 
-// wedgeAngle is the middle of seat i's wedge on the spinner, clockwise from the top.
-func (p *playScene) wedgeAngle(i int) float64 {
-	return -math.Pi/2 + (float64(i)+0.5)*2*math.Pi/float64(len(p.seats))
+// slice shares the wheel out as a pie: half equally between the players still in, so each keeps a slice its count
+// fits and a player yet to move still shows, and half by orbs. Out players have no slice.
+func (p *playScene) slice() {
+	in, total := 0, 0
+	for i := range p.seats {
+		if p.alive[i] {
+			in, total = in+1, total+p.orbs[i]
+		}
+	}
+	for i := range p.seats {
+		switch {
+		case !p.alive[i]:
+			p.share[i] = 0
+		case total == 0:
+			p.share[i] = 1 / float64(in)
+		default:
+			p.share[i] = 0.5/float64(in) + 0.5*float64(p.orbs[i])/float64(total)
+		}
+	}
 }
+
+// wedgeStart is where seat i's slice starts on the spinner, clockwise from the top.
+func (p *playScene) wedgeStart(i int) float64 {
+	before := 0.0
+	for _, s := range p.share[:i] {
+		before += s
+	}
+	return -math.Pi/2 + 2*math.Pi*before
+}
+
+// wedgeAngle is the middle of seat i's slice.
+func (p *playScene) wedgeAngle(i int) float64 { return p.wedgeStart(i) + math.Pi*p.share[i] }
 
 // thinkAI starts the AI on a copy of the game, then plays its move once both the move and the delay are ready.
 func (p *playScene) thinkAI(a *app) {
@@ -660,9 +702,11 @@ func (p *playScene) tableRows() int { return (len(p.seats) + p.tableCols - 1) / 
 // menuWidth is the narrowest Menu pill, as drawMenuButton sets it out.
 func menuWidth(a *app) float64 { return 42*a.u + ui.TextWidth("Menu", a.f.LabelBold) + 18*a.u }
 
-// layoutRail stacks Menu, the wheel, the mover's name, the chain chip and a team game's legend. The rail takes the
+// layoutRail stacks Menu, the wheel, the mover's name, a team game's legend and the chain chip. The rail takes the
 // width the board leaves, as far as its height lets the wheel fill it; the wheel is narrower than the rail only
-// where a name or the legend needs more width than the height has room for.
+// where a name or the legend needs more width than the height has room for. The legend is what gives way on a short
+// rail: it takes the widest rail to wrap onto the fewest lines, and where the wheel would still drop under the
+// narrowest rail's width, the wheel keeps that size and the legend scrolls in what is left, a line at least.
 func (p *playScene) layoutRail(a *app, v ui.Rect) {
 	u := a.u
 	pad, menuGap, nameGap, chipGap, listGap := 32*u, 24*u, 20*u, 16*u, 24*u
@@ -673,33 +717,47 @@ func (p *playScene) layoutRail(a *app, v ui.Rect) {
 	h := v.H - 2*pad
 	cw, ch := p.calloutSize(a)
 	nameH := ui.ChipHeight * u
-	room := func(w float64) float64 { // the height a rail w wide leaves its wheel
-		fixed := ch + menuGap + nameGap + nameH + chipGap + ch
-		if lh := p.flowLegend(a, 0, 0, w); lh > 0 {
-			fixed += listGap + lh
-		}
-		return h - fixed
-	}
 	minW := max(menuWidth(a), cw, p.nameWidth(a), p.legendWidth(a))
-	w := minW
-	area := ui.Rect{X: v.X + pad, Y: v.Y + pad, W: v.W - 3*pad - w, H: h}
+	maxW := minW
+	area := ui.Rect{X: v.X + pad, Y: v.Y + pad, W: v.W - 3*pad - minW, H: h}
 	if bw, _ := p.b.Size(area); bw < area.W {
-		w += area.W - bw
-		for range 4 { // a narrower rail may wrap the legend onto more lines, which leaves the wheel less again
-			w = max(minW, min(w, room(w)))
-		}
-		area.W = v.W - 3*pad - w
+		maxW += area.W - bw
 	}
-	d := max(0, min(w, room(w)))
+	room := h - (ch + menuGap + nameGap + nameH + chipGap + ch) // what the wheel and the legend share
+	lh := p.flowLegend(a, 0, 0, maxW)
+	d := min(maxW, room)
+	if lh > 0 {
+		room -= listGap
+		d = min(maxW, max(room-lh, min(minW, room-nameH)))
+	}
+	d = max(0, d)
+	w := max(minW, d)
+	if p.flowLegend(a, 0, 0, w) > lh { // the narrowest rail that still wraps the legend onto as few lines
+		lo, hi := w, maxW
+		for range 20 {
+			if mid := (lo + hi) / 2; p.flowLegend(a, 0, 0, mid) > lh {
+				lo = mid
+			} else {
+				hi = mid
+			}
+		}
+		w = hi
+	}
+	area.W = v.W - 3*pad - w
 	x := v.Right() - pad - w
 	p.boardView.Set(area, area.H)
 	p.menu = ui.Rect{X: x, Y: v.Y + pad, W: w, H: ch}
 	p.spinR = d / 2
 	p.spinX, p.spinY = x+w/2, p.menu.Bottom()+menuGap+p.spinR
 	p.name = ui.Rect{X: x, Y: p.spinY + p.spinR + nameGap, W: w, H: nameH}
-	p.callout = ui.Rect{X: x, Y: p.name.Bottom() + chipGap, W: w, H: ch}
-	p.peek = [3]ui.Rect{{X: p.spinX - p.spinR, Y: p.spinY - p.spinR, W: d, H: d}, p.name,
-		{X: x, Y: p.callout.Bottom() + listGap, W: w, H: p.flowLegend(a, x, p.callout.Bottom()+listGap, w)}}
+	// The legend sits right under the name it belongs with, and the chip under them.
+	legend := ui.Rect{X: x, Y: p.name.Bottom() + chipGap, W: w, H: max(0, min(lh, room-d))}
+	p.legendView.Set(legend, lh)
+	p.callout = ui.Rect{X: x, Y: legend.Y, W: w, H: ch}
+	if lh > 0 {
+		p.callout.Y = legend.Bottom() + listGap
+	}
+	p.peek = [3]ui.Rect{{X: p.spinX - p.spinR, Y: p.spinY - p.spinR, W: d, H: d}, p.name, legend}
 }
 
 // The mover's name row and the team legend: a dot's radius and the space after it, the space between a team's chip
@@ -931,8 +989,9 @@ func (p *playScene) layoutDock(a *app, v ui.Rect) {
 	y := p.name.Y
 	if lh := p.flowLegend(a, x, 0, w); lh > 0 {
 		y -= 12*u + lh
-		p.peek[2] = ui.Rect{X: x, Y: y, W: w, H: p.flowLegend(a, x, y, w)}
+		p.peek[2] = ui.Rect{X: x, Y: y, W: w, H: lh}
 	}
+	p.legendView.Set(p.peek[2], p.peek[2].H)
 	boardW, boardH := p.b.Size(ui.Rect{W: w, H: math.Inf(1)})
 	viewH := min(boardH, y-gap-top)
 	boardW *= viewH / boardH
@@ -944,16 +1003,21 @@ func (p *playScene) layoutScrolled(a *app) {
 	p.b.Layout(ui.Rect{X: v.X, Y: v.Y - p.boardView.Offset, W: v.W, H: p.boardView.Height}, a.u)
 	v = p.seatView.Viewport
 	p.layoutSeats(a, ui.Rect{X: v.X, Y: v.Y - p.seatView.Offset, W: v.W, H: p.seatView.Height}, p.tableRows())
+	v = p.legendView.Viewport
+	p.flowLegend(a, v.X, v.Y-p.legendView.Offset, v.W)
 }
 
+// revealSeat scrolls the mover's row of the Players dialog and their team in the legend into view.
 func (p *playScene) revealSeat(a *app) {
 	p.seatView.Reveal(p.rowRect[p.shown])
+	p.legendView.Reveal(p.legend[p.game.Team[p.shown]])
 	p.listShown = p.shown
 	p.layoutScrolled(a)
 }
 
 func (p *playScene) updateScroll(a *app) {
-	if p.boardView.Update(a.ui()) {
+	moved := p.boardView.Update(a.ui())
+	if p.legendView.Update(a.ui()) || moved {
 		p.layoutScrolled(a)
 	}
 }
@@ -1165,7 +1229,11 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 	}
 
 	// A team game's legend: each team's chip, then its players' dots. Out players are empty rings, a team with
-	// nobody left dims, and a ring marks the mover.
+	// nobody left dims, and a ring marks the mover. A legend taller than a short rail has room for scrolls, clipped.
+	ldst := dst
+	if p.legendView.MaxScroll() > 0 {
+		ldst = p.legendView.Clip(dst)
+	}
 	for t, r := range p.legend {
 		if r.W == 0 {
 			continue
@@ -1178,14 +1246,15 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 			if p.alive[i] {
 				ink = sc.Ink
 			}
-			ui.SeatDot(dst, sc, i, dx, r.Cy(), turnDot*u, !p.alive[i], a.set.Marks)
+			ui.SeatDot(ldst, sc, i, dx, r.Cy(), turnDot*u, !p.alive[i], a.set.Marks)
 			if i == p.shown && !p.over {
-				ui.Ring(dst, dx, r.Cy(), (turnDot+4)*u, 2*u, sc.Ink)
+				ui.Ring(ldst, dx, r.Cy(), (turnDot+4)*u, 2*u, sc.Ink)
 			}
 			dx += (2*turnDot + turnDotGap) * u
 		}
-		drawTeamChip(dst, a, ui.Rect{X: r.X, Y: r.Y, W: teamChipW(a), H: r.H}, uint8(t), ink, sc.Ground, false)
+		drawTeamChip(ldst, a, ui.Rect{X: r.X, Y: r.Y, W: teamChipW(a), H: r.H}, uint8(t), ink, sc.Ground, false)
 	}
+	p.legendView.DrawScrollbar(dst, a.ui())
 
 	// Upright, the centered turn dot also shows the mover's orb count.
 	if p.tokR > 0 {
@@ -1236,15 +1305,18 @@ func (p *playScene) drawRoster(dst *ebiten.Image, a *app) {
 // spinnerKey is what the cached spinner images show.
 type spinnerKey struct {
 	x, y, r, u float64
-	alive      [core.MaxPlayers]bool
+	share      [core.MaxPlayers]float64
 	sc         *ui.Palette
 }
 
-// drawSpinner draws the turn spinner: a wedge per seat in its ink (out seats printed blank) and the pointer on the
-// player to move. Both are images redrawn only when what they show changes; the pointer turns as it is drawn.
+// drawSpinner draws the turn spinner: a pie with a slice per player still in, in their ink and as wide as slice
+// shares it out, and the pointer on the player to move. Both are images redrawn only when what they show changes;
+// the pointer turns as it is drawn.
+// shortcut: slices step to their new size with each wave instead of easing, so the wheel is redrawn once a wave and
+// not every frame; ease p.share and draw the pie from sprites if that reads as a jump.
 func (p *playScene) drawSpinner(dst *ebiten.Image, a *app) {
 	var op ebiten.DrawImageOptions
-	if k := (spinnerKey{p.spinX, p.spinY, p.spinR, a.u, p.alive, a.sc}); p.wheel == nil || k != p.spinKey {
+	if k := (spinnerKey{p.spinX, p.spinY, p.spinR, a.u, p.share, a.sc}); p.wheel == nil || k != p.spinKey {
 		p.spinKey = k
 		p.renderSpinner(a)
 	}
@@ -1262,37 +1334,46 @@ func (p *playScene) drawSpinner(dst *ebiten.Image, a *app) {
 
 var spinnerPath vector.Path
 
+// canvas returns img cleared when it is w by h px, and a new image of that size in its place otherwise.
+func canvas(img *ebiten.Image, w, h int) *ebiten.Image {
+	if img != nil && img.Bounds().Dx() == w && img.Bounds().Dy() == h {
+		img.Clear()
+		return img
+	}
+	if img != nil {
+		img.Deallocate()
+	}
+	return ebiten.NewImage(w, h)
+}
+
 // renderSpinner caches the wheel at whole-pixel alignment and the rim pointer pointing right around its hub.
 func (p *playScene) renderSpinner(a *app) {
-	if p.wheel != nil {
-		p.wheel.Deallocate()
-		p.pointer.Deallocate()
-	}
 	sc, u, n, r := a.sc, a.u, len(p.seats), p.spinR
 	p.wheelX, p.wheelY = math.Floor(p.spinX-r)-ui.SpritePad, math.Floor(p.spinY-r)-ui.SpritePad
 	x, y := p.spinX-p.wheelX, p.spinY-p.wheelY
-	p.wheel = ebiten.NewImage(int(math.Ceil(x+r))+ui.SpritePad, int(math.Ceil(y+r))+ui.SpritePad)
+	p.wheel = canvas(p.wheel, int(math.Ceil(x+r))+ui.SpritePad, int(math.Ceil(y+r))+ui.SpritePad)
 	for i := range n {
-		a0 := -math.Pi/2 + float64(i)*2*math.Pi/float64(n)
-		c := sc.Players[i]
-		if !p.alive[i] {
-			c = sc.Tile
+		switch a0 := p.wedgeStart(i); {
+		case p.share[i] > 0.999: // the only player left has the whole wheel
+			ui.FillCircle(p.wheel, x, y, r, sc.Players[i])
+		case p.share[i] > 0:
+			spinnerPath.Reset()
+			spinnerPath.MoveTo(float32(x), float32(y))
+			spinnerPath.Arc(float32(x), float32(y), float32(r), float32(a0), float32(a0+2*math.Pi*p.share[i]), 0)
+			spinnerPath.Close()
+			ui.FillPath(p.wheel, &spinnerPath, sc.Players[i])
 		}
-		spinnerPath.Reset()
-		spinnerPath.MoveTo(float32(x), float32(y))
-		spinnerPath.Arc(float32(x), float32(y), float32(r), float32(a0), float32(a0+2*math.Pi/float64(n)), 0)
-		spinnerPath.Close()
-		ui.FillPath(p.wheel, &spinnerPath, c)
 	}
 	for i := range n {
-		an := -math.Pi/2 + float64(i)*2*math.Pi/float64(n)
-		ui.Line(p.wheel, x, y, x+r*math.Cos(an), y+r*math.Sin(an), 3*u, sc.Ground)
+		if an := p.wedgeStart(i); p.share[i] > 0 && p.share[i] <= 0.999 {
+			ui.Line(p.wheel, x, y, x+r*math.Cos(an), y+r*math.Sin(an), 3*u, sc.Ground)
+		}
 	}
 	ui.FillCircle(p.wheel, x, y, r*0.2, sc.Ground)
 
 	rim := 2 * u
 	tip, w, h := r+12*u-rim, r*0.09, math.Ceil(r*0.1+rim)+ui.SpritePad
-	p.pointer = ebiten.NewImage(int(math.Ceil(h+tip))+ui.SpritePad, int(2*h))
+	p.pointer = canvas(p.pointer, int(math.Ceil(h+tip))+ui.SpritePad, int(2*h))
 	spinnerPath.Reset()
 	spinnerPath.MoveTo(float32(h+tip), float32(h))
 	spinnerPath.LineTo(float32(h+r-4*u), float32(h+w))

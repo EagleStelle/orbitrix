@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"orbitrix/client/internal/ui"
+	"orbitrix/core"
 
 	"github.com/hajimehoshi/ebiten/v2"
 )
@@ -31,11 +32,11 @@ func TestOrbCountsFitIndicators(t *testing.T) {
 							var boxes []ui.Rect
 							for player := range players {
 								p.orbS[player] = value
-								x, y, r, n := p.spinX, p.spinY, p.spinR, players
+								x, y, r, n, half := p.spinX, p.spinY, p.spinR, players, math.Pi*p.share[player]
 								if a.portrait() {
-									x, y, r, n = p.tokX, p.tokY, p.tokR, 0
+									x, y, r, n, half = p.tokX, p.tokY, p.tokR, 0, 0
 								}
-								p.drawOrbCount(dst, a, player, x, y, r, n)
+								p.drawOrbCount(dst, a, player, x, y, r, half)
 								c := p.orbLabels[player]
 								if c.Key.Value != value || c.Scale <= 0 || c.Scale > 1 || c.Bounds.W <= 0 || c.Bounds.H <= 0 {
 									t.Fatalf("count %q must be preserved and visible: %+v", value, c)
@@ -68,7 +69,7 @@ func TestOrbCountsFitIndicators(t *testing.T) {
 									}
 									boxes = append(boxes, c.Bounds)
 								}
-								p.drawOrbCount(dst, a, player, x, y, r, n)
+								p.drawOrbCount(dst, a, player, x, y, r, half)
 								if p.orbLabels[player] != c {
 									t.Fatal("unchanged count geometry must be reused")
 								}
@@ -132,5 +133,32 @@ func TestOrbCountsReuseWheelAndSkipEliminatedPlayers(t *testing.T) {
 	p.drawSpinner(dst, a)
 	if p.orbLabels[3].Key.Value != "99999" {
 		t.Fatal("eliminated players must not draw a count on their empty slice")
+	}
+}
+
+// The wheel is a pie: a cell teammates share counts for each colour's own orbs, slices follow the counts, every
+// player still in keeps one and an out player has none.
+func TestWheelSlicesFollowOrbs(t *testing.T) {
+	a := setupTestApp(1040, 640, 1, 4)
+	a.set.Teams, a.set.Team = 2, []uint8{0, 0, 1, 1}
+	p, err := newPlay(a, 5, 5, a.set.seats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := p.b.State
+	stride := len(s.Mix) / len(s.Count)
+	s.Owner[0], s.Count[0], s.Mix[0], s.Mix[1] = 0, 3, 2, 1 // seats 0 and 1 share a cell
+	s.Owner[1], s.Count[1], s.Mix[stride+2] = 2, 1, 1
+	p.alive[3] = false
+	p.tickRail()
+	if p.orbs != [core.MaxPlayers]int{2, 1, 1} {
+		t.Fatalf("a shared cell must count for each colour in it: %v", p.orbs[:4])
+	}
+	sh := p.share
+	if sh[0] <= sh[1] || sh[1] != sh[2] || sh[2] <= 0 || sh[3] != 0 || math.Abs(sh[0]+sh[1]+sh[2]-1) > 1e-9 {
+		t.Fatalf("slices must follow the orbs and fill the wheel: %v", sh[:4])
+	}
+	if math.Abs(p.wedgeAngle(2)+math.Pi*sh[2]-1.5*math.Pi) > 1e-9 {
+		t.Fatal("the last slice must end where the first begins")
 	}
 }

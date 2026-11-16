@@ -8,13 +8,13 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 )
 
-// orbCountKey describes the exact value and space available to an upright count. Zero slices means the portrait dot.
+// orbCountKey describes the exact value and space available to an upright count: a wheel slice reaching Half radians
+// to each side of Angle, or the whole portrait dot when Half is 0.
 type CountKey struct {
-	Value             string
-	X, Y, R, U, Angle float64
-	Slices            int
-	Marked            bool
-	Face              *text.GoTextFace
+	Value                   string
+	X, Y, R, U, Angle, Half float64
+	Marked                  bool
+	Face                    *text.GoTextFace
 }
 
 type Counter struct {
@@ -27,14 +27,14 @@ type Counter struct {
 func (k CountKey) contains(x, y float64) bool {
 	dx, dy := x-k.X, y-k.Y
 	margin := 2 * k.U
-	if k.Slices > 0 {
+	if k.Half > 0 {
 		margin = 8 * k.U
 	}
 	if math.Hypot(dx, dy) > k.R-margin {
 		return false
 	}
-	if k.Slices > 0 {
-		half := math.Pi / float64(k.Slices)
+	if k.Half > 0 {
+		half := min(k.Half, math.Pi/2) // the two edges bound a slice only up to a half wheel, which is room enough
 		lo, hi := k.Angle-half, k.Angle+half
 		return math.Cos(lo)*dy-math.Sin(lo)*dx >= 2*k.U &&
 			dx*math.Sin(hi)-dy*math.Cos(hi) >= 2*k.U
@@ -60,7 +60,7 @@ func (c *Counter) Layout(k CountKey) {
 	}
 	g := ui.Rect{X: left, Y: top, W: right - left, H: bottom - top}
 	x, y := k.X, k.Y
-	if k.Slices > 0 {
+	if k.Half > 0 {
 		x += 0.74 * k.R * math.Cos(k.Angle)
 		y += 0.74 * k.R * math.Sin(k.Angle)
 	} else if k.Marked {

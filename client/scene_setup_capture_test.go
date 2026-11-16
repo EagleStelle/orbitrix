@@ -312,6 +312,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 				p.alive[i] = false
 			}
 		}
+		p.slice()
 		p.shown, p.spin = c.turn, p.wedgeAngle(c.turn)
 		p.chain, p.chainHold, p.chainText = 88, calloutHold, "Chain ×88"
 		p.layout(a)
@@ -478,6 +479,11 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "rail-mobile-teams", w: 360, h: 740, players: 12, cols: 13, rows: 18, play: true, teams: 2, hover: "out", turn: 5},
 		{name: "rail-mobile-teams-dark", w: 390, h: 844, players: 12, play: true, teams: 6, dark: true, hover: "out", turn: 9},
 		{name: "rail-mobile-roster", w: 360, h: 740, players: 12, cols: 13, rows: 18, play: true, teams: 3, hover: "out", roster: true, dark: true, turn: 5},
+		{name: "pie-desktop-teams", w: 1440, h: 900, players: 12, play: true, teams: 3, hover: "out", turn: 4, count: 12},
+		{name: "pie-desktop", w: 1040, h: 640, players: 5, play: true, count: 40, dark: true, turn: 1},
+		{name: "pie-landscape-teams", w: 780, h: 360, players: 12, cols: 30, rows: 18, play: true, teams: 6, count: 12, marks: true},
+		{name: "pie-landscape-small-teams", w: 640, h: 320, players: 12, cols: 30, rows: 18, play: true, teams: 6, count: 12, turn: 9, dark: true},
+		{name: "pie-landscape-wide-teams", w: 844, h: 390, players: 12, cols: 9, rows: 9, play: true, teams: 6, count: 12, turn: 2},
 		{name: "play-desktop", w: 1440, h: 900, players: 2, play: true},
 		{name: "play-desktop-12p", w: 1040, h: 640, players: 12, play: true},
 		{name: "play-wide-12p", w: 1920, h: 1080, players: 12, play: true, dark: true},
