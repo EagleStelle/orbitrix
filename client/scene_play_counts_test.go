@@ -140,7 +140,7 @@ func TestOrbCountsReuseWheelAndSkipEliminatedPlayers(t *testing.T) {
 // player still in keeps one and an out player has none.
 func TestWheelSlicesFollowOrbs(t *testing.T) {
 	a := setupTestApp(1040, 640, 1, 4)
-	a.set.Teams, a.set.Team = 2, []uint8{0, 0, 1, 1}
+	a.set.Teams, a.set.Team = true, []uint8{0, 0, 1, 1}
 	p, err := newPlay(a, 5, 5, a.set.seats)
 	if err != nil {
 		t.Fatal(err)

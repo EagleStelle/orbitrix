@@ -197,7 +197,8 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - The host's room page is This Device's Setup scene, so local and room setup share one implementation.
 - Seats keep one backing array of capacity 12, and seat holds use room-wide numbers, so a grace timer never acts on a seat that moved.
 - Two humans never swap seats; `hub.Room.SwapSeats` refuses it as well as the UI.
-- In a team game the room's lobby holds the line-up: a player's `Team` message and the host's `SetTeams` both change it there, and the host's Setup copies it back before sending its own. The hub checks capacity on every change, and that two teams have players only at Start.
+- In a team game the room's lobby holds the line-up: a player's `Team` message and the host's `SetTeams` both change it there, and the host's Setup copies it back before sending its own. The hub checks only that each team exists on every change, and that two teams have players only at Start.
+- Team choice is free: no team count, no capacity, no balancing or trading on a change. Only Shuffle players evens teams, and only among the teams that already have players.
 - A player name is at most 16 bytes, short enough for a seat pill and within `proto.MaxName`'s 24.
 
 ## Server and deployment

@@ -323,7 +323,7 @@ func (h *hostRoom) apply(a *app) {
 		}
 		if err := n.room.Configure(cfg.Cols, cfg.Rows, cfg.Seats); err != nil {
 			log.Printf("room: %v", err)
-		} else if err := n.room.SetTeams(cfg.Teams, cfg.TeamCap, cfg.Team); err != nil {
+		} else if err := n.room.SetTeams(cfg.Team); err != nil {
 			log.Printf("room teams: %v", err)
 		}
 	}
@@ -616,6 +616,13 @@ type roomScene struct {
 	game   gameBlock
 	block  ui.Rect
 	rows   [core.MaxPlayers]ui.Rect
+	menu   bool // this player's team menu is open
+}
+
+// canTeam reports whether this player can change team: seated in a team game's lobby.
+func (r *roomScene) canTeam() bool {
+	n := r.net
+	return n.got && n.seat >= 0 && n.lobby.Teams && !n.lobby.Playing
 }
 
 func (r *roomScene) layout(a *app) {
@@ -649,25 +656,30 @@ func (r *roomScene) update(a *app) error {
 	if r.game.scrolled(a) || r.scrolled(a) {
 		r.layout(a)
 	}
+	if r.menu = r.menu && r.canTeam(); r.menu && (a.in.clicked || a.in.esc) { // a click anywhere else closes it
+		panel, first := menuRects(a, r.rows[n.seat], core.MaxTeams)
+		if t := teamMenuPick(a, panel, first); t >= 0 && uint8(t) != n.lobby.Seats[n.seat].Team {
+			n.link.Send(proto.Team{Team: uint8(t)}) // the host's room moves this player
+		}
+		r.menu = false
+		return nil
+	}
 	switch {
 	case r.backed(a):
 		n.leave(a)
 		a.net, a.next = nil, newJoin(a, n.wifi(), "")
 	case a.clicked(r.action) && n.got && n.seat >= 0:
 		n.link.Send(proto.Ready{On: !n.lobby.Seats[n.seat].Ready})
-	case n.got && n.seat >= 0 && n.lobby.Teams != 0 && !n.lobby.Playing && r.view.Viewport.Contains(a.in.x, a.in.y) && a.clicked(ui.CompactHit(r.teamChip(a, n.seat), a.u)):
-		team := n.teams()
-		if nextTeam(team, n.seat, int(n.lobby.Teams), int(n.lobby.TeamCap), func(j int) bool { return n.lobby.Seats[j].State == proto.SeatAI }) {
-			n.link.Send(proto.Team{Team: team[n.seat]}) // the host's room moves this player, if the team can still take them
-		}
+	case r.canTeam() && r.view.Viewport.Contains(a.in.x, a.in.y) && a.clicked(ui.CompactHit(r.teamChip(a, n.seat), a.u)):
+		r.menu = true
 	}
 	return nil
 }
 
-// teamChip is where seat i's team chip sits in a team game: where its name would start.
+// teamChip is where seat i's team pill stands in a team game: at the start of its row, left of its seat pill.
 func (r *roomScene) teamChip(a *app, i int) ui.Rect {
-	row, u := r.rows[i], a.u
-	return ui.Rect{X: row.X + seatChoiceX*u, Y: row.Cy() - ui.ChipHeight*u/2, W: teamChipW(a), H: ui.ChipHeight * u}
+	row := r.rows[i]
+	return ui.Rect{X: row.X, Y: row.Y, W: teamPillW(a), H: row.H}
 }
 
 func (r *roomScene) draw(dst *ebiten.Image, a *app) {
@@ -687,26 +699,29 @@ func (r *roomScene) draw(dst *ebiten.Image, a *app) {
 	if n.wifi() {
 		where = whereWifi
 	}
-	r.game.draw(b, a, where, 0, addonsOn(int(n.lobby.Teams)), true, true, false)
+	r.game.draw(b, a, where, 0, addonsOn(n.lobby.Teams), true, true, false)
 	ui.FillRound(b, r.block, 24*u, sc.Tile)
 	ui.DrawText(b, "Players", f.Heading, r.block.X+r.bp, r.block.Y+r.bp+10*u, text.AlignStart, sc.Ink)
 	for i, st := range n.lobby.Seats {
 		row := r.rows[i]
+		if n.lobby.Teams { // the team pill stands left of the seat's; this player's own opens the team menu
+			chip := r.teamChip(a, i)
+			drawTeamPill(b, a, chip, st.Team, i == n.seat, r.menu)
+			row.X, row.W = chip.Right()+teamPillGap*u, row.Right()-chip.Right()-teamPillGap*u
+		}
 		ui.FillPill(b, row, sc.Ground)
 		ui.SeatDot(b, sc, i, row.X+24*u, row.Cy(), 8*u, false, a.set.Marks)
-		name, nameX := n.playerLabel(i), row.X+seatChoiceX*u
-		if n.lobby.Teams != 0 { // this player's own is the one a tap changes
-			chip := r.teamChip(a, i)
-			drawTeamChip(b, a, chip, st.Team, sc.Ink, sc.Ground, i == n.seat)
-			nameX = chip.Right() + 6*u
-		}
-		ui.DrawText(b, name, f.LabelBold, nameX, row.Cy(), text.AlignStart, sc.Ink)
+		ui.DrawText(b, n.playerLabel(i), f.LabelBold, row.X+seatChoiceX*u, row.Cy(), text.AlignStart, sc.Ink)
 		right := row.Right() - 16*u
 		if st.State == proto.SeatAI {
 			drawPips(b, 1+int(st.AI), right, row.Cy(), u, sc.Ink)
 			continue
 		}
 		ui.DrawChip(b, a.ui(), seatState(st), right, row.Cy(), ui.ChipHeight*u)
+	}
+	if r.menu && r.canTeam() {
+		panel, first := menuRects(a, r.rows[n.seat], core.MaxTeams)
+		drawTeamMenu(dst, a, panel, first, n.lobby.Seats[n.seat].Team)
 	}
 }
 

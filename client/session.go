@@ -79,8 +79,8 @@ func hubConfig(a *app) hub.Config {
 	for _, opt := range a.set.seats {
 		cfg.Seats = append(cfg.Seats, hub.Seat{Human: opt == seatHuman, AI: ai.Strategy(max(0, opt-1))})
 	}
-	if a.set.Teams != 0 {
-		cfg.Teams, cfg.TeamCap, cfg.Team = a.set.Teams, a.set.TeamCap, append([]uint8(nil), a.set.Team...)
+	if a.set.Teams {
+		cfg.Teams, cfg.Team = true, append([]uint8{}, a.set.Team...)
 	}
 	return cfg
 }
@@ -98,7 +98,7 @@ func (s *session) pump(a *app) {
 		case proto.Lobby:
 			s.lobby, s.got = m, true
 			s.lobbyN++
-			if s.room != nil && m.Teams != 0 && int(m.Teams) == a.set.Teams && len(m.Seats) == len(a.set.Team) {
+			if s.room != nil && m.Teams && a.set.Teams && len(m.Seats) == len(a.set.Team) {
 				for i, st := range m.Seats {
 					a.set.Team[i] = st.Team // a player may have changed teams; Setup shows and sends the room's line-up
 				}
@@ -246,15 +246,6 @@ func (s *session) seatLabel(i int) string {
 		return st.Name
 	}
 	return seatLabels[seatHuman]
-}
-
-// teams is each seat's team in the room.
-func (s *session) teams() []uint8 {
-	out := make([]uint8, len(s.lobby.Seats))
-	for i, st := range s.lobby.Seats {
-		out[i] = st.Team
-	}
-	return out
 }
 
 // seats is the room's seats as Setup options, for the game scene.

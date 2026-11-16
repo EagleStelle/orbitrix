@@ -51,8 +51,7 @@ func TestPlayLayout(t *testing.T) {
 					t.Run(fmt.Sprintf("%.0fx%.0f/u%g/%dp/%dx%d", size[0], size[1], u, players, board[0], board[1]), func(t *testing.T) {
 						a := withCutout(setupTestApp(size[0], size[1], u, players))
 						if players%3 != 0 { // two games in three are team games, of two to six teams
-							a.set.Teams = 2 + players%5
-							a.set.evenTeams()
+							lineUp(a.set, 2+players%5)
 						}
 						p, err := newPlay(a, board[0], board[1], a.set.seats)
 						if err != nil {
@@ -186,8 +185,7 @@ func TestPlayersDialog(t *testing.T) {
 	for _, size := range [][2]float64{{780, 360}, {360, 740}, {1040, 640}} {
 		for _, u := range []float64{1, 2.625} {
 			a := withCutout(setupTestApp(size[0], size[1], u, 12))
-			a.set.Teams = 3
-			a.set.evenTeams()
+			lineUp(a.set, 3)
 			p, err := newPlay(a, 13, 18, a.set.seats)
 			if err != nil {
 				t.Fatal(err)

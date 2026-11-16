@@ -130,7 +130,8 @@ func previewFrame(a *app) (cols, rows int) {
 
 // setupScene keeps Players above Board and Start outside the scrollable content.
 type setupScene struct {
-	menu int       // seat whose type menu is open, or -1
+	menu int       // seat whose menu is open, or -1
+	team bool      // the open menu is the seat's team menu, not its type menu
 	room *hostRoom // a room this player hosts, or nil for a game on this device
 	test bool      // private editor test preferences are never persisted
 
@@ -148,15 +149,14 @@ type setupScene struct {
 	lsnack            bool    // the join request snackbar was showing
 	headY             float64
 	minusP, plusP     ui.Rect
-	// A team game's Teams and Per team steppers, where their labels start and their centre lines, and each seat's chip.
-	minusT, plusT, minusC, plusC ui.Rect
-	teamX, teamY                 [2]float64
-	teamChip                     [core.MaxPlayers]ui.Rect
-	lteams                       int
-	seatDot, seatTy              [core.MaxPlayers]ui.Rect
-	seatHit                      [core.MaxPlayers]ui.Rect
-	preview, previewPanel        ui.Rect
-	showPreview                  bool
+	shuffleB          ui.Rect // Shuffle players, as wide as the open card: the first row of its scrolling body
+	// A team game's chip on each seat, which opens its team menu.
+	teamChip              [core.MaxPlayers]ui.Rect
+	lteams                bool
+	seatDot, seatTy       [core.MaxPlayers]ui.Rect
+	seatHit               [core.MaxPlayers]ui.Rect
+	preview, previewPanel ui.Rect
+	showPreview           bool
 	sizePicker
 	game                   gameBlock
 	mapsB                  ui.Rect // the Map heading's button, which opens the map picker
@@ -233,9 +233,9 @@ func (s *setupScene) layout(a *app) {
 	// Visible controls match Back; their larger hit rows preserve touch usability.
 	buttonH, targetH := ui.CompactButtonHeight*u, ui.CompactButtonTarget*u
 	rowPitch := targetH + 8*u
-	chip := 0.0 // a team game's chip before each seat's label, and the space after it
-	if a.set.Teams != 0 {
-		chip = teamChipW(a) + 6*u
+	chip := 0.0 // a team game's team pill left of each seat's pill, and the gap between them
+	if a.set.Teams {
+		chip = teamPillW(a) + teamPillGap*u
 	}
 	minSeatW := 220 * u
 	for _, label := range seatLabels {
@@ -274,17 +274,12 @@ func (s *setupScene) layout(a *app) {
 		rows = 0 // collapsed to its heading and count
 	}
 	// Players never grows past what the screen shows under Rules: its seats scroll inside the card instead.
-	seatsH := float64(rows) * rowPitch
-	// A team game's two steppers sit over the seats: side by side where the card is wide enough, else stacked.
-	teamRows := 0
-	if a.set.Teams != 0 && s.open == foldPlayers {
-		teamRows = 2
-		if pinner >= 2*(ui.TextWidth("Per team", a.f.LabelBold)+12*u+numberW(a)+(ui.CompactButtonHeight+ui.CompactButtonTarget)*u)+gap {
-			teamRows = 1
-		}
+	shuffleH := 0.0 // Shuffle players' row, the first of the open card's body: it scrolls with the seats
+	if s.open == foldPlayers {
+		shuffleH = rowPitch
 	}
-	teamsH := float64(teamRows) * rowPitch
-	playerH := 2*bp + 44*u + teamsH + min(seatsH, max(rowPitch, s.viewport.H-gameH-2*bp-44*u-teamsH)) // one row at least
+	seatsH := shuffleH + float64(rows)*rowPitch
+	playerH := 2*bp + 44*u + min(seatsH, max(rowPitch, s.viewport.H-gameH-2*bp-44*u)) // one row at least
 
 	// Map is exactly as tall as the screen shows. Side by side it never moves, and the page scrolls only when an
 	// open Rules card pushes Players off the screen; stacked, the page scrolls down to it.
@@ -309,24 +304,11 @@ func (s *setupScene) layout(a *app) {
 
 	p := s.players
 	s.headY = p.Y + bp + 22*u
-	s.seatScroll.Set(ui.Rect{X: p.X + bp, Y: p.Y + bp + 52*u + teamsH, W: pinner, H: max(0, p.H-2*bp-52*u-teamsH)}, max(0, seatsH-8*u)) // down to the card's padding
-	for k := range s.teamX {                                                                                                            // Teams, then Per team
-		row, left, end := 0, p.X+bp, p.Right()-bp
-		switch {
-		case teamRows == 2:
-			row = k
-		case k == 0:
-			end = p.X + bp + (pinner-gap)/2
-		default:
-			left = p.X + bp + (pinner+gap)/2
-		}
-		s.teamX[k], s.teamY[k] = left, p.Y+bp+52*u+float64(row)*rowPitch+targetH/2
-		minus, plus := stepRects(a, end+2*u, s.teamY[k]) // its + ends flush with end
-		if k == 0 {
-			s.minusT, s.plusT = minus, plus
-		} else {
-			s.minusC, s.plusC = minus, plus
-		}
+	s.seatScroll.Set(ui.Rect{X: p.X + bp, Y: p.Y + bp + 52*u, W: pinner, H: max(0, p.H-2*bp-52*u)}, max(0, seatsH-8*u)) // down to the card's padding
+	bodyY := s.seatScroll.Viewport.Y - s.seatScroll.Offset
+	s.shuffleB = ui.Rect{}
+	if s.open == foldPlayers {
+		s.shuffleB = ui.Rect{X: p.X + bp, Y: bodyY + (targetH-buttonH)/2, W: pinner, H: buttonH}
 	}
 	clear(s.teamChip[:])
 	colW := (pinner - float64(cols-1)*gap) / float64(cols)
@@ -337,13 +319,13 @@ func (s *setupScene) layout(a *app) {
 			break
 		}
 		x := p.X + bp + float64(i%cols)*(colW+gap)
-		cy := s.seatScroll.Viewport.Y - s.seatScroll.Offset + float64(i/cols)*rowPitch + targetH/2
-		r := ui.Rect{X: x, Y: cy - buttonH/2, W: colW, H: buttonH}
-		s.seatTy[i], s.seatHit[i] = r, ui.CompactHit(r, u)
-		s.seatDot[i] = ui.Rect{X: x + 16*u, Y: cy - 8*u, W: 16 * u, H: 16 * u}
-		if a.set.Teams != 0 {
-			s.teamChip[i] = ui.Rect{X: x + seatChoiceX*u, Y: cy - ui.ChipHeight*u/2, W: teamChipW(a), H: ui.ChipHeight * u}
+		cy := bodyY + shuffleH + float64(i/cols)*rowPitch + targetH/2
+		if a.set.Teams {
+			s.teamChip[i] = ui.Rect{X: x, Y: cy - buttonH/2, W: chip - teamPillGap*u, H: buttonH}
 		}
+		r := ui.Rect{X: x + chip, Y: cy - buttonH/2, W: colW - chip, H: buttonH}
+		s.seatTy[i], s.seatHit[i] = r, ui.CompactHit(r, u)
+		s.seatDot[i] = ui.Rect{X: r.X + 16*u, Y: cy - 8*u, W: 16 * u, H: 16 * u}
 	}
 	s.minusP, s.plusP = stepRects(a, p.Right()-bp-foldRoom*u, s.headY) // left of the chevron
 	// A tap on a heading, clear of its buttons, folds its card.
@@ -426,7 +408,30 @@ func (s *setupScene) changed(a *app) {
 func (s *setupScene) setPlayers(a *app, n int) {
 	a.set.Players = max(s.minPlayers(), min(core.MaxPlayers, n))
 	a.set.fitSeats()
-	a.set.evenTeams()
+	s.menu = -1
+	s.changed(a)
+}
+
+// randomize is Shuffle players: it deals an AI to every bot seat, the order of the seats, and in a team game the
+// teams, which come out even. In an open room the players who joined keep their seats, and only the host moves, to a
+// bot's seat.
+func (s *setupScene) randomize(a *app) {
+	set := a.set
+	if s.room != nil && s.room.net != nil {
+		me, to := s.self(a), make([]int, 0, core.MaxPlayers)
+		for i := range set.Players {
+			if i == me || s.seatType(a, i) != seatHuman {
+				to = append(to, i)
+			}
+		}
+		if j := to[a.rng.Intn(len(to))]; me >= 0 && j != me {
+			s.swapSeats(a, me, j)
+		}
+	} else {
+		a.rng.Shuffle(len(set.seats), func(i, j int) { set.seats[i], set.seats[j] = set.seats[j], set.seats[i] })
+	}
+	set.rollBots(&a.rng)
+	set.dealTeams(&a.rng)
 	s.menu = -1
 	s.changed(a)
 }
@@ -444,29 +449,23 @@ func (s *setupScene) begin(a *app) {
 	}
 }
 
-// menuRects keeps options touch-sized, using two columns when the window is short.
+// menuRects places the open menu under its seat's pill; a team menu under the whole row, from its team pill.
 func (s *setupScene) menuRects(a *app) (panel, first ui.Rect) {
-	u, v := a.u, a.safe()
 	t := s.seatTy[s.menu]
-	cols := 1
-	n := s.menuCount(a)
-	if float64(n)*ui.CompactButtonTarget*u+12*u > v.H-16*u {
-		cols = 2
+	if s.team {
+		t.X, t.W = s.teamChip[s.menu].X, t.Right()-s.teamChip[s.menu].X
 	}
-	rows := (n + cols - 1) / cols
-	w := min(v.W-16*u, max(t.W, 200*u)*float64(cols))
-	h := float64(rows)*ui.CompactButtonTarget*u + 12*u
-	y := t.Bottom() + 6*u
-	if y+h > v.Bottom()-8*u {
-		y = t.Y - 6*u - h
-	}
-	panel = ui.Rect{X: max(v.X+8*u, min(t.X, v.Right()-8*u-w)), Y: max(v.Y+8*u, min(y, v.Bottom()-8*u-h)), W: w, H: h}
-	return panel, ui.Rect{X: panel.X + 6*u, Y: panel.Y + 6*u, W: (w - 12*u) / float64(cols), H: ui.CompactButtonTarget * u}
+	return menuRects(a, t, s.menuCount(a))
 }
 
-// menuCount is how many options a seat's menu has: Human and the AIs, then Swap position and Remove player, which are
-// always listed and greyed out where they can't act.
-func (s *setupScene) menuCount(*app) int { return len(seatLabels) + 2 }
+// menuCount is how many options the open menu has. A seat's type menu: Human and the AIs, then Swap position and
+// Remove player, which are always listed and greyed out where they can't act. Its team menu: every team.
+func (s *setupScene) menuCount(*app) int {
+	if s.team {
+		return core.MaxTeams
+	}
+	return len(seatLabels) + 2
+}
 
 // canRemove reports whether Remove player acts: a game keeps at least two players.
 func (s *setupScene) canRemove(a *app) bool { return a.set.Players > core.MinPlayers }
@@ -512,7 +511,7 @@ func (s *setupScene) swapSeats(a *app, i, j int) {
 		}
 	}
 	a.set.seats[i], a.set.seats[j] = a.set.seats[j], a.set.seats[i]
-	if a.set.Teams != 0 { // a player keeps their team
+	if a.set.Teams { // a player keeps their team
 		a.set.Team[i], a.set.Team[j] = a.set.Team[j], a.set.Team[i]
 	}
 	s.menu = -1
@@ -529,11 +528,10 @@ func (s *setupScene) removeSeat(a *app, i int) {
 		}
 	}
 	a.set.seats = slices.Delete(a.set.seats, i, i+1)
-	if a.set.Teams != 0 {
+	if a.set.Teams {
 		a.set.Team = slices.Delete(a.set.Team, i, i+1)
 	}
 	a.set.Players--
-	a.set.evenTeams()
 	s.menu = -1
 	s.changed(a)
 }
@@ -596,9 +594,17 @@ func (s *setupScene) update(a *app) error {
 	}
 
 	// An open menu sits on top: it takes clicks inside it, and a click anywhere else closes it.
-	closing := -1
+	closing, closingTeam := -1, false
 	if s.menu >= 0 {
 		panel, first := s.menuRects(a)
+		if a.hover(panel) && s.team {
+			if t := teamMenuPick(a, panel, first); t >= 0 {
+				set.Team[s.menu] = uint8(t)
+				s.menu = -1
+				s.changed(a)
+			}
+			return nil
+		}
 		if a.hover(panel) {
 			for o := range s.menuCount(a) {
 				opt := setupMenuOption(panel, first, o, u)
@@ -623,7 +629,7 @@ func (s *setupScene) update(a *app) error {
 			return nil
 		}
 		if a.in.clicked {
-			closing, s.menu = s.menu, -1
+			closing, closingTeam, s.menu = s.menu, s.team, -1
 		}
 	}
 
@@ -646,7 +652,10 @@ func (s *setupScene) update(a *app) error {
 		s.setPlayers(a, set.Players-1)
 	case set.Players < core.MaxPlayers && a.clicked(setupStepHit(s.plusP, u)):
 		s.setPlayers(a, set.Players+1)
-	case s.updateTeams(a), s.updateGame(a):
+	case s.open == foldPlayers && s.seatScroll.Viewport.Contains(a.in.x, a.in.y) && a.clicked(ui.CompactHit(s.shuffleB, u)):
+		s.randomize(a)
+		return nil
+	case s.updateTeams(a, closing, closingTeam), s.updateGame(a):
 		return nil
 	case a.clicked(s.rulesHead):
 		s.fold(foldRules)
@@ -678,8 +687,8 @@ func (s *setupScene) update(a *app) error {
 	for i := range set.Players {
 		switch {
 		case !s.seatScroll.Viewport.Contains(a.in.x, a.in.y), !a.clicked(s.seatHit[i]), s.room != nil && !s.room.editable(i):
-		case closing != i:
-			s.menu = i
+		case closing != i || closingTeam: // a tap on the seat whose type menu just closed leaves it closed
+			s.menu, s.team = i, false
 		}
 	}
 	return nil
@@ -768,32 +777,25 @@ func (s *setupScene) drawPlayers(dst *ebiten.Image, a *app) {
 	if s.open != foldPlayers {
 		return
 	}
-	if set.Teams != 0 {
-		ui.DrawText(dst, "Teams", f.LabelBold, s.teamX[0], s.teamY[0], text.AlignStart, sc.Ink)
-		stepper(dst, a, set.Teams, 2, core.MaxTeams, s.minusT, s.plusT)
-		ui.DrawText(dst, "Per team", f.LabelBold, s.teamX[1], s.teamY[1], text.AlignStart, sc.Ink)
-		stepper(dst, a, set.TeamCap, set.minTeamCap(), core.MaxPlayers-1, s.minusC, s.plusC)
-	}
 	s.seatScroll.DrawScrollbar(dst, a.ui())
-	dst = s.seatScroll.Clip(dst) // the seats scroll inside the card
+	dst = s.seatScroll.Clip(dst) // Shuffle players and the seats scroll inside the card
+	ui.DrawButton(dst, a.ui(), s.shuffleB, "Shuffle players", "", ui.ButtonGround, true)
 	for i := range set.Players {
 		d, t := s.seatDot[i], s.seatTy[i]
 		label, opt, state := s.seat(a, i)
 		editable := s.room == nil || s.room.editable(i)
-		hot := editable && (s.menu < 0 && a.over(s.seatHit[i]) || s.menu == i)
+		typing := s.menu == i && !s.team // its type menu is open; its team menu marks only the chip
+		hot := editable && (s.menu < 0 && a.over(s.seatHit[i]) || typing)
 		style := ui.ButtonGround
-		if opt == seatHuman || s.menu == i {
+		if opt == seatHuman || typing {
 			style = ui.ButtonChosen
 		}
 		ink := ui.DrawButtonSurface(dst, a.ui(), t, style, true, hot)
 		ui.SeatDot(dst, sc, i, d.Cx(), d.Cy(), d.W/2, false, set.Marks)
-		labelX := t.X + seatChoiceX*u
-		if set.Teams != 0 {
-			fill, _ := ui.ButtonColors(sc, style, true, hot)
-			drawTeamChip(dst, a, s.teamChip[i], set.Team[i], ink, fill, true)
-			labelX = s.teamChip[i].Right() + 6*u
+		if set.Teams {
+			drawTeamPill(dst, a, s.teamChip[i], set.Team[i], true, s.menu == i && s.team)
 		}
-		ui.DrawText(dst, label, f.LabelBold, labelX, t.Cy(), text.AlignStart, ink)
+		ui.DrawText(dst, label, f.LabelBold, t.X+seatChoiceX*u, t.Cy(), text.AlignStart, ink)
 		right := t.Right() - 36*u
 		if !editable {
 			right = t.Right() - 16*u
@@ -807,7 +809,7 @@ func (s *setupScene) drawPlayers(dst *ebiten.Image, a *app) {
 			continue
 		}
 		tip := 2.5 * u // the chevron points down, or up while its menu is open
-		if s.menu == i {
+		if typing {
 			tip = -tip
 		}
 		ui.Chevron(dst, t.Right()-20*u, t.Cy(), 5*u, tip, 2*u, ink)
@@ -922,8 +924,11 @@ func drawMini(dst *ebiten.Image, a *app, k, ox, oy float64) {
 func (s *setupScene) drawMenu(dst *ebiten.Image, a *app) {
 	sc, f, u := a.sc, &a.f, a.u
 	panel, first := s.menuRects(a)
-	ui.FillRound(dst, panel, 18*u, sc.Ground)
-	ui.StrokeRound(dst, panel, 18*u, 2*u, sc.Ink)
+	if s.team {
+		drawTeamMenu(dst, a, panel, first, a.set.Team[s.menu])
+		return
+	}
+	drawMenuPanel(dst, a, panel)
 	_, current, _ := s.seat(a, s.menu)
 	for o := range s.menuCount(a) {
 		opt := setupMenuOption(panel, first, o, a.u)
@@ -998,38 +1003,22 @@ func (s *setupScene) setWhere(a *app, w int) {
 	}
 }
 
-// updateTeams runs a team game's part of Players: the Teams and Per team steppers, and each seat's chip, which a tap
-// moves to the next team with room or a bot to trade with. It reports a click it took.
-func (s *setupScene) updateTeams(a *app) bool {
-	set, u := a.set, a.u
-	if set.Teams == 0 || s.open != foldPlayers {
+// updateTeams runs a team game's part of Players: each seat's chip, which a tap opens the seat's team menu with, never
+// its type menu. closing is the seat whose menu this click just closed, a team menu if closingTeam: a tap on its own
+// chip leaves it closed. It reports a click it took.
+func (s *setupScene) updateTeams(a *app, closing int, closingTeam bool) bool {
+	if !a.set.Teams || s.open != foldPlayers || !s.seatScroll.Viewport.Contains(a.in.x, a.in.y) {
 		return false
 	}
-	switch {
-	case set.Teams > 2 && a.clicked(setupStepHit(s.minusT, u)):
-		set.Teams--
-		set.evenTeams()
-	case set.Teams < core.MaxTeams && a.clicked(setupStepHit(s.plusT, u)):
-		set.Teams++
-		set.evenTeams()
-	case set.TeamCap > set.minTeamCap() && a.clicked(setupStepHit(s.minusC, u)):
-		set.TeamCap--
-	case set.TeamCap < core.MaxPlayers-1 && a.clicked(setupStepHit(s.plusC, u)):
-		set.TeamCap++
-	default:
-		for i := range set.Players {
-			if s.seatScroll.Viewport.Contains(a.in.x, a.in.y) && a.clicked(ui.CompactHit(s.teamChip[i], u)) {
-				if nextTeam(set.Team, i, set.Teams, set.TeamCap, func(j int) bool { return set.seats[j] != seatHuman }) {
-					s.changed(a)
-				}
-				return true // a tap on a chip never opens the seat's menu
+	for i := range a.set.Players {
+		if a.clicked(ui.CompactHit(s.teamChip[i], a.u)) {
+			if closing != i || !closingTeam {
+				s.menu, s.team = i, true
 			}
+			return true
 		}
-		return false
 	}
-	s.menu, s.lv = -1, ui.Rect{}
-	s.changed(a)
-	return true
+	return false
 }
 
 // updateGame runs the Rules card: the Teams add-on, Join a room, and the Play on tiles until a room opens. It reports
@@ -1039,12 +1028,7 @@ func (s *setupScene) updateGame(a *app) bool {
 		return false
 	}
 	if s.game.hit(a, len(gameRows)-1) == 0 { // Teams: it changes in an open room too, until Start
-		if a.set.Teams == 0 {
-			a.set.Teams = 2
-			a.set.evenTeams() // an earlier game's line-up may be saved
-		} else {
-			a.set.Teams = 0
-		}
+		a.set.Teams = !a.set.Teams // an earlier game's line-up comes back with it
 		s.menu = -1
 		s.changed(a)
 		return true

@@ -126,11 +126,9 @@ type Lobby struct {
 	Cols, Rows uint8
 	TurnTimer  uint16 // seconds a human has to move; 0 means no limit
 	Playing    bool
-	// Teams is how many teams a team game has, 2 to core.MaxTeams, and TeamCap the most players on each; both are 0
-	// in a game of every player for themselves.
-	Teams, TeamCap uint8
-	Seats          []Seat
-	Map            *core.MapDefinition // nil selects the ordinary rectangular board
+	Teams      bool // a team game: each seat's Team counts
+	Seats      []Seat
+	Map        *core.MapDefinition // nil selects the ordinary rectangular board
 }
 
 // MoveApplied reports a move the host accepted, numbered by Seq from 1 each game, with the state hash after it.
@@ -196,7 +194,7 @@ func Append(dst []byte, m Msg) []byte {
 		dst = append(append(dst, m.Seat), m.Token[:]...)
 	case Lobby:
 		dst = binary.BigEndian.AppendUint16(append(dst, m.Cols, m.Rows), m.TurnTimer)
-		dst = append(appendBool(dst, m.Playing), m.Teams, m.TeamCap, byte(len(m.Seats)))
+		dst = append(appendBool(appendBool(dst, m.Playing), m.Teams), byte(len(m.Seats)))
 		for _, s := range m.Seats {
 			dst = append(appendStr(appendBool(append(dst, byte(s.State), s.AI), s.Ready), s.Name), s.Team)
 		}
@@ -391,15 +389,15 @@ func (r *reader) mapDefinition() *core.MapDefinition {
 }
 
 func (r *reader) lobby() Lobby {
-	l := Lobby{Cols: r.u8(), Rows: r.u8(), TurnTimer: r.u16(), Playing: r.bool(), Teams: r.u8(), TeamCap: r.u8()}
+	l := Lobby{Cols: r.u8(), Rows: r.u8(), TurnTimer: r.u16(), Playing: r.bool(), Teams: r.bool()}
 	n := int(r.u8())
-	if n > core.MaxPlayers || l.Teams == 1 || l.Teams > core.MaxTeams || (l.Teams == 0) != (l.TeamCap == 0) {
+	if n > core.MaxPlayers {
 		r.fail()
 		return l
 	}
 	for i := 0; i < n && !r.bad; i++ {
 		s := Seat{State: SeatState(r.u8()), AI: r.u8(), Ready: r.bool(), Name: r.str(MaxName), Team: r.u8()}
-		if s.State >= numSeatStates || s.Team >= max(l.Teams, 1) {
+		if s.State >= numSeatStates || s.Team >= core.MaxTeams || !l.Teams && s.Team != 0 {
 			r.fail()
 		}
 		l.Seats = append(l.Seats, s)

@@ -43,7 +43,7 @@ func samples(t testing.TB) []Msg {
 			{State: SeatSkipped, Name: "Bo"},
 		}},
 		Lobby{Cols: 3, Rows: 3},
-		Lobby{Cols: 5, Rows: 5, Teams: 3, TeamCap: 2, Seats: []Seat{{State: SeatHere, Name: "Host", Team: 2}, {State: SeatAI}}},
+		Lobby{Cols: 5, Rows: 5, Teams: true, Seats: []Seat{{State: SeatHere, Name: "Host", Team: 2}, {State: SeatAI}}},
 		MoveApplied{Seq: 1 << 30, Player: 2, C: 4, R: 7, Hash: 0xdeadbeefcafef00d},
 		MoveApplied{Seq: 3, Player: 1, C: Pass, R: Pass},
 		Snapshot{Seq: 12, Game: g.Snapshot()},

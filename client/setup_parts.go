@@ -31,22 +31,31 @@ var gameRows = [...]struct {
 	{"Add-ons", []string{"Teams", "Drop", "Combine", "Fog of war", "Tiles"}, []int{iconTeams, iconDrop, iconCombine, iconFog, iconTiles}, 0b00001},
 }
 
-// addonsOn are the add-ons a game of teams teams (0 for none) has on, a bit per option of the Add-ons group.
-func addonsOn(teams int) uint8 {
-	if teams != 0 {
+// addonsOn are the add-ons a game has on, a bit per option of the Add-ons group.
+func addonsOn(teams bool) uint8 {
+	if teams {
 		return 1
 	}
 	return 0
 }
 
-// teamLetters name a team game's teams on the chip each seat carries.
-var teamLetters = [core.MaxTeams]string{"A", "B", "C", "D", "E", "F"}
+// teamLetters name a team game's teams on the chip each seat carries, and teamNames in the menu the chip opens.
+var (
+	teamLetters = [core.MaxTeams]string{"A", "B", "C", "D", "E", "F"}
+	teamNames   = [core.MaxTeams]string{"Team A", "Team B", "Team C", "Team D", "Team E", "Team F"}
+)
 
 // teamChipW is a team chip's width, the same for every letter.
 func teamChipW(a *app) float64 { return ui.ChipWidth(a.ui(), "D", ui.ChipHeight*a.u) }
 
-// drawTeamChip draws team's letter in r: a solid pill of ink where a tap changes the team, an outline where it only
-// shows it.
+// teamPillGap is the space between a seat's team pill and its seat pill, in logical px.
+const teamPillGap = 6
+
+// teamPillW is the width of the team pill that stands left of a seat's pill in Setup and a room: the letter, then a
+// chevron, a touch target wide at least.
+func teamPillW(a *app) float64 { return ui.TextWidth("D", a.f.LabelBold) + 33*a.u }
+
+// drawTeamChip draws team's letter in r: a solid pill of ink, or an outline.
 func drawTeamChip(dst *ebiten.Image, a *app, r ui.Rect, team uint8, ink, ground color.RGBA, solid bool) {
 	if solid {
 		ui.FillPill(dst, r, ink)
@@ -57,15 +66,74 @@ func drawTeamChip(dst *ebiten.Image, a *app, r ui.Rect, team uint8, ink, ground 
 	ui.DrawText(dst, teamLetters[team], a.f.SmallBold, r.Cx(), r.Cy(), text.AlignCenter, ink)
 }
 
-// nextTeam moves seat i of team as a tap on its chip does: to the next team with room or with a bot to trade teams
-// with, if there is one.
-func nextTeam(team []uint8, i, teams, capacity int, bot func(int) bool) bool {
-	for k := 1; k < teams; k++ {
-		if core.JoinTeam(team, i, uint8((int(team[i])+k)%teams), capacity, bot) {
-			return true
+// drawTeamPill draws a seat's team pill in r, as tall as the seat pill beside it. Where a tap opens the team menu
+// (pick) it is a button, team's letter followed by a chevron that points up, in an ink outline, while the menu is
+// open; elsewhere it only shows the letter.
+func drawTeamPill(dst *ebiten.Image, a *app, r ui.Rect, team uint8, pick, open bool) {
+	u := a.u
+	if !pick {
+		ui.FillPill(dst, r, a.sc.Ground)
+		ui.DrawText(dst, teamLetters[team], a.f.LabelBold, r.Cx(), r.Cy(), text.AlignCenter, a.sc.Ink)
+		return
+	}
+	style, tip := ui.ButtonGround, 2*u
+	if open {
+		style, tip = ui.ButtonChosen, -tip
+	}
+	ink := ui.DrawButtonSurface(dst, a.ui(), r, style, true, open || a.over(ui.CompactHit(r, u)))
+	ui.DrawText(dst, teamLetters[team], a.f.LabelBold, r.Cx()-7*u, r.Cy(), text.AlignCenter, ink)
+	ui.Chevron(dst, r.Right()-14*u, r.Cy(), 4*u, tip, 2*u, ink)
+}
+
+// menuRects places a dropdown of n options under the row t, or over it where the screen ends: its panel and its first
+// option. Options stay touch-sized, in two columns when the window is short.
+func menuRects(a *app, t ui.Rect, n int) (panel, first ui.Rect) {
+	u, v := a.u, a.safe()
+	cols := 1
+	if float64(n)*ui.CompactButtonTarget*u+12*u > v.H-16*u {
+		cols = 2
+	}
+	rows := (n + cols - 1) / cols
+	w := min(v.W-16*u, max(t.W, 200*u)*float64(cols))
+	h := float64(rows)*ui.CompactButtonTarget*u + 12*u
+	y := t.Bottom() + 6*u
+	if y+h > v.Bottom()-8*u {
+		y = t.Y - 6*u - h
+	}
+	panel = ui.Rect{X: max(v.X+8*u, min(t.X, v.Right()-8*u-w)), Y: max(v.Y+8*u, min(y, v.Bottom()-8*u-h)), W: w, H: h}
+	return panel, ui.Rect{X: panel.X + 6*u, Y: panel.Y + 6*u, W: (w - 12*u) / float64(cols), H: ui.CompactButtonTarget * u}
+}
+
+// drawMenuPanel draws a dropdown's panel.
+func drawMenuPanel(dst *ebiten.Image, a *app, panel ui.Rect) {
+	ui.FillRound(dst, panel, 18*a.u, a.sc.Ground)
+	ui.StrokeRound(dst, panel, 18*a.u, 2*a.u, a.sc.Ink)
+}
+
+// teamMenuPick is the team clicked in the team menu a seat's chip opens, which lists every team, or -1.
+func teamMenuPick(a *app, panel, first ui.Rect) int {
+	for o := range core.MaxTeams {
+		if a.clicked(setupMenuOption(panel, first, o, a.u)) {
+			return o
 		}
 	}
-	return false
+	return -1
+}
+
+// drawTeamMenu draws the team menu with current chosen.
+func drawTeamMenu(dst *ebiten.Image, a *app, panel, first ui.Rect, current uint8) {
+	u := a.u
+	drawMenuPanel(dst, a, panel)
+	for o := range core.MaxTeams {
+		opt := setupMenuOption(panel, first, o, u)
+		style := ui.ButtonGround
+		if o == int(current) {
+			style = ui.ButtonInk
+		}
+		face := ui.Rect{X: opt.X, Y: opt.Cy() - ui.CompactButtonHeight*u/2, W: opt.W, H: ui.CompactButtonHeight * u}
+		ink := ui.DrawButtonSurface(dst, a.ui(), face, style, true, a.over(opt))
+		ui.DrawText(dst, teamNames[o], a.f.LabelBold, opt.X+14*u, opt.Cy(), text.AlignStart, ink)
+	}
 }
 
 // The Rules card's option tiles are squares, ruleTile px a side and ruleGap apart; its groups stack ruleRowGap apart.

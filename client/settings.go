@@ -45,11 +45,9 @@ type settings struct {
 	Firewall bool `json:"firewall,omitempty"`
 	// Where is where Setup last played: whereDevice, whereWifi or whereOnline; where() is the one this build offers.
 	Where int `json:"where,omitempty"`
-	// Teams is how many teams the game has, 2 to core.MaxTeams, or 0 with the Teams add-on off; TeamCap is the most
-	// players on a team, and Team each seat's team.
-	Teams   int     `json:"teams,omitempty"`
-	TeamCap int     `json:"teamCap,omitempty"`
-	Team    []uint8 `json:"team,omitempty"`
+	// Teams is the Teams add-on, and Team each seat's team, below core.MaxTeams; teams may be any size.
+	Teams bool    `json:"teamsOn,omitempty"`
+	Team  []uint8 `json:"team,omitempty"`
 
 	// Rolled: Map is a roll of Setup's die, which keeps the size picker. rolled is that map, so choosing any other
 	// map ends it without a reset.
@@ -202,15 +200,56 @@ func clampInt(v, lo, hi, def int) int {
 // when there are more seats than AIs (prototype set_player_count with randomize, but player 1 is always the
 // human, as the brief specifies).
 func (s *settings) shuffleSeats(rng *core.RNG) {
+	s.seats = append(s.seats[:0], seatHuman)
+	for len(s.seats) < s.Players {
+		s.seats = append(s.seats, 1)
+	}
+	s.rollBots(rng)
+}
+
+// rollBots gives every bot seat an AI in random order, none twice until every AI has a seat.
+func (s *settings) rollBots(rng *core.RNG) {
 	order := make([]int, ai.NumStrategies)
 	for i := range order {
 		order[i] = 1 + i
 	}
 	rng.Shuffle(len(order), func(i, j int) { order[i], order[j] = order[j], order[i] })
-	s.seats = s.seats[:0]
-	s.seats = append(s.seats, seatHuman)
-	for i := 1; i < s.Players; i++ {
-		s.seats = append(s.seats, order[(i-1)%len(order)])
+	k := 0
+	for i, opt := range s.seats {
+		if opt != seatHuman {
+			s.seats[i] = order[k%len(order)]
+			k++
+		}
+	}
+}
+
+// dealTeams deals a team game's seats at random into the teams that have players, evenly: equal teams, or one apart
+// where the players don't divide.
+func (s *settings) dealTeams(rng *core.RNG) {
+	if !s.Teams {
+		return
+	}
+	s.fitTeams()
+	var in [core.MaxTeams]bool
+	for _, t := range s.Team {
+		in[t] = true
+	}
+	var used []uint8
+	for t, ok := range in {
+		if ok {
+			used = append(used, uint8(t))
+		}
+	}
+	if len(used) < 2 { // every player on one team: A joins it, or B joins A
+		used = append(used, 1-min(used[0], 1))
+	}
+	order := make([]int, s.Players)
+	for i := range order {
+		order[i] = i
+	}
+	rng.Shuffle(len(order), func(i, j int) { order[i], order[j] = order[j], order[i] })
+	for i, seat := range order {
+		s.Team[seat] = used[i%len(used)]
 	}
 }
 
@@ -223,89 +262,40 @@ func (s *settings) fitSeats() {
 	s.seats = s.seats[:s.Players]
 }
 
-// minTeamCap is the least a team game's teams must hold to seat every player.
-func (s *settings) minTeamCap() int { return (s.Players + s.Teams - 1) / s.Teams }
-
-// fitTeams keeps a team game's line-up one its settings allow: a team for every seat and no team over TeamCap, which
-// grows to seat every player. A seat that is new, or whose team is gone or full, joins the emptiest team.
+// fitTeams gives every seat of a team game a team: seats keep theirs, whatever the teams' sizes, and a new seat joins
+// the emptiest team that has players, A and B always counting.
 func (s *settings) fitTeams() {
-	if s.Teams == 0 {
+	if !s.Teams {
 		return
 	}
-	s.Teams = max(2, min(core.MaxTeams, s.Teams))
-	s.TeamCap = max(s.minTeamCap(), min(core.MaxPlayers-1, s.TeamCap))
-	kept := min(len(s.Team), s.Players)
-	for len(s.Team) < s.Players {
-		s.Team = append(s.Team, 0)
-	}
-	s.Team = s.Team[:s.Players]
+	s.Team = s.Team[:min(len(s.Team), s.Players)]
 	var size [core.MaxTeams]int
-	var homeless uint16
 	for i, t := range s.Team {
-		if i < kept && int(t) < s.Teams && size[t] < s.TeamCap {
-			size[t]++
-		} else {
-			homeless |= 1 << i
+		if t >= core.MaxTeams { // a saved line-up this build can't hold
+			s.Team[i], t = 0, 0
 		}
+		size[t]++
 	}
-	for i := range s.Team {
-		if homeless&(1<<i) == 0 {
-			continue
-		}
+	for len(s.Team) < s.Players {
 		t := 0
-		for k := 1; k < s.Teams; k++ {
-			if size[k] < size[t] {
+		for k := 1; k < core.MaxTeams; k++ {
+			if (k < 2 || size[k] > 0) && size[k] < size[t] {
 				t = k
 			}
 		}
-		s.Team[i] = uint8(t)
+		s.Team = append(s.Team, uint8(t))
 		size[t]++
-	}
-}
-
-// evenTeams is what a new player or team count does to a team game: the capacity becomes the least that seats
-// everyone, and players leave the fullest team for the emptiest, its last seat first, until no team has two more
-// than another.
-func (s *settings) evenTeams() {
-	if s.Teams == 0 {
-		return
-	}
-	s.TeamCap = 0
-	s.fitTeams()
-	for {
-		var size [core.MaxTeams]int
-		for _, t := range s.Team {
-			size[t]++
-		}
-		hi, lo := 0, 0
-		for k := 1; k < s.Teams; k++ {
-			if size[k] > size[hi] {
-				hi = k
-			}
-			if size[k] < size[lo] {
-				lo = k
-			}
-		}
-		if size[hi]-size[lo] < 2 {
-			return
-		}
-		for i := len(s.Team) - 1; ; i-- {
-			if int(s.Team[i]) == hi {
-				s.Team[i] = uint8(lo)
-				break
-			}
-		}
 	}
 }
 
 // rivals reports whether the seats can play each other: always with Teams off, else once two teams have players.
 func (s *settings) rivals() bool {
 	for _, t := range s.Team {
-		if s.Teams != 0 && t != s.Team[0] {
+		if s.Teams && t != s.Team[0] {
 			return true
 		}
 	}
-	return s.Teams == 0
+	return !s.Teams
 }
 
 func (s *settings) save() {

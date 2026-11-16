@@ -9,84 +9,107 @@ import (
 	"orbitrix/core"
 )
 
+// lineUp makes s a team game of n teams, its seats dealt to them in turn.
+func lineUp(s *settings, n int) {
+	s.Teams, s.Team = true, make([]uint8, s.Players)
+	for i := range s.Team {
+		s.Team[i] = uint8(i % n)
+	}
+}
+
 func TestFitTeams(t *testing.T) {
-	s := &settings{Players: 5, Teams: 2}
+	s := &settings{Players: 5, Teams: true}
 	s.fitTeams()
-	if !slices.Equal(s.Team, []uint8{0, 1, 0, 1, 0}) || s.TeamCap != 3 {
-		t.Fatalf("new line-up %v of %d a team", s.Team, s.TeamCap)
+	if !slices.Equal(s.Team, []uint8{0, 1, 0, 1, 0}) {
+		t.Fatalf("new line-up %v", s.Team)
 	}
-	s.Team = []uint8{1, 1, 1, 1, 0} // one over the capacity: the last on team B moves
+	s.Team = []uint8{1, 1, 1, 1, 0} // lopsided teams stay as chosen
+	s.Players = 7                   // and new seats join the emptiest
 	s.fitTeams()
-	if !slices.Equal(s.Team, []uint8{1, 1, 1, 0, 0}) {
-		t.Fatalf("over capacity: %v", s.Team)
+	if !slices.Equal(s.Team, []uint8{1, 1, 1, 1, 0, 0, 0}) {
+		t.Fatalf("lopsided: %v", s.Team)
 	}
-	s.Players, s.Teams = 7, 9 // more teams than the game has, and a capacity too small for the players
+	s.Players, s.Team = 4, []uint8{2, 2, 9} // a team the game doesn't have; team B counts though empty
 	s.fitTeams()
-	if s.Teams != core.MaxTeams || len(s.Team) != 7 || s.TeamCap != 3 || core.CheckTeams(s.Team, s.Teams, s.TeamCap) != nil {
-		t.Fatalf("%d teams of %d: %v", s.Teams, s.TeamCap, s.Team)
-	}
-	s.Players, s.Teams, s.TeamCap = 4, 2, 1 // a team gone, and room for nobody
-	s.fitTeams()
-	if s.TeamCap != 2 || core.CheckTeams(s.Team, 2, 2) != nil || !s.rivals() {
-		t.Fatalf("2 teams of %d: %v", s.TeamCap, s.Team)
+	if !slices.Equal(s.Team, []uint8{2, 2, 0, 1}) || !s.rivals() {
+		t.Fatalf("a bad team: %v", s.Team)
 	}
 	s.Team = []uint8{1, 1, 1, 1}
 	if s.rivals() {
 		t.Fatal("one team has no rivals")
 	}
-	if s.Teams = 0; !s.rivals() {
+	if s.Teams = false; !s.rivals() {
 		t.Fatal("Teams off always plays")
 	}
 }
 
-func TestEvenTeams(t *testing.T) {
+// A deal keeps the teams that have players, a second one joining a lone team, and makes them equal, or one apart
+// where the players don't divide; the seats on each change.
+func TestDealTeams(t *testing.T) {
+	rng := core.NewRNG(3)
 	for _, tc := range []struct {
-		players, teams, capacity int
-		team, want               []uint8
-		wantCap                  int
+		team []uint8
+		want [core.MaxTeams]int // players on each team afterwards
 	}{
-		{4, 3, 2, []uint8{0, 1, 0, 1}, []uint8{0, 1, 2, 1}, 2},                // a team more: one player moves to it
-		{4, 2, 2, []uint8{0, 1, 2, 1}, []uint8{0, 1, 0, 1}, 2},                // a team fewer
-		{5, 2, 5, []uint8{0, 0, 0, 0, 0, 1}, []uint8{0, 0, 0, 1, 1}, 3},       // a player fewer, on lopsided teams
-		{4, 3, 2, []uint8{0, 0, 1, 1}, []uint8{0, 2, 1, 1}, 2},                // team C's only player removed
-		{7, 3, 2, []uint8{0, 1, 2, 0, 1, 2}, []uint8{0, 1, 2, 0, 1, 2, 0}, 3}, // a player more
+		{[]uint8{0, 0, 0, 0, 1, 2}, [core.MaxTeams]int{2, 2, 2}},
+		{[]uint8{3, 3, 3, 3, 3, 5, 5}, [core.MaxTeams]int{3: 4, 5: 3}},
+		{[]uint8{4, 4, 4}, [core.MaxTeams]int{0: 1, 4: 2}},
+		{[]uint8{0, 0}, [core.MaxTeams]int{1, 1}},
+		{make([]uint8, 0, 5)[:0:5], [core.MaxTeams]int{3, 2}}, // no line-up yet: A and B
 	} {
-		s := &settings{Players: tc.players, Teams: tc.teams, TeamCap: tc.capacity, Team: tc.team}
-		s.evenTeams()
-		if !slices.Equal(s.Team, tc.want) || s.TeamCap != tc.wantCap {
-			t.Errorf("%d players, %d teams: %v of %d, want %v of %d", tc.players, tc.teams, s.Team, s.TeamCap, tc.want, tc.wantCap)
+		s := &settings{Players: cap(tc.team), Teams: true, Team: tc.team}
+		s.dealTeams(&rng)
+		var size [core.MaxTeams]int
+		for _, team := range s.Team {
+			size[team]++
 		}
+		if len(s.Team) != s.Players || size != tc.want {
+			t.Errorf("%v dealt %v", tc.team, s.Team)
+		}
+	}
+	s, seen := &settings{Players: 12, Teams: true}, map[string]bool{}
+	for range 8 {
+		s.dealTeams(&rng)
+		seen[string(s.Team)] = true
+	}
+	if len(seen) < 2 {
+		t.Fatal("every deal seats the teams alike")
+	}
+	s = &settings{Players: 3, Team: []uint8{4, 4, 4}}
+	if s.dealTeams(&rng); !slices.Equal(s.Team, []uint8{4, 4, 4}) {
+		t.Fatal("Teams off deals nothing")
 	}
 }
 
-func TestNextTeam(t *testing.T) {
-	for _, tc := range []struct {
-		seat, capacity int
-		bots           uint // a bit per bot seat
-		want           []uint8
-		ok             bool
-	}{
-		{0, 2, 0, []uint8{1, 0, 1, 2}, true},
-		{2, 2, 0, []uint8{0, 0, 2, 2}, true},
-		{3, 2, 0, []uint8{0, 0, 1, 1}, true},  // team A is full of humans: on to B
-		{3, 1, 0, []uint8{0, 0, 1, 2}, false}, // every other team is
-		{3, 2, 2, []uint8{0, 2, 1, 0}, true},  // team A is full: its bot takes team C
-		{3, 1, 4, []uint8{0, 0, 2, 1}, true},  // no bot on team A: on to B's
-	} {
-		team := []uint8{0, 0, 1, 2}
-		ok := nextTeam(team, tc.seat, 3, tc.capacity, func(j int) bool { return tc.bots>>j&1 != 0 })
-		if ok != tc.ok || !slices.Equal(team, tc.want) {
-			t.Errorf("seat %d, %d a team, bots %b: %v %v, want %v %v", tc.seat, tc.capacity, tc.bots, team, ok, tc.want, tc.ok)
+func TestRollBots(t *testing.T) {
+	rng := core.NewRNG(5)
+	s := &settings{seats: []int{1, seatHuman, 1, 1, seatHuman, 1}}
+	s.rollBots(&rng)
+	seen := map[int]bool{}
+	for i, opt := range s.seats {
+		if human := i == 1 || i == 4; human != (opt == seatHuman) || !human && seen[opt] {
+			t.Fatalf("rolled %v", s.seats)
 		}
+		seen[opt] = true
 	}
 }
 
-// The Teams tile turns teams on, their steppers and chips sit inside the Players card on every screen, a tap on a chip
-// changes the team instead of opening the seat's menu, and Start needs two teams.
+// The Teams tile turns teams on; each seat's chip sits in its row and opens the seat's team menu, never its type
+// menu; any team takes any number of players, and Start needs two teams. Shuffle players spans the open card and
+// deals the seats, bots and teams.
 func TestSetupTeams(t *testing.T) {
 	for _, size := range [][2]float64{{1440, 900}, {1040, 640}, {540, 844}, {320, 640}, {844, 390}} {
 		t.Run(fmt.Sprintf("%.0fx%.0f", size[0], size[1]), func(t *testing.T) {
 			a, s := setupTestApp(size[0], size[1], 1, 4), &setupScene{menu: -1, open: foldRules}
+			tap := func(r ui.Rect) {
+				t.Helper()
+				a.in = input{x: r.Cx(), y: r.Cy(), clicked: true}
+				if err := s.update(a); err != nil {
+					t.Fatal(err)
+				}
+				a.in = input{}
+				s.layout(a)
+			}
 			click := func(at func() ui.Rect) {
 				t.Helper()
 				s.layout(a)
@@ -94,53 +117,72 @@ func TestSetupTeams(t *testing.T) {
 					s.scroll += low
 					s.layout(a)
 				}
-				r := at()
-				a.in = input{x: r.Cx(), y: r.Cy(), clicked: true}
-				if !s.viewport.Contains(a.in.x, a.in.y) {
+				if r := at(); !s.viewport.Contains(r.Cx(), r.Cy()) {
 					t.Fatalf("%v is off the screen", r)
 				}
-				if err := s.update(a); err != nil {
-					t.Fatal(err)
-				}
-				a.in = input{}
+				tap(at())
+			}
+			inCard := func(at func() ui.Rect) { // Shuffle players or a seat, scrolled to inside the card first
+				t.Helper()
 				s.layout(a)
+				s.seatScroll.Reveal(at())
+				s.lv = ui.Rect{}
+				click(at)
 			}
 			s.layout(a)
 			click(func() ui.Rect { return s.game.tiles[len(gameRows)-1][0] })
-			if a.set.Teams != 2 || !slices.Equal(a.set.Team, []uint8{0, 1, 0, 1}) || a.set.TeamCap != 2 {
-				t.Fatalf("Teams on: %d teams of %d, %v", a.set.Teams, a.set.TeamCap, a.set.Team)
+			if !a.set.Teams || !slices.Equal(a.set.Team, []uint8{0, 1, 0, 1}) {
+				t.Fatalf("Teams on: %v, %v", a.set.Teams, a.set.Team)
 			}
 			s.fold(foldPlayers)
 			s.layout(a)
-			for _, r := range []ui.Rect{s.minusT, s.plusT, s.minusC, s.plusC} {
-				if !containsRect(s.players, r) || r.Bottom() > s.seatScroll.Viewport.Y || r.Y < s.minusP.Bottom() {
-					t.Fatalf("stepper %v must sit in the card %v between its heading and its seats", r, s.players)
-				}
-			}
-			if overlaps(s.minusT, s.minusC) || s.plusT.X < s.minusT.Right() || s.teamX[0] >= s.minusT.X || s.teamX[1] >= s.minusC.X {
-				t.Fatal("the steppers and their labels must not overlap")
+			if b, body := s.shuffleB, s.seatScroll.Viewport; b.X != body.X || b.W != body.W || b.Y < body.Y || b.Bottom() > s.seatTy[0].Y {
+				t.Fatalf("Shuffle players %v must span the card's body %v over its first seat %v", b, body, s.seatTy[0])
 			}
 			for i := range a.set.Players {
-				if !containsRect(s.seatTy[i], s.teamChip[i]) {
-					t.Fatalf("seat %d's chip %v is outside its row %v", i, s.teamChip[i], s.seatTy[i])
+				c, seat := s.teamChip[i], s.seatTy[i]
+				if c.X < s.seatScroll.Viewport.X || c.Right() >= seat.X || c.Y != seat.Y || c.H != seat.H || c.W < ui.CompactButtonTarget*a.u {
+					t.Fatalf("seat %d's team pill %v must stand left of its seat pill %v, as tall", i, c, seat)
+				}
+				for _, label := range seatLabels { // a narrower seat pill still holds every type, 8 px clear of its pips
+					if need := (seatChoiceX+8+36+pipsW)*a.u + ui.TextWidth(label, a.f.LabelBold); need > seat.W {
+						t.Fatalf("seat pill %v is %v short of %q", seat, need-seat.W, label)
+					}
 				}
 			}
-			click(func() ui.Rect { return s.plusT })
-			click(func() ui.Rect { return s.plusC })
-			if a.set.Teams != 3 || a.set.TeamCap != 3 {
-				t.Fatalf("steppers: %d teams of %d", a.set.Teams, a.set.TeamCap)
+			inCard(func() ui.Rect { return s.teamChip[0] })
+			if s.menu != 0 || !s.team {
+				t.Fatalf("a tap on seat 0's chip: menu %d, team %v", s.menu, s.team)
 			}
-			s.seatScroll.Offset = 0
-			click(func() ui.Rect { return s.teamChip[0] })
-			if a.set.Team[0] != 1 || s.menu >= 0 {
-				t.Fatalf("a tap on seat 0's chip: team %d, menu %d", a.set.Team[0], s.menu)
+			panel, first := s.menuRects(a)
+			if v := a.safe(); !containsRect(v, panel) {
+				t.Fatalf("team menu %v leaves the screen %v", panel, v)
 			}
-			a.set.Team = []uint8{1, 1, 1, 1}
-			a.set.TeamCap = 4
+			tap(setupMenuOption(panel, first, core.MaxTeams-1, a.u))
+			if a.set.Team[0] != core.MaxTeams-1 || s.menu >= 0 {
+				t.Fatalf("Team F chosen: team %d, menu %d", a.set.Team[0], s.menu)
+			}
+			inCard(func() ui.Rect { return s.teamChip[2] })
+			if panel, _ := s.menuRects(a); panel.Contains(s.teamChip[2].Cx(), s.teamChip[2].Cy()) {
+				s.menu = -1 // a short screen's menu covers the chip
+			} else if tap(s.teamChip[2]); s.menu >= 0 { // a second tap closes it
+				t.Fatalf("a second tap on a chip left menu %d open", s.menu)
+			}
+			a.set.Team = []uint8{1, 1, 1, 1} // a team holds any number, but a game needs two
 			if s.canStart(a) {
 				t.Fatal("Start with every player on one team")
 			}
-			a.set.Team[3] = 2
+			inCard(func() ui.Rect { return s.shuffleB })
+			humans, size := 0, [core.MaxTeams]int{}
+			for i, opt := range a.set.seats {
+				if size[a.set.Team[i]]++; opt == seatHuman {
+					humans++
+				}
+			}
+			if humans != 1 || size != [core.MaxTeams]int{2, 2} || !s.canStart(a) { // team A joins the lone team B
+				t.Fatalf("shuffled to seats %v, teams %v", a.set.seats, a.set.Team)
+			}
+			a.set.Team = []uint8{1, 1, 1, 2}
 			s.begin(a)
 			p, ok := a.next.(*playScene)
 			if !ok || !slices.Equal(p.game.Team[:4], []uint8{1, 1, 1, 2}) || p.game.Mix == nil {
@@ -152,7 +194,7 @@ func TestSetupTeams(t *testing.T) {
 
 func TestTeamResults(t *testing.T) {
 	a := setupTestApp(1040, 640, 1, 4)
-	a.set.Teams, a.set.Team = 2, []uint8{1, 0, 1, 0}
+	a.set.Teams, a.set.Team = true, []uint8{1, 0, 1, 0}
 	p, err := newPlay(a, 5, 5, a.set.seats)
 	if err != nil {
 		t.Fatal(err)

@@ -80,6 +80,9 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 	a.set.Marks = a.set.Marks || c.marks
 	a.set.Name = c.player
 	a.set.seats[1], _ = parseSeat("raider")
+	if c.teams > 0 {
+		lineUp(a.set, c.teams)
+	}
 	if c.cols > 0 {
 		a.set.Cols, a.set.Rows = c.cols, c.rows
 	}
@@ -90,6 +93,9 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 	}
 	if c.menu {
 		s.menu = 1
+	}
+	if c.hover == "teammenu" {
+		s.menu, s.team = 2, true
 	}
 	if c.small {
 		a.set.Cols, a.set.Rows = 3, 3
@@ -205,7 +211,16 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		if c.screen == "room-joiner" {
 			n.seat = 1
 		}
+		if c.teams > 0 {
+			n.lobby.Teams = true
+			for i := range n.lobby.Seats {
+				n.lobby.Seats[i].Team = uint8(i % c.teams)
+			}
+		}
 		r := newRoom(n)
+		if j, ok := r.(*roomScene); ok {
+			j.menu = c.hover == "teammenu"
+		}
 		if s, ok := r.(*setupScene); ok {
 			if c.screen == "room-host" {
 				s.room.reqs = []online.Request{{Peer: "p1", Name: "Human"}}
@@ -255,9 +270,6 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		m.layout(a)
 		m.draw(out, a)
 	case "pause", "results":
-		if a.set.Teams = c.teams; c.teams > 0 {
-			a.set.evenTeams()
-		}
 		p, err := newPlay(a, a.set.Cols, a.set.Rows, a.set.seats)
 		if err != nil {
 			g.err = err
@@ -293,9 +305,6 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		p.draw(out, a)
 	}
 	if c.screen == "" && c.play {
-		if a.set.Teams = c.teams; c.teams > 0 {
-			a.set.evenTeams()
-		}
 		p, err := newPlay(a, a.set.Cols, a.set.Rows, a.set.seats)
 		if err != nil {
 			g.err = err
@@ -350,6 +359,12 @@ func TestCaptureSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := &setupCaptureGame{dir: dir, cases: []setupCaptureCase{
+		{name: "teams-setup-desktop", w: 1040, h: 640, players: 6, teams: 3},
+		{name: "teams-setup-menu", w: 1040, h: 640, players: 6, teams: 3, hover: "teammenu", dark: true},
+		{name: "teams-setup-mobile", w: 360, h: 740, players: 6, teams: 2, hover: "teammenu"},
+		{name: "teams-setup-narrow", w: 320, h: 640, players: 12, teams: 6},
+		{name: "teams-joiner", w: 1040, h: 640, players: 4, screen: "room-joiner", teams: 2},
+		{name: "teams-joiner-menu", w: 390, h: 844, players: 4, screen: "room-joiner", teams: 2, hover: "teammenu", dark: true},
 		{name: "fix-snack-room-desktop", w: 1040, h: 640, players: 4, screen: "room-host", hover: "ready"},
 		{name: "fix-snack-room-mobile", w: 390, h: 844, players: 4, screen: "room-host", hover: "ready", dark: true},
 		{name: "fix-snack-room-landscape", w: 844, h: 390, players: 4, screen: "room-host", hover: "ready"},

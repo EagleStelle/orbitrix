@@ -149,7 +149,7 @@ func newPlay(a *app, cols, rows int, seats []int) (*playScene, error) {
 	if a.set.Map != nil {
 		g, err = core.NewGameWithMap(*a.set.Map, len(seats))
 	}
-	if err == nil && a.set.Teams != 0 {
+	if err == nil && a.set.Teams {
 		err = g.SetTeams(a.set.Team)
 	}
 	if err != nil {

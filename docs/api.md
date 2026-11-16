@@ -72,7 +72,7 @@ Binary, on every transport: `ws` on the LAN, a WebRTC data channel online and `l
 | `Leave` | player to host | gives the seat up, with no grace period |
 | `Team` | player to host | `Team`: moves the player to that team in a team game's lobby, if it has room |
 | `Welcome` | host to player | `Seat`, `Token` for rejoining |
-| `Lobby` | host to player | `Cols`, `Rows`, `TurnTimer`, `Playing`, `Teams` and `TeamCap` (both 0 without the Teams add-on), `Seats[]` (`State`, `AI`, `Ready`, `Name`, `Team`), optional map definition |
+| `Lobby` | host to player | `Cols`, `Rows`, `TurnTimer`, `Playing`, `Teams` (the Teams add-on is on), `Seats[]` (`State`, `AI`, `Ready`, `Name`, `Team`), optional map definition |
 | `MoveApplied` | host to player | `Seq`, `Player`, `C`, `R` (255, 255 for a pass), `Hash` after the move |
 | `Snapshot` | host to player | `Seq` and the whole game, including optional map definition, `Durability`, `CircuitOn`, per-cell `Pressed`, per-edge `EdgeDurability`, per-cell `Boxes` on maps with Boxes, and in a team game each player's `Team` and the per-cell, per-player orb counts `Mix`; `Seq` 0 starts a game |
 | `Bye` | host to player | the reason the host closed the connection |

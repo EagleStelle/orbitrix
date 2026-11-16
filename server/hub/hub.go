@@ -55,14 +55,13 @@ type Config struct {
 	Cols, Rows int
 	Map        *core.MapDefinition // nil selects an ordinary rectangle; copied when the room takes ownership
 	Seats      []Seat              // in turn order
-	// Teams makes it a team game of that many teams, with at most TeamCap players each; Team is each seat's team.
-	// All zero is every player for themselves.
-	Teams, TeamCap int
-	Team           []uint8
-	TurnTimer      time.Duration
-	Grace          time.Duration // seat hold after a drop; 0 means DefaultGrace
-	AIDelay        time.Duration // pause before each AI move or pass, so the stream of moves isn't a burst
-	Seed           uint64        // AI seed; 0 picks a random one
+	// Teams makes it a team game, Team holding each seat's team, below core.MaxTeams; teams may be any size.
+	Teams     bool
+	Team      []uint8
+	TurnTimer time.Duration
+	Grace     time.Duration // seat hold after a drop; 0 means DefaultGrace
+	AIDelay   time.Duration // pause before each AI move or pass, so the stream of moves isn't a burst
+	Seed      uint64        // AI seed; 0 picks a random one
 	// Budget is an AI's work per move; nil means Strategy.Budget(). A browser host passes a smaller one.
 	Budget func(s ai.Strategy, cells int) int
 	// OnClose is called once for every Conn the room has finished with, after its last message was sent. The host
@@ -124,11 +123,11 @@ func New(cfg Config) (*Room, error) {
 			return nil, fmt.Errorf("hub: seat %d: unknown strategy %d", i, s.AI)
 		}
 	}
-	if cfg.Teams != 0 {
+	if cfg.Teams {
 		if len(cfg.Team) != len(cfg.Seats) {
 			return nil, fmt.Errorf("hub: %d teams for %d seats", len(cfg.Team), len(cfg.Seats))
 		}
-		if err := core.CheckTeams(cfg.Team, cfg.Teams, cfg.TeamCap); err != nil {
+		if err := core.CheckTeams(cfg.Team); err != nil {
 			return nil, fmt.Errorf("hub: %w", err)
 		}
 	}
@@ -148,7 +147,7 @@ func New(cfg Config) (*Room, error) {
 	r := &Room{cfg: cfg, seats: make([]seat, len(cfg.Seats), core.MaxPlayers), peers: map[*peer]struct{}{}}
 	for i, s := range cfg.Seats {
 		r.seats[i].Seat = s
-		if cfg.Teams != 0 {
+		if cfg.Teams {
 			r.seats[i].team = cfg.Team[i]
 		}
 	}
@@ -257,12 +256,9 @@ func (r *Room) handle(p *peer, b []byte) {
 			}
 		}
 	case proto.Team:
-		// A team full of humans, or one the room doesn't have, is ignored: it can race the host's own change.
-		if team := r.teams(); r.game == nil && int(m.Team) < r.cfg.Teams &&
-			core.JoinTeam(team, p.seat, m.Team, r.cfg.TeamCap, func(j int) bool { return !r.seats[j].Human }) {
-			for j := range r.seats {
-				r.seats[j].team = team[j] // a bot on a full team trades teams with the player
-			}
+		// Outside a team game's lobby it is ignored: it can race the host's own change.
+		if r.game == nil && r.cfg.Teams && m.Team < core.MaxTeams && s.team != m.Team {
+			s.team = m.Team
 			r.broadcastLobby()
 		}
 	case proto.Resync:
@@ -430,7 +426,7 @@ func (r *Room) Lobby() proto.Lobby {
 
 func (r *Room) lobby() proto.Lobby {
 	l := proto.Lobby{Cols: uint8(r.cfg.Cols), Rows: uint8(r.cfg.Rows), TurnTimer: uint16(r.cfg.TurnTimer / time.Second),
-		Playing: r.game != nil, Teams: uint8(r.cfg.Teams), TeamCap: uint8(r.cfg.TeamCap), Seats: make([]proto.Seat, len(r.seats))}
+		Playing: r.game != nil, Teams: r.cfg.Teams, Seats: make([]proto.Seat, len(r.seats))}
 	if r.cfg.Map != nil {
 		m := r.cfg.Map.Clone()
 		l.Map = &m
@@ -467,10 +463,8 @@ func (r *Room) Start() error {
 		}
 	}
 	g, err := configuredGame(r.cfg, len(r.seats))
-	if err == nil && r.cfg.Teams != 0 {
-		if err = core.CheckTeams(r.teams(), r.cfg.Teams, r.cfg.TeamCap); err == nil {
-			err = g.SetTeams(r.teams())
-		}
+	if err == nil && r.cfg.Teams {
+		err = g.SetTeams(r.teams())
 	}
 	if err != nil {
 		return fmt.Errorf("hub: %w", err)
@@ -559,23 +553,24 @@ func (r *Room) Configure(cols, rows int, seats []Seat) error {
 	return nil
 }
 
-// SetTeams makes the room's next game a team game of teams teams with at most capacity players each, team holding
-// each seat's team, or with teams 0 a game of every player for themselves. Only in the lobby.
-func (r *Room) SetTeams(teams, capacity int, team []uint8) error {
+// SetTeams makes the room's next game a team game, team holding each seat's team, or with a nil team a game of every
+// player for themselves. Only in the lobby.
+func (r *Room) SetTeams(team []uint8) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.shut || r.game != nil {
 		return ErrState
 	}
-	if teams == 0 {
-		capacity, team = 0, make([]uint8, len(r.seats))
-	} else if err := core.CheckTeams(team, teams, capacity); err != nil {
+	on := team != nil
+	if !on {
+		team = make([]uint8, len(r.seats))
+	} else if err := core.CheckTeams(team); err != nil {
 		return fmt.Errorf("hub: %w", err)
 	}
 	if len(team) != len(r.seats) {
 		return ErrSeat
 	}
-	r.cfg.Teams, r.cfg.TeamCap = teams, capacity
+	r.cfg.Teams = on
 	for i := range r.seats {
 		r.seats[i].team = team[i]
 	}

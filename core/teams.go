@@ -347,43 +347,12 @@ func (g *Game) checkTeamWin() bool {
 // Won reports whether the game is over and p won it, alone or with their team.
 func (g *Game) Won(p int8) bool { return g.Over() && g.Allied(g.Winner, p) }
 
-// JoinTeam moves player i of the line-up team to team t: into its room, or, when it already holds capacity players,
-// trading teams with its first bot. It reports whether i moved; a full team of humans keeps them all.
-func JoinTeam(team []uint8, i int, t uint8, capacity int, bot func(int) bool) bool {
-	size, swap := 0, -1
-	for j, u := range team {
-		if u == t {
-			if size++; swap < 0 && j != i && bot(j) {
-				swap = j
-			}
-		}
-	}
-	switch {
-	case team[i] == t:
-		return false
-	case size < capacity:
-	case swap >= 0:
-		team[swap] = team[i]
-	default:
-		return false
-	}
-	team[i] = t
-	return true
-}
-
-// CheckTeams reports why team, each player's team, can't be the line-up of a game of teams teams with at most
-// capacity players each. A line-up that fits may still put every player on one team, which SetTeams refuses.
-func CheckTeams(team []uint8, teams, capacity int) error {
-	if teams < 2 || teams > MaxTeams || capacity < 1 {
-		return fmt.Errorf("teams: %d teams of %d", teams, capacity)
-	}
-	var size [MaxTeams]int
+// CheckTeams reports why team, each player's team, can't be a line-up: a team that isn't below MaxTeams. Teams may be
+// any size; a line-up that passes may still put every player on one team, which SetTeams refuses.
+func CheckTeams(team []uint8) error {
 	for p, t := range team {
-		if int(t) >= teams {
-			return fmt.Errorf("teams: player %d on team %d of %d", p, t, teams)
-		}
-		if size[t]++; size[t] > capacity {
-			return fmt.Errorf("teams: team %d holds more than %d players", t, capacity)
+		if t >= MaxTeams {
+			return fmt.Errorf("teams: player %d on team %d, must be under %d", p, t, MaxTeams)
 		}
 	}
 	return nil
