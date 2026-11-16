@@ -90,7 +90,7 @@ func (b *Bot) voyager() int {
 }
 
 // positionShares values a rollout cutoff by material, territory, readiness and exposure.
-// Finished games use exact win/loss rewards; eliminated players always receive zero.
+// Finished games use exact win/loss rewards; eliminated players receive zero, or their team's share in a team game.
 func positionShares(g *core.Game) (values [core.MaxPlayers]float64) {
 	if g.Over() {
 		return winners(g)
@@ -137,6 +137,16 @@ func positionShares(g *core.Game) (values [core.MaxPlayers]float64) {
 	}
 	for p := 0; p < g.Players; p++ {
 		values[p] /= total
+	}
+	if g.Mix != nil {
+		// Teammates win together, as in winners: each gets the team's whole share.
+		var team [core.MaxTeams]float64
+		for p := 0; p < g.Players; p++ {
+			team[g.Team[p]] += values[p]
+		}
+		for p := 0; p < g.Players; p++ {
+			values[p] = team[g.Team[p]]
+		}
 	}
 	return values
 }
@@ -196,16 +206,17 @@ func (b *Bot) shortlist(g *core.Game, k int) []scored {
 	salt := uint32(b.rng.Uint64())
 	list := b.list[:0]
 	for i, o := range g.Owner {
-		if !g.Placeable(i) || o != core.NoOwner && o != p {
+		if !g.Placeable(i) || o != core.NoOwner && !g.Has(i, p) {
 			continue
 		}
+		held := o != core.NoOwner // p has orbs here, though a teammate may own the cell
 		c, cp := int(g.Count[i]), int(geo.Cap[i])
 		// Skip the neighbour scan when even the best case (every neighbour ours, no threats) can't make the list.
 		bound := 10 + 8*cp + 12*(4-cp)
 		switch {
-		case o == p && c+1 >= cp:
+		case held && c+1 >= cp:
 			bound = 100
-		case o == p:
+		case held:
 			bound = 20 + 10*c
 		}
 		bound += pull(g, i, p)
@@ -217,7 +228,7 @@ func (b *Bot) shortlist(g *core.Game, k int) []scored {
 			switch q := g.Owner[j]; {
 			case q == p:
 				own++
-			case q != core.NoOwner:
+			case q != core.NoOwner && !g.Allied(q, p):
 				enemies++
 				if g.Count[j]+1 >= geo.Cap[j] {
 					threats++
@@ -226,9 +237,9 @@ func (b *Bot) shortlist(g *core.Game, k int) []scored {
 		}
 		var score int
 		switch {
-		case o == p && c+1 >= cp:
+		case held && c+1 >= cp:
 			score = 60 + 40*min(enemies, 1)
-		case o == p:
+		case held:
 			score = 20 + 10*c - 25*threats
 		default:
 			score = 10 + 8*own - 25*threats + 12*(4-cp) // corners +24, edges +12
@@ -254,12 +265,12 @@ func (b *Bot) rolloutMove(g *core.Game) int {
 		i := int((bits & 0xffff) * n >> 16)
 		bits >>= 16
 		o := g.Owner[i]
-		if !g.Placeable(i) || o != core.NoOwner && o != p {
+		if !g.Placeable(i) || o != core.NoOwner && !g.Has(i, p) {
 			continue
 		}
 		found++
 		score := 0
-		if o == p {
+		if o != core.NoOwner {
 			score = 1
 			if g.Count[i]+1 >= g.Geo.Cap[i] {
 				score = 2

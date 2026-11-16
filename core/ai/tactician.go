@@ -6,7 +6,7 @@ import (
 	"orbitrix/core"
 )
 
-// Tactician uses iterative-deepening alpha-beta minimax. All opponents minimize our score;
+// Tactician uses iterative-deepening alpha-beta minimax. All opponents minimize our score, teammates maximize it;
 // only fully searched depths replace the previous answer. Nodes and explosions share the move budget.
 
 const (
@@ -18,7 +18,7 @@ type tactic struct {
 	b      *Bot
 	branch int
 	hunt   bool // Hunter: Best-Reply Search with quiescence, scored against prey
-	prey   int8
+	prey   int8 // a side: see side
 }
 
 func (b *Bot) tactician() int { return tactic{b: b, branch: 8}.deepen() }
@@ -78,10 +78,10 @@ func (t *tactic) minimax(n *core.Game, depth int, alpha, beta float64, ply int) 
 	if b.left <= 0 {
 		return 0, false
 	}
-	maximizing := int8(n.Turn) == b.me
-	if t.hunt && !maximizing {
+	if t.hunt && int8(n.Turn) != b.me {
 		return t.bestReply(n, depth, alpha, beta, ply)
 	}
+	maximizing := n.Allied(int8(n.Turn), b.me)
 	cands := t.candidates(n, int8(n.Turn), ply, t.branch)
 	value := math.Inf(1)
 	if maximizing {
@@ -115,16 +115,17 @@ func (t *tactic) candidates(n *core.Game, player int8, level, limit int) []score
 	geo := n.Geo
 	dst := t.b.levels[level][:0]
 	for i, o := range n.Owner {
-		if !n.Placeable(i) || o != core.NoOwner && o != player {
+		if !n.Placeable(i) || o != core.NoOwner && !n.Has(i, player) {
 			continue
 		}
+		held := o != core.NoOwner // player has orbs here, though a teammate may own the cell
 		threat, enemies, owned := 0, 0, 0
 		for _, j := range geo.Neighbours(i) {
 			eo := n.Owner[j]
 			if eo == player {
 				owned++
 			}
-			if eo == core.NoOwner || eo == player {
+			if eo == core.NoOwner || n.Allied(eo, player) {
 				continue
 			}
 			enemies++
@@ -136,9 +137,9 @@ func (t *tactic) candidates(n *core.Game, player int8, level, limit int) []score
 		c, cp := int(n.Count[i]), int(geo.Cap[i])
 		score := 10 + 4*owned + 10*(4-cp) - 30*threat
 		switch {
-		case o == player && c+1 >= cp:
+		case held && c+1 >= cp:
 			score = 60 + 40*enemies
-		case o == player:
+		case held:
 			score += 10 + 8*c
 		}
 		if n.Orbs[player] <= 8 && c+1 < cp {
@@ -170,6 +171,7 @@ func insertTop(list []scored, s scored, k int) []scored {
 
 // evaluate compares material, territory, readiness and exposure against the strongest
 // opponent and the rest of the field. Elimination always outweighs positional gains.
+// A team is one side: it shares a score, and is out only when every member is.
 func (t *tactic) evaluate(n *core.Game, ply int) float64 {
 	me, geo := t.b.me, n.Geo
 	if n.Over() {
@@ -178,7 +180,14 @@ func (t *tactic) evaluate(n *core.Game, ply int) float64 {
 		}
 		return -tacticWin + float64(ply)
 	}
-	if !n.Alive(int(me)) {
+	var live [core.MaxPlayers]bool
+	for p := 0; p < n.Players; p++ {
+		if n.Alive(p) {
+			live[side(n, p)] = true
+		}
+	}
+	mine := side(n, int(me))
+	if !live[mine] {
 		return -tacticWin + float64(ply)
 	}
 	var values [core.MaxPlayers]float64
@@ -216,23 +225,23 @@ func (t *tactic) evaluate(n *core.Game, ply int) float64 {
 				}
 			}
 		}
-		values[o] += value
+		values[side(n, int(o))] += value
 	}
 	var opponents, sum, strongest float64
 	strongest = math.Inf(-1)
-	for p := 0; p < n.Players; p++ {
-		if n.Allied(int8(p), me) || !n.Alive(p) {
+	for s, alive := range live {
+		if !alive || s == mine {
 			continue
 		}
 		opponents++
-		sum += values[p]
-		strongest = max(strongest, values[p])
+		sum += values[s]
+		strongest = max(strongest, values[s])
 	}
 	if opponents == 0 {
-		return values[me]
+		return values[mine]
 	}
-	if t.hunt && n.Alive(int(t.prey)) {
-		return values[me] - (3*values[t.prey]+sum/opponents)/4 // the prey counts three times the field
+	if t.hunt && live[t.prey] {
+		return values[mine] - (3*values[t.prey]+sum/opponents)/4 // the prey counts three times the field
 	}
-	return values[me] - (strongest+sum/opponents)/2
+	return values[mine] - (strongest+sum/opponents)/2
 }

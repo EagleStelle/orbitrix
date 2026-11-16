@@ -10,7 +10,8 @@ import (
 // the single most damaging reply from any one opponent is searched, played out of turn. A round then costs one
 // opponent ply whatever the player count, so it sees further than paranoid search in big games. Leaves extend
 // through captures (quiescence), so a chain one ply past the horizon still counts. It scores the board against its
-// prey, the opponent with the most orbs when it starts thinking, and so goes after the leader.
+// prey, the opponent (a whole team, in a team game) with the most orbs when it starts thinking, and so goes after
+// the leader. Teammates never reply: only opponents do.
 
 const (
 	hunterQuiet    = 2 // capture plies searched past the horizon
@@ -19,12 +20,18 @@ const (
 
 func (b *Bot) hunter() int { return tactic{b: b, branch: 8, hunt: true, prey: b.prey()}.deepen() }
 
-// prey returns the opponent with the most orbs, the first after us in turn order on a tie.
+// prey returns the opposing side with the most orbs, the first after us in turn order on a tie.
 func (b *Bot) prey() int8 {
+	g := b.g
+	var orbs [core.MaxPlayers]int32
+	for p := 0; p < g.Players; p++ {
+		orbs[side(g, p)] += g.Orbs[p]
+	}
 	prey, most := core.NoOwner, int32(-1)
-	for i := 1; i < b.g.Players; i++ {
-		if p := (int(b.me) + i) % b.g.Players; b.g.Alive(p) && !b.g.Allied(int8(p), b.me) && b.g.Orbs[p] > most {
-			prey, most = int8(p), b.g.Orbs[p]
+	for i := 1; i < g.Players; i++ {
+		p := (int(b.me) + i) % g.Players
+		if s := side(g, p); g.Alive(p) && !g.Allied(int8(p), b.me) && orbs[s] > most {
+			prey, most = int8(s), orbs[s]
 		}
 	}
 	return prey
@@ -35,16 +42,19 @@ func (t *tactic) bestReply(n *core.Game, depth int, alpha, beta float64, ply int
 	b := t.b
 	opponents := 0
 	for p := range n.Players {
-		if p != int(b.me) && n.Alive(p) {
+		if !n.Allied(int8(p), b.me) && n.Alive(p) {
 			opponents++
 		}
+	}
+	if opponents == 0 {
+		return t.evaluate(n, ply), true // every opponent is out, and a teammate has yet to play their first turn
 	}
 	limit := max(3, 2*t.branch/opponents) // the layer stays about as wide as two players' worth of candidates
 	value := math.Inf(1)
 	child := &b.nodes[ply]
 	for i := 1; i < n.Players; i++ {
 		q := (int(b.me) + i) % n.Players
-		if !n.Alive(q) {
+		if n.Allied(int8(q), b.me) || !n.Alive(q) {
 			continue
 		}
 		for _, c := range t.candidates(n, int8(q), ply, limit) {
@@ -113,17 +123,17 @@ func (t *tactic) quiesce(n *core.Game, alpha, beta float64, ply, left int) (floa
 }
 
 // captures lists the primed cells that capture when they explode, biggest haul first: ours into any enemy, or an
-// opponent's into ours.
+// opponent's into ours or a teammate's.
 func (t *tactic) captures(n *core.Game, ours bool, ply int) []scored {
 	b, geo := t.b, n.Geo
 	dst := b.levels[ply][:0]
 	for i, o := range n.Owner {
-		if o == core.NoOwner || (o == b.me) != ours || n.Count[i]+1 < geo.Cap[i] {
+		if o == core.NoOwner || n.Has(i, b.me) != ours || n.Count[i]+1 < geo.Cap[i] {
 			continue
 		}
 		haul := 0
 		for _, j := range geo.Neighbours(i) {
-			if q := n.Owner[j]; q != core.NoOwner && !n.Allied(q, o) && (ours || q == b.me) {
+			if q := n.Owner[j]; q != core.NoOwner && !n.Allied(q, o) && (ours || n.Allied(q, b.me)) {
 				haul += int(n.Count[j]) + 1
 			}
 		}

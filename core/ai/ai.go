@@ -281,6 +281,14 @@ func (b *Bot) others(t [core.MaxPlayers]int32) int32 {
 	return n
 }
 
+// side is who p wins with: their team in a team game, else p alone.
+func side(g *core.Game, p int) int {
+	if g.Mix != nil {
+		return int(g.Team[p])
+	}
+	return p
+}
+
 // winners gives every winner of a finished game the full reward: the winner and, in a team game, their teammates.
 func winners(g *core.Game) (values [core.MaxPlayers]float64) {
 	for p := range g.Players {

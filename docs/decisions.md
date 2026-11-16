@@ -126,7 +126,7 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - A move must depend only on (position, seed, budget). Sovereign clears its transposition table every move for this reason, and its network runs in integers so every platform computes the same moves.
 - Shared survival protection covers only a first placement or a position of at most one cell and two orbs, so each bot otherwise keeps its own risk appetite.
 - Spy stays a heuristic. Reply search would turn it into another search bot.
-- In a team game the bots share only the rules: a team win counts as their win and teammates are neither threats nor targets. Search still lets a teammate reply as a rival would, and Prodigy's and Sovereign's networks, trained on games of every player for themselves, read a shared cell as its owner's. Team-aware networks need retraining.
+- In a team game every bot counts a team win as its own and treats teammates as neither threats nor targets. Tactician, Hunter and Voyager also search and score by team: a teammate's turn works for the team, only opponents reply, and a team shares one score. Classic games must keep choosing the same moves. Prodigy and Sovereign still search a teammate as a rival, list moves by cell owner, and their networks, trained on games of every player for themselves, read a shared cell as its owner's. Team-aware networks need retraining.
 - Network weights are generated Go source, rewritten by training only when the new weights win, so the repo holds no data files.
 - Sovereign uses Tactician search on custom maps until its network can represent map topology; its existing
   rectangular pattern table cannot represent every map neighborhood or a fifth Link connection. Prodigy fully
