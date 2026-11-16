@@ -143,7 +143,7 @@ func (g *Game) mapGeometry() *Geometry {
 		}
 		var holes [5]int16
 		var holePaths [5][]int16
-		nholes, outlets := 0, uint8(0)
+		nholes, outlets, fills := 0, uint8(0), uint8(0)
 		for d := range 4 {
 			var scratch [4 * MaxMapGroups]int16
 			j, arrive, path := m.travel(i, d, t.pairs, blocked[:], geo.PortalAxes, scratch[:0])
@@ -152,6 +152,9 @@ func (g *Game) mapGeometry() *Geometry {
 				holePaths[nholes] = slices.Clone(path)
 				nholes++
 				geo.Routes[i] |= 16 << d
+				if g.TerrainAt(j) == Landfill {
+					fills |= 1 << d
+				}
 			}
 			if j >= 0 && g.TerrainAt(j) == Floor {
 				slot := MaxConnections*i + int(geo.Degree[i])
@@ -206,7 +209,7 @@ func (g *Game) mapGeometry() *Geometry {
 			if geo.Aims == nil {
 				geo.Aims = make([]uint8, n)
 			}
-			geo.Aims[i] = outlets
+			geo.Aims[i] = outlets | fills // a Landfill it faces takes the shot as fill
 		}
 	}
 	t.cache[t.next] = topologyEntry{key: key, geo: geo}
@@ -224,12 +227,16 @@ func (g *Game) terrainWave(wave int, record bool) {
 		}
 	}
 	if len(g.topology.walls) != 0 {
-		for _, e := range g.cur {
+		for k, e := range g.cur {
 			i := int(e)
 			if g.Map.Cells[i].Terrain == BreakableFloor && g.Durability[i] > 0 {
 				damage[i]++ // only its own explosions crack it
 			}
-			for _, target := range g.Geo.Targets(i)[g.Geo.Degree[i]:] {
+			pits := g.Geo.Targets(i)[g.Geo.Degree[i]:]
+			if k < g.shots {
+				_, pits = g.Geo.Shot(i, g.Durability[i])
+			}
+			for _, target := range pits {
 				if g.Map.Cells[target].Terrain == Landfill && g.Durability[target] > 0 {
 					damage[target]++
 				}

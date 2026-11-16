@@ -52,3 +52,40 @@ func TestTurretPlaybackMatchesGame(t *testing.T) {
 		t.Fatal("random play never fired a Turret")
 	}
 }
+
+// A shot fired at a Landfill falls into it on the board, which then shows the fill the game holds.
+func TestTurretShotFillsALandfillOnTheBoard(t *testing.T) {
+	m := core.NewMap(5, 5)
+	m.Cells[12].Feature, m.Cells[11].Terrain = core.Turret, core.Landfill // up, where a Turret faces first
+	g, err := core.NewGameWithMap(m, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := g.Snapshot()
+	s.Played = 3
+	s.Count[12], s.Owner[12] = 1, 0
+	s.Count[24], s.Owner[24] = 1, 1
+	if g, err = core.Restore(s); err != nil {
+		t.Fatal(err)
+	}
+	b, fill, fell := New(g), g.Durability[11], false
+	for _, cell := range []int{0, 24, 1, 24, 2} { // the Turret skips a move, fires up into the Landfill, then right
+		mover := int8(g.Turn)
+		waves, err := g.Apply(cell)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.State.Events = g.TerrainEvents
+		b.Start(cell, mover, waves, g.ProducedAt, nil)
+		for n := 0; (b.Playing || len(b.falls) > 0) && n < 1000; n++ {
+			b.Tick(nil)
+			fell = fell || len(b.falls) == 1 && b.falls[0].landfill && b.falls[0].hole == 11 && b.falls[0].owner == 0
+		}
+		if b.landfillDurability[11] != g.Durability[11] || !slices.Equal(b.State.Count, g.Count) || !slices.Equal(b.State.Replay.Durability, g.Durability) {
+			t.Fatalf("after %d: board differs from the game", cell)
+		}
+	}
+	if !fell || g.Durability[11] != fill-1 {
+		t.Fatalf("fell %v, Landfill needs %d of %d: one shot falls in", fell, g.Durability[11], fill)
+	}
+}

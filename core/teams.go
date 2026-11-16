@@ -279,10 +279,8 @@ func (g *Game) explodeTeams() {
 	for k, e := range g.cur {
 		to, deal := geo.Neighbours(int(e)), g.deal[k*dealWidth:]
 		if k < g.shots {
-			var slot int
-			slot, g.Durability[e] = geo.Aim(int(e), g.Durability[e])
-			g.send(int(to[slot]), g.from[k])
-			continue
+			to, _ = geo.Shot(int(e), g.Durability[e])
+			deal = g.from[k : k+1] // its one orb is its holder's
 		}
 		for slot, n := range to {
 			g.send(int(n), deal[slot])

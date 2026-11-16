@@ -33,7 +33,8 @@ type Geometry struct {
 	// Outlets holds each Reservoir's open Floor routes, bit d for direction d (left, right, up, down): the sides its
 	// arrow can point to. Nil without Reservoirs.
 	Outlets []uint8
-	// Aims holds each Turret's open Floor routes the same way: the sides it can face. Nil without Turrets.
+	// Aims holds each Turret's open routes into Floor and unfilled Landfills the same way: the sides it can face. Nil
+	// without Turrets.
 	Aims []uint8
 	// Routes holds each cell's open routes by direction (left, right, up, down): bit d into Floor, bit 4+d into a Hole
 	// or unfilled Landfill.
@@ -157,15 +158,23 @@ func (g *Geometry) PortalPath(cell, connection int) []int16 {
 // Playable excludes blocked terrain and Portals, including an empty destroyed wall as Floor.
 func (g *Geometry) Playable(i int) bool { return i >= 0 && i < g.Cells() && g.Cap[i] != 0 }
 
-// Aim returns the neighbour slot Turret i fires into, given the clockwise step it faces (0 up), and the step after.
+// Aim returns the target slot Turret i fires into, given the clockwise step it faces (0 up), and the step after:
+// Floor routes fill the slots in direction order, then the pits do.
 func (g *Geometry) Aim(i int, step uint8) (slot int, next uint8) {
 	d, next := NextOutlet(g.Aims[i], step)
-	return bits.OnesCount8(g.Aims[i] & (1<<d - 1)), next
+	floor, below := g.Routes[i]&15, uint8(1)<<d-1
+	if floor&(1<<d) != 0 {
+		return bits.OnesCount8(floor & below), next
+	}
+	return int(g.Degree[i]) + bits.OnesCount8(g.Routes[i]>>4&below), next
 }
 
-// LastAim returns the neighbour slot Turret i just fired into, given its step after turning: the inverse of Aim.
-func (g *Geometry) LastAim(i int, step uint8) int {
-	return bits.OnesCount8(g.Aims[i] & (1<<clockwise[(step+3)&3] - 1))
+// Shot returns where Turret i's one shot goes, split as an explosion's targets are: the neighbour it lands on, or
+// the Landfill that takes it as fill. One of the two is empty.
+func (g *Geometry) Shot(i int, step uint8) (to, pits []int16) {
+	slot, _ := g.Aim(i, step)
+	t, n := g.Targets(i), int(g.Degree[i])
+	return t[min(slot, n):min(slot+1, n)], t[max(slot, n):max(slot+1, n)]
 }
 
 // LastOutlet returns the neighbour slot Reservoir i's extra orb took, given its state after the arrow turned: the

@@ -669,10 +669,11 @@ func (b *Board) dropIntoHoles() sound.Effects {
 	}
 	var effects sound.Effects
 	for k, e := range b.Waves[b.Wave] {
+		holes := geo.Targets(int(e))[geo.Degree[e]:]
 		if k < b.State.shots {
-			continue // a Turret fires only at Floor
+			_, holes = geo.Shot(int(e), b.State.Replay.Durability[e]) // a Turret's one shot, into a Landfill it faces
 		}
-		for h, hole := range geo.Targets(int(e))[geo.Degree[e]:] {
+		for h, hole := range holes {
 			landfill := b.State.Replay != nil && b.State.Replay.TerrainAt(int(hole)) == core.Landfill
 			b.falls = append(b.falls, fallingOrb{hole: hole, owner: b.State.flew(k, int(geo.Degree[e])+h), start: b.Clock, landfill: landfill})
 			effects = sound.Fall

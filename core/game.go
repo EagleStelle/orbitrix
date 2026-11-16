@@ -404,9 +404,13 @@ func (g *Game) resolve(record bool, first int) int {
 			g.waveEnds = append(g.waveEnds, int32(len(g.waveCells)))
 		}
 		g.Exploded += len(g.cur)
+		geo := g.Geo
 		g.explode()
 		if g.Map != nil {
 			g.terrainWave(wave, record)
+		}
+		for _, e := range g.cur[:g.shots] { // each Turret that fired turns clockwise to its next open route
+			_, g.Durability[e] = geo.Aim(int(e), g.Durability[e])
 		}
 		g.shots = 0
 		g.cur, g.next = g.next, g.cur
@@ -457,10 +461,7 @@ func (g *Game) explode() {
 	for k, e := range g.cur {
 		p, to := g.from[k], geo.Neighbours(int(e))
 		if k < g.shots {
-			// A Turret fires one new orb the way it faces, then turns clockwise to its next open route.
-			var slot int
-			slot, g.Durability[e] = geo.Aim(int(e), g.Durability[e])
-			to = to[slot : slot+1]
+			to, _ = geo.Shot(int(e), g.Durability[e]) // a Turret fires one new orb the way it faces
 		} else if geo.Outlets != nil && geo.Outlets[e] != 0 {
 			// A Reservoir throws its extra orb out the side its arrow points to, then the arrow turns clockwise.
 			var slot int

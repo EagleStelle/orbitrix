@@ -1007,7 +1007,7 @@ func reservoirArrow(state *MapState, tr MapTransform, i int) uint8 {
 
 // turretArrow returns the screen side a Turret fires to next, as reservoirArrow: its facing is its Durability.
 func turretArrow(state *MapState, tr MapTransform, i int) uint8 {
-	mask := state.Map.InitialOutlets(i)
+	mask := state.Map.InitialAims(i)
 	if state.Aims != nil {
 		mask = state.Aims[i]
 	}

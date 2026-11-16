@@ -153,9 +153,8 @@ func (v *view) Land(w core.Wave) []core.TerrainEvent {
 	for k, e := range w {
 		to, degree := v.Geo.Neighbours(int(e)), int(v.Geo.Degree[e])
 		if k < v.shots {
-			var slot int
-			slot, v.Replay.Durability[e] = v.Geo.Aim(int(e), v.Replay.Durability[e])
-			to = to[slot : slot+1]
+			to, _ = v.Geo.Shot(int(e), v.Replay.Durability[e])
+			_, v.Replay.Durability[e] = v.Geo.Aim(int(e), v.Replay.Durability[e])
 			v.revision++ // its barrel turned
 		} else if v.Geo.Outlets != nil && v.Geo.Outlets[e] != 0 {
 			var slot int

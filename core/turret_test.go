@@ -131,3 +131,46 @@ func TestTurretSnapshotState(t *testing.T) {
 		}
 	}
 }
+
+// A Turret faces a Landfill as it does Floor: the shot fired at it fills it by one and leaves no orb, and shots fired
+// elsewhere leave it alone.
+func TestTurretShotFillsTheLandfillItFaces(t *testing.T) {
+	for _, teams := range []bool{false, true} {
+		m := NewMap(5, 5)
+		m.Cells[12].Feature, m.Cells[11].Terrain = Turret, Landfill // up, where a Turret faces first
+		g, err := NewGameWithMap(m, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if teams {
+			if err := g.SetTeams([]uint8{0, 1}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		s := g.Snapshot()
+		s.Played = 3
+		s.Count[12], s.Owner[12] = 1, 0
+		s.Count[24], s.Owner[24] = 1, 1
+		if stride := len(s.Mix) / len(s.Count); teams {
+			s.Mix[12*stride], s.Mix[24*stride+1] = 1, 1
+		}
+		if g, err = Restore(s); err != nil {
+			t.Fatal(err)
+		}
+		fill := g.Durability[11]
+		for _, cell := range []int{0, 24} { // the Turret skips its holder's first move
+			mustApply(t, g, cell)
+		}
+		before := total(g)
+		mustApply(t, g, 1)
+		if g.Durability[11] != fill-1 || total(g) != before+1 || g.Durability[12] != 1 {
+			t.Fatalf("teams %v: Landfill needs %d of %d, %d orbs over %d, Turret step %d: the shot fills it and the Turret turns right", teams, g.Durability[11], fill, total(g), before, g.Durability[12])
+		}
+		mustApply(t, g, 24)
+		mustApply(t, g, 2)
+		if g.Count[17] != 1 || g.Durability[11] != fill-1 {
+			t.Fatalf("teams %v: %d orbs right, Landfill needs %d: a shot fired right fills nothing", teams, g.Count[17], g.Durability[11])
+		}
+		checkTallies(t, g)
+	}
+}

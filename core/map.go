@@ -345,6 +345,17 @@ func (m MapDefinition) InitialOutlets(cell int) (mask uint8) {
 	return mask
 }
 
+// InitialAims returns a Turret's routes at the start as InitialOutlets does, with those into Landfills, which its
+// shots fill, as Geometry.Aims holds them.
+func (m MapDefinition) InitialAims(cell int) (mask uint8) {
+	for d := range 4 {
+		if j, _ := m.route(cell, d, nil, nil, nil, nil); m.initialFloor(j) || j >= 0 && m.Cells[j].Terrain == Landfill {
+			mask |= 1 << d
+		}
+	}
+	return mask
+}
+
 // InitialConnections appends a cell's open neighbors in left/right/up/down/Link
 // order, respecting output starting states and routing through Portals.
 // Incomplete pairs are omitted.

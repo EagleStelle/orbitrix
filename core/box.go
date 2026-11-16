@@ -319,7 +319,8 @@ func (g *Game) collectPushes() {
 	}
 	for k, e := range g.cur {
 		if k < g.shots {
-			push(k, e, geo.LastAim(int(e), g.Durability[e]), g.from[k]) // a Turret's one shot
+			slot, _ := geo.Aim(int(e), g.Durability[e]) // a Turret's one shot
+			push(k, e, slot, g.from[k])
 			continue
 		}
 		for slot := range geo.Degree[e] {
