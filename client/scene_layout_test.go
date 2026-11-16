@@ -50,6 +50,10 @@ func TestPlayLayout(t *testing.T) {
 				for _, board := range [][2]int{{9, 9}, {30, 18}, {5, 7}, {6, 9}, {13, 18}, {3, 40}, {40, 3}} {
 					t.Run(fmt.Sprintf("%.0fx%.0f/u%g/%dp/%dx%d", size[0], size[1], u, players, board[0], board[1]), func(t *testing.T) {
 						a := withCutout(setupTestApp(size[0], size[1], u, players))
+						if players%3 != 0 { // two games in three are team games, of two to six teams
+							a.set.Teams = 2 + players%5
+							a.set.evenTeams()
+						}
 						p, err := newPlay(a, board[0], board[1], a.set.seats)
 						if err != nil {
 							t.Fatal(err)
@@ -64,7 +68,17 @@ func TestPlayLayout(t *testing.T) {
 							t.Fatalf("chip %+v and Menu %+v must share the control height and fit their text", p.callout, p.menu)
 						}
 						parts := map[string]ui.Rect{"menu": ui.CompactHit(p.menu, u), "board viewport": p.boardView.Viewport,
-							"players viewport": p.seatView.Viewport, "callout": p.callout}
+							"name": p.name, "callout": p.callout}
+						stackTop, stackBottom := p.name.Y, p.callout.Bottom() // the legend's end of the name and chip
+						for team, r := range p.legend {
+							if r.W > 0 {
+								parts[fmt.Sprint("team ", team)] = r
+								stackTop, stackBottom = min(stackTop, r.Y), max(stackBottom, r.Bottom())
+							}
+						}
+						if _, teams := p.teamSizes(); (teams > 0) != (p.peek[2].H > 0) || p.name.W < p.nameWidth(a)-0.01 {
+							t.Fatalf("the name row %+v must fit every name, and only a team game has a legend", p.name)
+						}
 						face, _ := p.calloutStyle(a)
 						if p.callout.W < ui.TextWidth("Chain ×88", face)+16*u-0.01 {
 							t.Fatal("chain chip must fit its label")
@@ -77,7 +91,7 @@ func TestPlayLayout(t *testing.T) {
 							}
 							b := p.b.Bounds()
 							cols, rows := p.b.ScreenSize()
-							maxHeight := p.menu.Y - (v.Y + 16*u) - 32*u - p.seatRowPitch(a)
+							maxHeight := stackTop - 16*u - (v.Y + 16*u)
 							wantWidth := min(v.W-32*u, maxHeight*(float64(cols)-2*boardview.TileGutter)/(float64(rows)-2*boardview.TileGutter))
 							if math.Abs(b.W-wantWidth) > 0.01 || math.Abs(b.Cx()-v.Cx()) > 1 {
 								t.Fatalf("portrait board %+v must fill the available width unless constrained by screen height", b)
@@ -94,22 +108,27 @@ func TestPlayLayout(t *testing.T) {
 							if math.Abs(p.menu.Bottom()-(v.Bottom()-16*u)) > 0.01 || math.Abs(p.menu.Cy()-p.callout.Cy()) > 0.01 {
 								t.Fatal("portrait controls must share the bottom row")
 							}
-							boardView, seats := p.boardView.Viewport, p.seatView.Viewport
-							if math.Abs(boardView.Bottom()+16*u-seats.Y) > 0.01 || math.Abs(seats.Bottom()+16*u-p.menu.Y) > 0.01 ||
-								seats.H > p.seatTableHeight(a)+0.01 {
-								t.Fatal("portrait board and players must anchor above the bottom controls without spare space below the list")
+							if math.Abs(p.boardView.Viewport.Bottom()+16*u-stackTop) > 0.01 || math.Abs(p.name.Bottom()+12*u-p.menu.Y) > 0.01 {
+								t.Fatal("portrait board, legend and name must anchor above the bottom controls")
 							}
 						} else {
 							d := 2 * p.spinR
 							spinner := ui.Rect{X: p.spinX - p.spinR, Y: p.spinY - p.spinR, W: d, H: d}
 							parts["spinner"] = spinner
-							if p.tokR != 0 || math.Abs(d-p.menu.W) > 0.01 || math.Abs(d-p.callout.W) > 0.01 ||
-								math.Abs(d-p.seatView.Viewport.W) > 0.01 || math.Abs(p.spinX-p.menu.Cx()) > 0.01 ||
-								p.callout.Y < spinner.Bottom()+12*u-0.01 || p.seatView.Viewport.Y < p.callout.Bottom()+12*u-0.01 {
-								t.Fatal("landscape must keep a full-width wheel, chip, then scrolling players")
+							if p.tokR != 0 || d > p.menu.W+0.01 || math.Abs(p.menu.W-p.callout.W) > 0.01 || math.Abs(p.spinX-p.menu.Cx()) > 0.01 ||
+								p.name.Y < spinner.Bottom()+12*u-0.01 || p.callout.Y < p.name.Bottom()+8*u-0.01 ||
+								stackBottom > p.callout.Bottom() && p.peek[2].Y < p.callout.Bottom()+12*u-0.01 {
+								t.Fatal("landscape must stack the wheel, the name, the chip, then the legend")
+							}
+							if pad := v.Bottom() - p.boardView.Viewport.Bottom(); d < p.menu.W-0.01 && stackBottom < v.Bottom()-pad-0.01 {
+								t.Fatalf("a %g px wheel must fill the %g px rail while the rail has height to spare", d, p.menu.W)
 							}
 						}
 						checkParts(t, v, parts)
+						if !containsRect(v, p.rosterPanel) {
+							t.Fatalf("Players dialog %+v leaves the screen", p.rosterPanel)
+						}
+						checkParts(t, p.rosterPanel, map[string]ui.Rect{"seats": p.seatView.Viewport, "back": p.rosterBack})
 						cols := float64(p.tableCols)
 						need := (p.seatTableWidth(a) - (cols-1)*8*u) / cols
 						for _, r := range p.rowRect[:players] {
@@ -151,44 +170,61 @@ func TestPlayLayout(t *testing.T) {
 	}
 }
 
-func TestPlayerOverflowAndTurnReveal(t *testing.T) {
-	for _, size := range [][2]float64{{780, 360}, {360, 740}} {
+// A tap on the wheel or turn dot, the mover's name or the legend opens the Players dialog, whose seats scroll inside
+// it and follow the turn; Back, Esc or a tap outside closes it. None of it resizes the board or the wheel.
+func TestPlayersDialog(t *testing.T) {
+	for _, size := range [][2]float64{{780, 360}, {360, 740}, {1040, 640}} {
 		for _, u := range []float64{1, 2.625} {
 			a := withCutout(setupTestApp(size[0], size[1], u, 12))
+			a.set.Teams = 3
+			a.set.evenTeams()
 			p, err := newPlay(a, 13, 18, a.set.seats)
 			if err != nil {
 				t.Fatal(err)
 			}
 			p.layout(a)
-			if p.seatView.MaxScroll() <= 0 {
-				t.Fatal("tight player lists must overflow instead of squeezing the wheel or board")
+			diameter, dot, board := 2*p.spinR, p.tokR, p.b.Bounds()
+			for i, r := range p.peek {
+				a.in = input{x: r.Cx(), y: r.Cy(), clicked: true}
+				if err := p.update(a); err != nil || !p.roster {
+					t.Fatalf("a tap on part %d (%+v) must open Players: %v", i, r, err)
+				}
+				switch i { // each way out
+				case 0:
+					a.in = input{esc: true}
+				case 1:
+					a.in = input{x: p.rosterBack.Cx(), y: p.rosterBack.Cy(), clicked: true}
+				default:
+					a.in = input{x: p.rosterPanel.X - 1, y: p.rosterPanel.Y - 1, clicked: true}
+				}
+				if err := p.update(a); err != nil || p.roster || p.paused {
+					t.Fatalf("way out %d must close Players and nothing else: %v", i, err)
+				}
 			}
-			diameter, boardWidth := 2*p.spinR, p.b.Bounds().W
+			p.roster = true
 			v := p.seatView.Viewport
-			a.in = input{x: v.Cx(), y: v.Cy(), wheel: -10000}
-			p.updateScroll(a)
-			if p.seatView.Offset != p.seatView.MaxScroll() || !overlaps(p.rowRect[11], v) {
-				t.Fatal("wheel scrolling must reach the final player and clamp at the end")
+			if p.seatView.MaxScroll() > 0 {
+				a.in = input{x: v.Cx(), y: v.Cy(), wheel: -10000}
+				p.updateRoster(a)
+				if p.seatView.Offset != p.seatView.MaxScroll() || !overlaps(p.rowRect[11], v) {
+					t.Fatal("wheel scrolling must reach the final player and clamp at the end")
+				}
+				a.in = input{x: v.Cx(), y: v.Cy(), wheel: 10000}
+				p.updateRoster(a)
 			}
-			a.in = input{x: p.menu.Cx(), y: p.menu.Cy(), wheel: 10000}
-			p.updateScroll(a)
-			if p.seatView.Offset != p.seatView.MaxScroll() {
-				t.Fatal("scrolling outside the player viewport must not move it")
-			}
-			a.in = input{x: v.Cx(), y: v.Cy(), wheel: 10000}
-			p.updateScroll(a)
 			p.shown = 11
 			p.layout(a)
 			if !containsRect(v, p.rowRect[11]) {
 				t.Fatal("a turn change must reveal the active player's complete row")
 			}
-			p.updateScroll(a)
-			p.layout(a)
-			if p.seatView.Offset != 0 {
-				t.Fatal("manual scrolling must remain possible after revealing the turn")
+			if cell := p.cellAt(v.Cx(), v.Cy()); cell >= 0 {
+				a.in = input{x: v.Cx(), y: v.Cy(), clicked: true}
+				if err := p.update(a); err != nil || p.game.Moves != 0 {
+					t.Fatal("the board must not take a tap through Players")
+				}
 			}
-			if diameter != 2*p.spinR || boardWidth != p.b.Bounds().W {
-				t.Fatal("scrolling must not resize the board or wheel")
+			if diameter != 2*p.spinR || dot != p.tokR || board != p.b.Bounds() {
+				t.Fatal("Players must not resize the board, the wheel or the turn dot")
 			}
 			for _, height := range []float64{1440, size[1]} {
 				a.h = height * u
@@ -196,8 +232,8 @@ func TestPlayerOverflowAndTurnReveal(t *testing.T) {
 				if p.seatView.Offset > p.seatView.MaxScroll() {
 					t.Fatal("resizing must clamp the scroll offset")
 				}
-				if a.portrait() && (p.spinR != 0 || p.tokR <= 0) || !a.portrait() && (p.tokR != 0 || math.Abs(2*p.spinR-p.menu.W) > 0.01) {
-					t.Fatal("rotating must switch between the full-width wheel and portrait dot")
+				if a.portrait() && (p.spinR != 0 || p.tokR <= 0) || !a.portrait() && (p.tokR != 0 || p.spinR <= 0) {
+					t.Fatal("rotating must switch between the wheel and the portrait dot")
 				}
 			}
 		}
@@ -212,32 +248,22 @@ func TestPortraitBoardFitAndDragOwnership(t *testing.T) {
 			t.Fatal(err)
 		}
 		p.layout(a)
-		if p.boardView.MaxScroll() != 0 || p.seatView.MaxScroll() <= 0 {
-			t.Fatal("an extreme board must fit entirely while the player list can scroll")
+		if p.boardView.MaxScroll() != 0 {
+			t.Fatal("an extreme board must fit entirely")
 		}
-		b, s := p.boardView.Viewport, p.seatView.Viewport
+		b := p.boardView.Viewport
 		tiles, orbs := p.b.TileImg, p.b.OrbImg
 		a.in = input{x: b.Cx(), y: b.Cy(), finger: true, down: true, pressed: true}
 		p.updateScroll(a)
-		a.in = input{x: s.Cx(), y: s.Cy(), finger: true, down: true, dragY: -60 * u}
+		a.in = input{x: b.Cx(), y: b.Cy() + 60*u, finger: true, down: true, dragY: -60 * u}
 		p.updateScroll(a)
-		if p.boardView.Offset != 0 || p.seatView.Offset != 0 {
-			t.Fatal("a drag that starts on the fitted board must not move it or the players")
-		}
-		if p.cellAt(s.Cx(), s.Cy()) != -1 || p.cellAt(p.menu.Cx(), p.menu.Cy()) != -1 {
-			t.Fatal("board cells must not respond through the player list or Menu")
-		}
-		a.in = input{x: s.Cx(), y: s.Cy(), finger: true, down: true, pressed: true}
-		p.updateScroll(a)
-		a.in = input{x: b.Cx(), y: b.Cy(), finger: true, down: true, dragY: -40 * u}
-		p.updateScroll(a)
-		if p.boardView.Offset != 0 || p.seatView.Offset != 40*u {
-			t.Fatal("a drag that starts on the players must not scroll the board")
-		}
 		a.in = input{x: b.Cx(), y: b.Cy(), wheel: -10000}
 		p.updateScroll(a)
 		if p.boardView.Offset != 0 {
-			t.Fatal("wheel scrolling must not move the fitted board")
+			t.Fatal("neither a drag nor the wheel may move the fitted board")
+		}
+		if p.cellAt(p.name.Cx(), p.name.Cy()) != -1 || p.cellAt(p.menu.Cx(), p.menu.Cy()) != -1 {
+			t.Fatal("board cells must not respond through the name or Menu")
 		}
 		for cell := range p.game.Geo.Cells() {
 			x, y := p.b.Centre(cell)

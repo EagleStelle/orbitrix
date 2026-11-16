@@ -246,3 +246,24 @@ func TestTeamsRandomGames(t *testing.T) {
 		}
 	}
 }
+
+func TestJoinTeam(t *testing.T) {
+	bot := func(j int) bool { return j == 1 }
+	for _, tc := range []struct {
+		i        int
+		to       uint8
+		capacity int
+		want     []uint8
+		ok       bool
+	}{
+		{2, 0, 3, []uint8{0, 0, 0}, true},  // room
+		{2, 0, 2, []uint8{0, 1, 0}, true},  // full: its bot trades teams
+		{1, 1, 1, []uint8{0, 0, 1}, false}, // full of a human
+		{0, 0, 3, []uint8{0, 0, 1}, false}, // already there
+	} {
+		team := []uint8{0, 0, 1}
+		if ok := JoinTeam(team, tc.i, tc.to, tc.capacity, bot); ok != tc.ok || !slices.Equal(team, tc.want) {
+			t.Errorf("player %d to team %d of %d: %v %v, want %v %v", tc.i, tc.to, tc.capacity, team, ok, tc.want, tc.ok)
+		}
+	}
+}

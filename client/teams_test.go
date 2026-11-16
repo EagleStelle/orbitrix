@@ -39,20 +39,44 @@ func TestFitTeams(t *testing.T) {
 	}
 }
 
+func TestEvenTeams(t *testing.T) {
+	for _, tc := range []struct {
+		players, teams, capacity int
+		team, want               []uint8
+		wantCap                  int
+	}{
+		{4, 3, 2, []uint8{0, 1, 0, 1}, []uint8{0, 1, 2, 1}, 2},                // a team more: one player moves to it
+		{4, 2, 2, []uint8{0, 1, 2, 1}, []uint8{0, 1, 0, 1}, 2},                // a team fewer
+		{5, 2, 5, []uint8{0, 0, 0, 0, 0, 1}, []uint8{0, 0, 0, 1, 1}, 3},       // a player fewer, on lopsided teams
+		{4, 3, 2, []uint8{0, 0, 1, 1}, []uint8{0, 2, 1, 1}, 2},                // team C's only player removed
+		{7, 3, 2, []uint8{0, 1, 2, 0, 1, 2}, []uint8{0, 1, 2, 0, 1, 2, 0}, 3}, // a player more
+	} {
+		s := &settings{Players: tc.players, Teams: tc.teams, TeamCap: tc.capacity, Team: tc.team}
+		s.evenTeams()
+		if !slices.Equal(s.Team, tc.want) || s.TeamCap != tc.wantCap {
+			t.Errorf("%d players, %d teams: %v of %d, want %v of %d", tc.players, tc.teams, s.Team, s.TeamCap, tc.want, tc.wantCap)
+		}
+	}
+}
+
 func TestNextTeam(t *testing.T) {
-	team := []uint8{0, 0, 1, 2}
 	for _, tc := range []struct {
 		seat, capacity int
-		want           uint8
+		bots           uint // a bit per bot seat
+		want           []uint8
 		ok             bool
 	}{
-		{0, 2, 1, true},
-		{2, 2, 2, true},
-		{3, 2, 1, true},  // team A is full: on to B
-		{3, 1, 2, false}, // every other team is full
+		{0, 2, 0, []uint8{1, 0, 1, 2}, true},
+		{2, 2, 0, []uint8{0, 0, 2, 2}, true},
+		{3, 2, 0, []uint8{0, 0, 1, 1}, true},  // team A is full of humans: on to B
+		{3, 1, 0, []uint8{0, 0, 1, 2}, false}, // every other team is
+		{3, 2, 2, []uint8{0, 2, 1, 0}, true},  // team A is full: its bot takes team C
+		{3, 1, 4, []uint8{0, 0, 2, 1}, true},  // no bot on team A: on to B's
 	} {
-		if got, ok := nextTeam(team, tc.seat, 3, tc.capacity); got != tc.want || ok != tc.ok {
-			t.Errorf("seat %d of %v, %d a team: %d %v, want %d %v", tc.seat, team, tc.capacity, got, ok, tc.want, tc.ok)
+		team := []uint8{0, 0, 1, 2}
+		ok := nextTeam(team, tc.seat, 3, tc.capacity, func(j int) bool { return tc.bots>>j&1 != 0 })
+		if ok != tc.ok || !slices.Equal(team, tc.want) {
+			t.Errorf("seat %d, %d a team, bots %b: %v %v, want %v %v", tc.seat, tc.capacity, tc.bots, team, ok, tc.want, tc.ok)
 		}
 	}
 }

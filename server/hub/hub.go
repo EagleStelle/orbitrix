@@ -257,9 +257,12 @@ func (r *Room) handle(p *peer, b []byte) {
 			}
 		}
 	case proto.Team:
-		// A full team, or one the room doesn't have, is ignored: it can race the host's own change.
-		if r.game == nil && int(m.Team) < r.cfg.Teams && s.team != m.Team && r.teamSize(m.Team) < r.cfg.TeamCap {
-			s.team = m.Team
+		// A team full of humans, or one the room doesn't have, is ignored: it can race the host's own change.
+		if team := r.teams(); r.game == nil && int(m.Team) < r.cfg.Teams &&
+			core.JoinTeam(team, p.seat, m.Team, r.cfg.TeamCap, func(j int) bool { return !r.seats[j].Human }) {
+			for j := range r.seats {
+				r.seats[j].team = team[j] // a bot on a full team trades teams with the player
+			}
 			r.broadcastLobby()
 		}
 	case proto.Resync:
@@ -587,16 +590,6 @@ func (r *Room) teams() []uint8 {
 		team[i] = s.team
 	}
 	return team
-}
-
-// teamSize is how many seats are on team t.
-func (r *Room) teamSize(t uint8) (n int) {
-	for _, s := range r.seats {
-		if s.team == t {
-			n++
-		}
-	}
-	return n
 }
 
 // SetMap selects a custom map in the lobby. A nil map restores an ordinary board of the current dimensions.

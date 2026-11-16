@@ -44,8 +44,8 @@ const (
 	pauseMainMenu
 )
 
-// playScene is a local game with a landscape turn wheel or a portrait turn dot, a scrolling seat table,
-// a pause menu and the results flood.
+// playScene is a local game with a landscape turn wheel or a portrait turn dot, the mover's name, a team game's
+// legend, the Players dialog a tap on any of them opens, a pause menu and the results flood.
 type playScene struct {
 	cols, rows int
 	seats      []int
@@ -76,6 +76,7 @@ type playScene struct {
 	biggest          int // longest chain this game, in waves
 
 	paused   bool
+	roster   bool       // the Players dialog is open: every seat's team, name and orbs, over a game that goes on
 	ask      *askDialog // Restart throws the game away, so it asks first, in place of the pause menu
 	watch    *askDialog // every human is out: watch the bots finish, or leave
 	asked    bool       // watch is asked once a game
@@ -113,8 +114,12 @@ type playScene struct {
 	menu                        ui.Rect
 	spinX, spinY, spinR         float64
 	callout                     ui.Rect
-	rowRect                     [core.MaxPlayers]ui.Rect
-	tableCols                   int // the seat table's columns
+	name                        ui.Rect                  // the mover's name row, its content centred
+	legend                      [core.MaxTeams]ui.Rect   // a team game's legend: each team's chip and dots
+	peek                        [3]ui.Rect               // a tap opens Players: wheel or turn dot, name, legend
+	rosterPanel, rosterBack     ui.Rect                  // the Players dialog and its Back
+	rowRect                     [core.MaxPlayers]ui.Rect // the dialog's seat rows
+	tableCols                   int                      // and their columns
 	boardView, seatView         ui.Scroll
 	listShown                   int
 	tokX, tokY, tokR            float64       // upright: the mover's dot beside Menu; tokR 0 elsewhere
@@ -354,6 +359,10 @@ func (p *playScene) update(a *app) error {
 		}
 		return nil
 	}
+	if p.roster {
+		p.updateRoster(a)
+		return nil
+	}
 	if a.in.esc {
 		switch {
 		case p.over && !p.b.Playing && p.net != nil: // leaving a finished room is a button, not a slip
@@ -397,6 +406,15 @@ func (p *playScene) update(a *app) error {
 		p.paused = true
 		return nil
 	}
+	for _, r := range p.peek {
+		if hit := ui.CompactHit(r, a.u); r.W > 0 && a.over(hit) {
+			if a.pointer = true; a.clicked(hit) {
+				p.roster = true
+				p.revealSeat(a)
+				return nil
+			}
+		}
+	}
 	if p.b.Playing {
 		if a.in.clicked && p.boardView.Viewport.Contains(a.in.x, a.in.y) {
 			p.b.FastForward()
@@ -423,6 +441,25 @@ func (p *playScene) update(a *app) error {
 		p.thinkAI(a)
 	}
 	return nil
+}
+
+// updateRoster runs the Players dialog: Back, Esc or a tap outside closes it. The game goes on behind it, bots
+// included; only this screen's own move waits, and a finished game closes it for the result.
+func (p *playScene) updateRoster(a *app) {
+	if p.seatView.Update(a.ui()) {
+		p.layoutScrolled(a)
+	}
+	if a.in.esc || a.clicked(p.rosterBack) || a.in.clicked && !p.rosterPanel.Contains(a.in.x, a.in.y) {
+		p.roster = false
+		return
+	}
+	p.advance(a)
+	switch {
+	case p.over:
+		p.roster = false
+	case !p.b.Playing && p.net == nil && p.seats[p.game.Turn] != seatHuman:
+		p.thinkAI(a)
+	}
 }
 
 // mine reports whether the player at this screen may move now: any human seat in a local game, their own online.
@@ -609,6 +646,7 @@ func (p *playScene) layout(a *app) {
 	} else {
 		p.layoutRail(a, v)
 	}
+	p.layoutRoster(a, v)
 	p.layoutScrolled(a)
 	p.revealSeat(a)
 	p.layoutPause(a, v)
@@ -622,43 +660,161 @@ func (p *playScene) tableRows() int { return (len(p.seats) + p.tableCols - 1) / 
 // menuWidth is the narrowest Menu pill, as drawMenuButton sets it out.
 func menuWidth(a *app) float64 { return 42*a.u + ui.TextWidth("Menu", a.f.LabelBold) + 18*a.u }
 
-// layoutRail keeps Menu, wheel, chip and scrolling seats in that order. The rail's width is bounded by its height
-// so the wheel always fills its width while leaving a visible strip of the player list below.
+// layoutRail stacks Menu, the wheel, the mover's name, the chain chip and a team game's legend. The rail takes the
+// width the board leaves, as far as its height lets the wheel fill it; the wheel is narrower than the rail only
+// where a name or the legend needs more width than the height has room for.
 func (p *playScene) layoutRail(a *app, v ui.Rect) {
 	u := a.u
-	pad, menuGap, calloutGap, listGap := 32*u, 24*u, 20*u, 24*u
+	pad, menuGap, nameGap, chipGap, listGap := 32*u, 24*u, 20*u, 16*u, 24*u
 	if p.compact {
-		// 12 px gaps keep the pointer's tip, which reaches 12 px past the spinner, clear of Menu and the seats.
-		pad, menuGap, calloutGap, listGap = 16*u, 12*u, 12*u, 12*u
+		// 12 px gaps keep the pointer's tip, which reaches 12 px past the spinner, clear of Menu and the name.
+		pad, menuGap, nameGap, chipGap, listGap = 16*u, 12*u, 12*u, 8*u, 12*u
 	}
 	h := v.H - 2*pad
 	cw, ch := p.calloutSize(a)
-	fixed := 2*ch + menuGap + calloutGap + listGap
-	p.tableCols = 1
-	minW := max(menuWidth(a), cw, p.seatTableWidth(a))
-	visible := p.seatRowPitch(a) - 4*u
-	maxW := max(minW, h-fixed-visible)
+	nameH := ui.ChipHeight * u
+	room := func(w float64) float64 { // the height a rail w wide leaves its wheel
+		fixed := ch + menuGap + nameGap + nameH + chipGap + ch
+		if lh := p.flowLegend(a, 0, 0, w); lh > 0 {
+			fixed += listGap + lh
+		}
+		return h - fixed
+	}
+	minW := max(menuWidth(a), cw, p.nameWidth(a), p.legendWidth(a))
 	w := minW
 	area := ui.Rect{X: v.X + pad, Y: v.Y + pad, W: v.W - 3*pad - w, H: h}
 	if bw, _ := p.b.Size(area); bw < area.W {
-		w = min(maxW, w+area.W-bw)
+		w += area.W - bw
+		for range 4 { // a narrower rail may wrap the legend onto more lines, which leaves the wheel less again
+			w = max(minW, min(w, room(w)))
+		}
 		area.W = v.W - 3*pad - w
 	}
-	x, y := v.Right()-pad-w, v.Y+pad
+	d := max(0, min(w, room(w)))
+	x := v.Right() - pad - w
+	p.boardView.Set(area, area.H)
+	p.menu = ui.Rect{X: x, Y: v.Y + pad, W: w, H: ch}
+	p.spinR = d / 2
+	p.spinX, p.spinY = x+w/2, p.menu.Bottom()+menuGap+p.spinR
+	p.name = ui.Rect{X: x, Y: p.spinY + p.spinR + nameGap, W: w, H: nameH}
+	p.callout = ui.Rect{X: x, Y: p.name.Bottom() + chipGap, W: w, H: ch}
+	p.peek = [3]ui.Rect{{X: p.spinX - p.spinR, Y: p.spinY - p.spinR, W: d, H: d}, p.name,
+		{X: x, Y: p.callout.Bottom() + listGap, W: w, H: p.flowLegend(a, x, p.callout.Bottom()+listGap, w)}}
+}
+
+// The mover's name row and the team legend: a dot's radius and the space after it, the space between a team's chip
+// and its dots, between teams on a line, and a line's pitch, in px.
+const (
+	turnDot       = 8
+	turnDotGap    = 8
+	legendChipGap = 6
+	legendGap     = 16
+	legendPitch   = 32
+)
+
+// nameFace sets the mover's name in the display face: at title size for couch distance, at heading size on a phone.
+func (p *playScene) nameFace(a *app) *text.GoTextFace {
+	if p.compact {
+		return a.f.Heading
+	}
+	return a.f.Title
+}
+
+// nameWidth is the widest the name row gets: the longest label in the display face.
+func (p *playScene) nameWidth(a *app) float64 {
+	return widestLabel(p.labels, p.nameFace(a))
+}
+
+// teamSizes is how many seats each team of a team game has, and one more than the last team with any: 0 in a
+// classic game.
+func (p *playScene) teamSizes() (size [core.MaxTeams]int, teams int) {
+	if p.game.Mix == nil {
+		return size, 0
+	}
+	for i := range p.seats {
+		t := int(p.game.Team[i])
+		size[t]++
+		teams = max(teams, t+1)
+	}
+	return size, teams
+}
+
+// legendGroup is the width of a team of n in the legend: its chip, then a dot for each player.
+func legendGroup(a *app, n int) float64 {
+	return teamChipW(a) + (legendChipGap+float64(n)*2*turnDot+float64(n-1)*turnDotGap)*a.u
+}
+
+// legendWidth is the widest team's group, which a line of the legend must hold.
+func (p *playScene) legendWidth(a *app) float64 {
+	size, teams := p.teamSizes()
+	w := 0.0
+	for _, n := range size[:teams] {
+		if n > 0 {
+			w = max(w, legendGroup(a, n))
+		}
+	}
+	return w
+}
+
+// flowLegend sets a team game's legend in the w px from x, down from y: a group for each team with players, in team
+// order, wrapping onto centred lines. It returns the legend's height, 0 in a classic game.
+func (p *playScene) flowLegend(a *app, x, y, w float64) float64 {
+	u := a.u
+	size, teams := p.teamSizes()
+	p.legend = [core.MaxTeams]ui.Rect{}
+	lines, first, lineW := 0, 0, 0.0
+	place := func(end int) { // centres the teams from first up to end on the next line
+		lx := x + (w-lineW)/2
+		for t := first; t < end; t++ {
+			if size[t] > 0 {
+				p.legend[t] = ui.Rect{X: lx, Y: y + float64(lines)*legendPitch*u, W: legendGroup(a, size[t]), H: ui.ChipHeight * u}
+				lx += p.legend[t].W + legendGap*u
+			}
+		}
+		lines, first, lineW = lines+1, end, 0
+	}
+	for t, n := range size[:teams] {
+		if n == 0 {
+			continue
+		}
+		gw := legendGroup(a, n)
+		if lineW > 0 && lineW+legendGap*u+gw > w {
+			place(t)
+		}
+		if lineW > 0 {
+			lineW += legendGap * u
+		}
+		lineW += gw
+	}
+	if lineW == 0 {
+		return 0
+	}
+	place(teams)
+	return (float64(lines-1)*legendPitch + ui.ChipHeight) * u
+}
+
+// layoutRoster centres the Players dialog: the seat table in one column, or two for more than six seats where they
+// fit, scrolling inside the panel on a short screen, above Back.
+func (p *playScene) layoutRoster(a *app, v ui.Rect) {
+	u := a.u
+	in, bh := 28*u, ui.QuietButtonHeight*u
+	if p.compact {
+		in = 16 * u
+	}
+	room := v.W - 32*u - 2*in
+	p.tableCols = 1
 	if len(p.seats) > 6 {
-		p.tableCols = 2
-		if p.seatTableWidth(a) > w {
+		if p.tableCols = 2; p.seatTableWidth(a) > room {
 			p.tableCols = 1
 		}
 	}
-	p.boardView.Set(area, area.H)
-	p.menu = ui.Rect{X: x, Y: y, W: w, H: ch}
-	p.spinR = w / 2
-	p.spinX, p.spinY = x+w/2, p.menu.Bottom()+menuGap+p.spinR
-	below := p.spinY + p.spinR
-	p.callout = ui.Rect{X: x, Y: below + calloutGap, W: w, H: ch}
-	below = p.callout.Bottom()
-	p.seatView.Set(ui.Rect{X: x, Y: below + listGap, W: w, H: v.Bottom() - pad - below - listGap}, p.seatTableHeight(a))
+	w := min(room, max(300*u, p.seatTableWidth(a)))
+	head, foot := in+40*u+12*u, 16*u+bh+in // the title's band above the table, Back below it
+	tableH := min(p.seatTableHeight(a), v.H-32*u-head-foot)
+	h := head + tableH + foot
+	p.rosterPanel = ui.Rect{X: v.Cx() - w/2 - in, Y: v.Cy() - h/2, W: w + 2*in, H: h}
+	p.seatView.Set(ui.Rect{X: p.rosterPanel.X + in, Y: p.rosterPanel.Y + head, W: w, H: tableH}, p.seatTableHeight(a))
+	p.rosterBack = ui.Rect{X: p.rosterPanel.X + in, Y: p.rosterPanel.Bottom() - in - bh, W: w, H: bh}
 }
 
 // seatFaces keep desktop text at body size in either column layout; phones retain their compact sizes.
@@ -758,32 +914,29 @@ func (p *playScene) seatTableHeight(a *app) float64 {
 	return float64(p.tableRows()) * p.seatRowPitch(a)
 }
 
-// layoutDock anchors the portrait board and players above the fixed bottom controls. The board fills the width
-// unless screen height constrains it; only the players scroll.
+// layoutDock anchors the portrait board above the mover's name and the fixed bottom controls, a team game's legend
+// between board and name. The board fills the width unless screen height constrains it.
 func (p *playScene) layoutDock(a *app, v ui.Rect) {
 	u := a.u
 	pad, gap := 16*u, 16*u
 	x, w, top, bottom := v.X+pad, v.W-2*pad, v.Y+pad, v.Bottom()-pad
-	p.tableCols = 1
-	if len(p.seats) > 6 {
-		p.tableCols = 2
-		if p.seatTableWidth(a) > w {
-			p.tableCols = 1
-		}
-	}
 	_, ch := p.calloutStyle(a)
 	side := (w - ch - 16*u) / 2
 	p.callout = ui.Rect{X: x, Y: bottom - ch, W: side, H: ch}
 	p.tokR, p.tokX, p.tokY = ch/2, v.Cx(), p.callout.Cy()
 	menuX := p.tokX + p.tokR + 8*u
 	p.menu = ui.Rect{X: menuX, Y: p.callout.Y, W: side, H: ch}
+	p.name = ui.Rect{X: x, Y: p.menu.Y - 12*u - ui.ChipHeight*u, W: w, H: ui.ChipHeight * u}
+	p.peek = [3]ui.Rect{{X: p.tokX - p.tokR, Y: p.tokY - p.tokR, W: ch, H: ch}, p.name}
+	y := p.name.Y
+	if lh := p.flowLegend(a, x, 0, w); lh > 0 {
+		y -= 12*u + lh
+		p.peek[2] = ui.Rect{X: x, Y: y, W: w, H: p.flowLegend(a, x, y, w)}
+	}
 	boardW, boardH := p.b.Size(ui.Rect{W: w, H: math.Inf(1)})
-	viewH := min(boardH, p.menu.Y-gap-top-gap-p.seatRowPitch(a))
+	viewH := min(boardH, y-gap-top)
 	boardW *= viewH / boardH
-	tableH := min(p.seatTableHeight(a), p.menu.Y-gap-top-gap-viewH)
-	tableY := p.menu.Y - gap - tableH
-	p.boardView.Set(ui.Rect{X: x + (w-boardW)/2, Y: tableY - gap - viewH, W: boardW, H: viewH}, viewH)
-	p.seatView.Set(ui.Rect{X: x, Y: tableY, W: w, H: tableH}, p.seatTableHeight(a))
+	p.boardView.Set(ui.Rect{X: x + (w-boardW)/2, Y: y - gap - viewH, W: boardW, H: viewH}, viewH)
 }
 
 func (p *playScene) layoutScrolled(a *app) {
@@ -800,8 +953,7 @@ func (p *playScene) revealSeat(a *app) {
 }
 
 func (p *playScene) updateScroll(a *app) {
-	seats, board := p.seatView.Update(a.ui()), p.boardView.Update(a.ui())
-	if seats || board {
+	if p.boardView.Update(a.ui()) {
 		p.layoutScrolled(a)
 	}
 }
@@ -979,6 +1131,8 @@ func (p *playScene) draw(dst *ebiten.Image, a *app) {
 		p.drawGone(dst, a)
 	case p.watch != nil:
 		p.watch.draw(dst, a)
+	case p.roster:
+		p.drawRoster(dst, a)
 	}
 }
 
@@ -991,11 +1145,15 @@ func (p *playScene) drawMenuButton(dst *ebiten.Image, a *app) {
 }
 
 func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
-	sc := a.sc
+	sc, u := a.sc, a.u
 	p.drawMenuButton(dst, a)
 	if p.spinR > 0 {
 		p.drawSpinner(dst, a)
 	}
+
+	// The mover's name alone, called out in the display face: the wheel's pointer or the turn dot shows their colour,
+	// and the legend's ring their team.
+	ui.DrawText(dst, p.labels[p.shown], p.nameFace(a), p.name.Cx(), p.name.Cy(), text.AlignCenter, sc.Ink)
 
 	// The chain callout, in the mover's ink.
 	if p.chainHold > 0 && p.chain >= 2 {
@@ -1006,7 +1164,41 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 		ui.DrawText(dst, p.chainText, face, p.callout.Cx(), p.callout.Cy(), text.AlignCenter, ui.WithAlpha(ui.InkOn(c), alpha))
 	}
 
-	// The seat rows, set out as seatTableWidth measures them.
+	// A team game's legend: each team's chip, then its players' dots. Out players are empty rings, a team with
+	// nobody left dims, and a ring marks the mover.
+	for t, r := range p.legend {
+		if r.W == 0 {
+			continue
+		}
+		ink, dx := sc.Dim, r.X+teamChipW(a)+(legendChipGap+turnDot)*u
+		for i := range p.seats {
+			if int(p.game.Team[i]) != t {
+				continue
+			}
+			if p.alive[i] {
+				ink = sc.Ink
+			}
+			ui.SeatDot(dst, sc, i, dx, r.Cy(), turnDot*u, !p.alive[i], a.set.Marks)
+			if i == p.shown && !p.over {
+				ui.Ring(dst, dx, r.Cy(), (turnDot+4)*u, 2*u, sc.Ink)
+			}
+			dx += (2*turnDot + turnDotGap) * u
+		}
+		drawTeamChip(dst, a, ui.Rect{X: r.X, Y: r.Y, W: teamChipW(a), H: r.H}, uint8(t), ink, sc.Ground, false)
+	}
+
+	// Upright, the centered turn dot also shows the mover's orb count.
+	if p.tokR > 0 {
+		p.drawTurnCount(dst, a)
+	}
+}
+
+// drawRoster dims the game and shows the Players dialog: the seat rows, set out as seatTableWidth measures them.
+func (p *playScene) drawRoster(dst *ebiten.Image, a *app) {
+	sc, u := a.sc, a.u
+	ui.FillRound(dst, ui.Rect{X: 0, Y: 0, W: a.w, H: a.h}, 0, ui.WithAlpha(sc.Ground, 0.8))
+	ui.FillRound(dst, p.rosterPanel, 28*u, sc.Tile)
+	ui.DrawText(dst, "Players", a.f.Title, p.rosterPanel.Cx(), p.seatView.Viewport.Y-32*u, text.AlignCenter, sc.Ink)
 	name, bold := p.seatFaces(a)
 	in, sp, gap, dot := p.seatInsets(a)
 	seatsDst := p.seatView.Clip(dst)
@@ -1014,7 +1206,7 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 		r := p.rowRect[i]
 		alive, current := p.alive[i], i == p.shown && !p.over
 		if current {
-			ui.FillPill(seatsDst, r, sc.Tile)
+			ui.FillPill(seatsDst, r, sc.Ground)
 		}
 		dr := min(dot, r.H*0.34)
 		ui.SeatDot(seatsDst, sc, i, r.X+in+dr, r.Cy(), dr, !alive, a.set.Marks)
@@ -1037,14 +1229,8 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 			ui.DrawChip(seatsDst, a.ui(), ui.Chip{Word: "Out", Kind: ui.ChipDanger}, r.Right()-in, r.Cy(), p.chipH(a))
 		}
 	}
-
-	p.seatView.DrawScrollbar(dst, a.ui(
-	// Upright, the centered turn dot also shows the mover's orb count.
-	))
-
-	if p.tokR > 0 {
-		p.drawTurnCount(dst, a)
-	}
+	p.seatView.DrawScrollbar(dst, a.ui())
+	ui.DrawButton(dst, a.ui(), p.rosterBack, "Back", "", ui.ButtonGround, true)
 }
 
 // spinnerKey is what the cached spinner images show.

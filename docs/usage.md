@@ -35,7 +35,7 @@ The play button (or Enter in the name bar) opens Setup.
   - Mode (Turn-based) and Add-ons, extras that can be on together. Teams is built; Real-time, Drop, Combine, Fog of war and Tiles are listed dimmed until they are.
 
 - Players: the heading's − and + set the count from 2 to 12. Each seat is Human or one of the twelve bots, with its difficulty shown as five pips. The seat dropdown also has Swap position, which moves you into that seat and gives the bot there yours (two humans never trade), and Remove player, which takes the seat out and moves the seats after it up.
-- Teams: with the add-on on, Players gains two steppers, Teams (2 to 6) and Per team (the most players on a team), and every seat a chip with its team's letter, A to F. Tap a chip to move that seat to the next team with room. In a room each player taps their own chip, and the host can move anyone. Start reads "Needs two teams" while every player is on one team.
+- Teams: with the add-on on, Players gains two steppers, Teams (2 to 6) and Per team (the most players on a team), and every seat a chip with its team's letter, A to F. Changing the player or team count spreads the players evenly over the teams and sets Per team to match; raise Per team to allow uneven teams. Tap a chip to move that seat to the next team; if that team is full, the seat trades teams with a bot on it, and a team full of humans is passed over. In a room each player taps their own chip, and the host can move anyone. Start reads "Needs two teams" while every player is on one team.
 - Map: on a screen on its side it fills the right, with Rules and Players stacked on the left; upright, everything stacks. Long lists scroll inside their own card: the seats in Players, the sizes in Map. The classic map is a mini-board preview, then eighteen presets in Portrait, Balanced and Landscape sections, each with six sizes from Coaster (5×7) to Floor (13×18). Columns and Rows go from 3 to 40; a size that matches no preset reads Custom. Choose a map in the heading opens Maps; the die button beside it, there on the classic map and on a rolled one, rolls a random map at that size, and changing the size rolls again; with a saved map chosen the block shows its thumbnail and name instead of the size controls.
 - Start reads "Board too small" when there are more players than cells.
 
@@ -43,7 +43,7 @@ Your choices are saved for next time.
 
 ## The game
 
-The board fills the screen beside a rail with Menu, a turn wheel showing each player's orb count, the "Chain ×N" callout and the seat table. Held upright, a phone puts the seats and a current-player dot under the board instead. Only the player to move has their tiles lit in their colour.
+The board fills the screen beside a rail with Menu, a turn wheel showing each player's orb count, the name of the player to move and the "Chain ×N" callout. Held upright, a phone puts the name and a current-player dot under the board instead. A team game adds a legend: each team's letter, then its players' colours, with a ring on the mover and an empty ring for a player who is out. Tap the wheel, the dot, the name or the legend for Players: every seat's team, name and orb count. Only the player to move has their tiles lit in their colour.
 
 Bots wait 300 to 600 ms before moving, so you can follow them. Long chains play back faster and faster; Space or a tap finishes the playback at once.
 

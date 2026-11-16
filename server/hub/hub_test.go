@@ -473,8 +473,8 @@ func TestNewRejects(t *testing.T) {
 	}
 }
 
-// TestTeams sets a lobby's teams: a player moves to a team with room and not to a full one, a line-up on one team
-// doesn't start, and the game that does start is the team game.
+// TestTeams sets a lobby's teams: a player moves to a team with room, trades teams with a bot on a full one and stays
+// off one full of humans, a line-up on one team doesn't start, and the game that does start is the team game.
 func TestTeams(t *testing.T) {
 	room := newRoom(t, hub.Config{Seats: humans(2, hub.Seat{AI: ai.Jester}), Teams: 2, TeamCap: 2, Team: []uint8{0, 0, 1}})
 	a, b := join(t, room, "", proto.Token{}), join(t, room, "", proto.Token{})
@@ -483,10 +483,14 @@ func TestTeams(t *testing.T) {
 	if l.Teams != 2 || l.TeamCap != 2 || l.Seats[0].Team != 0 || l.Seats[2].Team != 1 {
 		t.Fatalf("lobby: %+v", l)
 	}
-	a.send(proto.Team{Team: 1}) // full: ignored
+	if err := room.SetTeams(3, 1, []uint8{0, 1, 2}); err != nil {
+		t.Fatal(err)
+	}
+	a.send(proto.Team{Team: 1}) // full of humans: ignored
+	a.send(proto.Team{Team: 2}) // full, but of a bot: they trade teams
 	a.send(proto.Ready{On: true})
-	if l := a.lobbyWhere(func(l proto.Lobby) bool { return l.Seats[0].Ready }); l.Seats[0].Team != 0 {
-		t.Fatal("joined a full team")
+	if l := a.lobbyWhere(func(l proto.Lobby) bool { return l.Seats[0].Ready }); l.Seats[0].Team != 2 || l.Seats[1].Team != 1 || l.Seats[2].Team != 0 {
+		t.Fatalf("a full team: %+v", l.Seats)
 	}
 	if room.SetTeams(2, 1, []uint8{0, 1, 1}) == nil || room.SetTeams(2, 2, []uint8{0, 1}) == nil {
 		t.Fatal("a line-up over capacity, or of the wrong length")

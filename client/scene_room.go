@@ -656,8 +656,9 @@ func (r *roomScene) update(a *app) error {
 	case a.clicked(r.action) && n.got && n.seat >= 0:
 		n.link.Send(proto.Ready{On: !n.lobby.Seats[n.seat].Ready})
 	case n.got && n.seat >= 0 && n.lobby.Teams != 0 && !n.lobby.Playing && r.view.Viewport.Contains(a.in.x, a.in.y) && a.clicked(ui.CompactHit(r.teamChip(a, n.seat), a.u)):
-		if t, ok := nextTeam(n.teams(), n.seat, int(n.lobby.Teams), int(n.lobby.TeamCap)); ok {
-			n.link.Send(proto.Team{Team: t}) // the host's room moves this player, if the team still has room
+		team := n.teams()
+		if nextTeam(team, n.seat, int(n.lobby.Teams), int(n.lobby.TeamCap), func(j int) bool { return n.lobby.Seats[j].State == proto.SeatAI }) {
+			n.link.Send(proto.Team{Team: team[n.seat]}) // the host's room moves this player, if the team can still take them
 		}
 	}
 	return nil

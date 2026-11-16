@@ -426,6 +426,7 @@ func (s *setupScene) changed(a *app) {
 func (s *setupScene) setPlayers(a *app, n int) {
 	a.set.Players = max(s.minPlayers(), min(core.MaxPlayers, n))
 	a.set.fitSeats()
+	a.set.evenTeams()
 	s.menu = -1
 	s.changed(a)
 }
@@ -532,6 +533,7 @@ func (s *setupScene) removeSeat(a *app, i int) {
 		a.set.Team = slices.Delete(a.set.Team, i, i+1)
 	}
 	a.set.Players--
+	a.set.evenTeams()
 	s.menu = -1
 	s.changed(a)
 }
@@ -997,7 +999,7 @@ func (s *setupScene) setWhere(a *app, w int) {
 }
 
 // updateTeams runs a team game's part of Players: the Teams and Per team steppers, and each seat's chip, which a tap
-// moves to the next team with room. It reports a click it took.
+// moves to the next team with room or a bot to trade with. It reports a click it took.
 func (s *setupScene) updateTeams(a *app) bool {
 	set, u := a.set, a.u
 	if set.Teams == 0 || s.open != foldPlayers {
@@ -1006,8 +1008,10 @@ func (s *setupScene) updateTeams(a *app) bool {
 	switch {
 	case set.Teams > 2 && a.clicked(setupStepHit(s.minusT, u)):
 		set.Teams--
+		set.evenTeams()
 	case set.Teams < core.MaxTeams && a.clicked(setupStepHit(s.plusT, u)):
 		set.Teams++
+		set.evenTeams()
 	case set.TeamCap > set.minTeamCap() && a.clicked(setupStepHit(s.minusC, u)):
 		set.TeamCap--
 	case set.TeamCap < core.MaxPlayers-1 && a.clicked(setupStepHit(s.plusC, u)):
@@ -1015,8 +1019,7 @@ func (s *setupScene) updateTeams(a *app) bool {
 	default:
 		for i := range set.Players {
 			if s.seatScroll.Viewport.Contains(a.in.x, a.in.y) && a.clicked(ui.CompactHit(s.teamChip[i], u)) {
-				if t, ok := nextTeam(set.Team, i, set.Teams, set.TeamCap); ok {
-					set.Team[i] = t
+				if nextTeam(set.Team, i, set.Teams, set.TeamCap, func(j int) bool { return set.seats[j] != seatHuman }) {
 					s.changed(a)
 				}
 				return true // a tap on a chip never opens the seat's menu
@@ -1038,6 +1041,7 @@ func (s *setupScene) updateGame(a *app) bool {
 	if s.game.hit(a, len(gameRows)-1) == 0 { // Teams: it changes in an open room too, until Start
 		if a.set.Teams == 0 {
 			a.set.Teams = 2
+			a.set.evenTeams() // an earlier game's line-up may be saved
 		} else {
 			a.set.Teams = 0
 		}

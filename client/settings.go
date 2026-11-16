@@ -263,6 +263,41 @@ func (s *settings) fitTeams() {
 	}
 }
 
+// evenTeams is what a new player or team count does to a team game: the capacity becomes the least that seats
+// everyone, and players leave the fullest team for the emptiest, its last seat first, until no team has two more
+// than another.
+func (s *settings) evenTeams() {
+	if s.Teams == 0 {
+		return
+	}
+	s.TeamCap = 0
+	s.fitTeams()
+	for {
+		var size [core.MaxTeams]int
+		for _, t := range s.Team {
+			size[t]++
+		}
+		hi, lo := 0, 0
+		for k := 1; k < s.Teams; k++ {
+			if size[k] > size[hi] {
+				hi = k
+			}
+			if size[k] < size[lo] {
+				lo = k
+			}
+		}
+		if size[hi]-size[lo] < 2 {
+			return
+		}
+		for i := len(s.Team) - 1; ; i-- {
+			if int(s.Team[i]) == hi {
+				s.Team[i] = uint8(lo)
+				break
+			}
+		}
+	}
+}
+
 // rivals reports whether the seats can play each other: always with Teams off, else once two teams have players.
 func (s *settings) rivals() bool {
 	for _, t := range s.Team {

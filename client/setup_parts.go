@@ -57,18 +57,15 @@ func drawTeamChip(dst *ebiten.Image, a *app, r ui.Rect, team uint8, ink, ground 
 	ui.DrawText(dst, teamLetters[team], a.f.SmallBold, r.Cx(), r.Cy(), text.AlignCenter, ink)
 }
 
-// nextTeam is the team a tap moves seat i to: the next one with room, if any has.
-func nextTeam(team []uint8, i, teams, capacity int) (uint8, bool) {
-	var size [core.MaxTeams]int
-	for _, t := range team {
-		size[t]++
-	}
+// nextTeam moves seat i of team as a tap on its chip does: to the next team with room or with a bot to trade teams
+// with, if there is one.
+func nextTeam(team []uint8, i, teams, capacity int, bot func(int) bool) bool {
 	for k := 1; k < teams; k++ {
-		if t := (int(team[i]) + k) % teams; size[t] < capacity {
-			return uint8(t), true
+		if core.JoinTeam(team, i, uint8((int(team[i])+k)%teams), capacity, bot) {
+			return true
 		}
 	}
-	return team[i], false
+	return false
 }
 
 // The Rules card's option tiles are squares, ruleTile px a side and ruleGap apart; its groups stack ruleRowGap apart.

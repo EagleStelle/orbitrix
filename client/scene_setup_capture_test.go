@@ -45,6 +45,8 @@ type setupCaptureCase struct {
 	count       int     // synthetic indicator stress count; 0 keeps the actual empty-board values
 	marks       bool
 	turn        int
+	teams       int    // a team game of this many teams
+	roster      bool   // the game's Players dialog is open
 	screen      string // "home", "settings", "pause" or "results"; empty draws Setup, or the game with play
 }
 
@@ -253,6 +255,9 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		m.layout(a)
 		m.draw(out, a)
 	case "pause", "results":
+		if a.set.Teams = c.teams; c.teams > 0 {
+			a.set.evenTeams()
+		}
 		p, err := newPlay(a, a.set.Cols, a.set.Rows, a.set.seats)
 		if err != nil {
 			g.err = err
@@ -288,6 +293,9 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		p.draw(out, a)
 	}
 	if c.screen == "" && c.play {
+		if a.set.Teams = c.teams; c.teams > 0 {
+			a.set.evenTeams()
+		}
 		p, err := newPlay(a, a.set.Cols, a.set.Rows, a.set.seats)
 		if err != nil {
 			g.err = err
@@ -307,6 +315,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		p.shown, p.spin = c.turn, p.wedgeAngle(c.turn)
 		p.chain, p.chainHold, p.chainText = 88, calloutHold, "Chain ×88"
 		p.layout(a)
+		p.roster = c.roster
 		p.seatView.Offset = c.progress * p.seatView.MaxScroll()
 		if c.tail {
 			p.seatView.Offset = p.seatView.MaxScroll()
@@ -458,6 +467,17 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "chip-play-12p-dark", w: 1040, h: 640, players: 12, play: true, hover: "out", dark: true, tail: true},
 		{name: "chip-play-landscape-short", w: 780, h: 360, players: 12, cols: 30, rows: 18, play: true, hover: "out", tail: true},
 		{name: "chip-play-portrait", w: 360, h: 740, players: 12, cols: 13, rows: 18, play: true, hover: "out", dark: true},
+		{name: "rail-desktop", w: 1440, h: 900, players: 6, play: true, hover: "out"},
+		{name: "rail-desktop-teams", w: 1440, h: 900, players: 12, play: true, teams: 3, hover: "out", turn: 4},
+		{name: "rail-desktop-teams-dark", w: 1040, h: 640, players: 12, play: true, teams: 6, dark: true, turn: 7},
+		{name: "rail-desktop-roster", w: 1440, h: 900, players: 12, play: true, teams: 3, hover: "out", roster: true, turn: 4},
+		{name: "rail-landscape-teams", w: 844, h: 390, players: 12, cols: 30, rows: 18, play: true, teams: 2, turn: 3},
+		{name: "rail-landscape-short", w: 780, h: 360, players: 12, cols: 30, rows: 18, play: true, teams: 6, dark: true},
+		{name: "rail-landscape-roster", w: 780, h: 360, players: 12, cols: 30, rows: 18, play: true, teams: 2, hover: "out", roster: true},
+		{name: "rail-mobile", w: 390, h: 844, players: 8, play: true, turn: 2},
+		{name: "rail-mobile-teams", w: 360, h: 740, players: 12, cols: 13, rows: 18, play: true, teams: 2, hover: "out", turn: 5},
+		{name: "rail-mobile-teams-dark", w: 390, h: 844, players: 12, play: true, teams: 6, dark: true, hover: "out", turn: 9},
+		{name: "rail-mobile-roster", w: 360, h: 740, players: 12, cols: 13, rows: 18, play: true, teams: 3, hover: "out", roster: true, dark: true, turn: 5},
 		{name: "play-desktop", w: 1440, h: 900, players: 2, play: true},
 		{name: "play-desktop-12p", w: 1040, h: 640, players: 12, play: true},
 		{name: "play-wide-12p", w: 1920, h: 1080, players: 12, play: true, dark: true},
