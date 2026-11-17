@@ -68,6 +68,9 @@ type playScene struct {
 	orbs      [core.MaxPlayers]int
 	orbS      [core.MaxPlayers]string
 	part      [core.MaxPlayers]bool // in the fog, a rival's count is only the orbs the viewer sees: some are hidden
+	teamOrbs  [core.MaxTeams]int    // a team game's orbs per team, its players' counts added up
+	teamPart  [core.MaxTeams]bool   // some of a team's orbs are hidden in the fog
+	teamS     [core.MaxTeams]string // a team's total as its legend row shows it
 	orbLabels [core.MaxPlayers]boardview.Counter
 	spin      float64                  // spinner pointer angle, chasing the shown player's wedge
 	share     [core.MaxPlayers]float64 // each seat's part of the wheel, by slice; they sum to 1
@@ -125,7 +128,7 @@ type playScene struct {
 	spinX, spinY, spinR         float64
 	callout                     ui.Rect
 	name                        ui.Rect                  // the mover's name row, its content centred
-	legend                      [core.MaxTeams]ui.Rect   // a team game's legend: each team's chip and dots
+	legend                      [core.MaxTeams]ui.Rect   // a team game's legend: each team's row
 	peek                        [3]ui.Rect               // a tap opens Players: wheel or turn dot, name, legend
 	rosterPanel, rosterBack     ui.Rect                  // the Players dialog and its Back
 	rowRect                     [core.MaxPlayers]ui.Rect // the dialog's seat rows
@@ -748,16 +751,41 @@ func (p *playScene) tickRail() {
 			n, part = seen[i], seen[i] < orbs[i]
 		}
 		if n != p.orbs[i] || part != p.part[i] || p.orbS[i] == "" {
-			p.orbs[i], p.part[i], p.orbS[i] = n, part, strconv.Itoa(n)
-			switch {
-			case part && n == 0: // none of them in sight: a count of nothing would read as out
-				p.orbS[i] = "?"
-			case part:
-				p.orbS[i] = "~" + p.orbS[i]
-			}
+			p.orbs[i], p.part[i], p.orbS[i] = n, part, countText(n, part)
 		}
 	}
+	p.teamTotals()
 	p.slice()
+}
+
+// teamTotals adds up a team game's counts by team, hidden in part where any of a team's players' are.
+func (p *playScene) teamTotals() {
+	if p.game.Mix == nil {
+		return
+	}
+	var n [core.MaxTeams]int
+	var part [core.MaxTeams]bool
+	for i := range p.seats {
+		t := p.game.Team[i]
+		n[t], part[t] = n[t]+p.orbs[i], part[t] || p.part[i]
+	}
+	for t := range n {
+		if n[t] != p.teamOrbs[t] || part[t] != p.teamPart[t] || p.teamS[t] == "" {
+			p.teamOrbs[t], p.teamPart[t], p.teamS[t] = n[t], part[t], countText(n[t], part[t])
+		}
+	}
+}
+
+// countText is a count as the rail shows it: "~" before it while some of its orbs are hidden in the fog, and "?" with
+// none of them in sight, since a count of nothing would read as out.
+func countText(n int, part bool) string {
+	switch {
+	case part && n == 0:
+		return "?"
+	case part:
+		return "~" + strconv.Itoa(n)
+	}
+	return strconv.Itoa(n)
 }
 
 // slice shares the wheel out as a pie: half equally between the players still in, so each keeps a slice its count
@@ -865,7 +893,8 @@ func menuWidth(a *app) float64 { return 42*a.u + ui.TextWidth("Menu", a.f.LabelB
 // width the board leaves, as far as its height lets the wheel fill it; the wheel is narrower than the rail only
 // where a name or the legend needs more width than the height has room for. The legend is what gives way on a short
 // rail: it takes the widest rail to wrap onto the fewest lines, and where the wheel would still drop under the
-// narrowest rail's width, the wheel keeps that size and the legend scrolls in what is left, a line at least.
+// narrowest rail's width, the wheel keeps that size and the legend scrolls in what is left, a line at least. A phone
+// on its side puts the wheel first: it takes the legend's width and all the height but a line of it.
 func (p *playScene) layoutRail(a *app, v ui.Rect) {
 	u := a.u
 	pad, menuGap, nameGap, chipGap, listGap := 32*u, 24*u, 20*u, 16*u, 24*u
@@ -876,22 +905,34 @@ func (p *playScene) layoutRail(a *app, v ui.Rect) {
 	h := v.H - 2*pad
 	cw, ch := p.calloutSize(a)
 	nameH := ui.ChipHeight * u
-	minW := max(menuWidth(a), cw, p.nameWidth(a), p.legendWidth(a))
+	room := h - (ch + menuGap + nameGap + nameH + chipGap + ch) // what the wheel and the legend share
+	minW := max(menuWidth(a), cw, p.nameWidth(a))
+	if lw := p.legendWidth(a); p.compact && lw > 0 {
+		// A phone on its side gives the room the legend claims beside the board to the wheel, as far as the height a
+		// line of the legend leaves lets the wheel fill it.
+		minW = max(minW, min(lw, room-listGap-nameH))
+	} else {
+		minW = max(minW, lw)
+	}
 	maxW := minW
 	area := ui.Rect{X: v.X + pad, Y: v.Y + pad, W: v.W - 3*pad - minW, H: h}
 	if bw, _ := p.b.Size(area); bw < area.W {
 		maxW += area.W - bw
 	}
-	room := h - (ch + menuGap + nameGap + nameH + chipGap + ch) // what the wheel and the legend share
 	lh := p.flowLegend(a, 0, 0, maxW)
 	d := min(maxW, room)
 	if lh > 0 {
 		room -= listGap
 		d = min(maxW, max(room-lh, min(minW, room-nameH)))
+		if p.compact { // a phone on its side: the wheel leads, leaving the legend a line to scroll in its width
+			d = min(maxW, room-nameH)
+		}
 	}
 	d = max(0, d)
 	w := max(minW, d)
-	if p.flowLegend(a, 0, 0, w) > lh { // the narrowest rail that still wraps the legend onto as few lines
+	if p.compact {
+		lh = p.flowLegend(a, 0, 0, w)
+	} else if p.flowLegend(a, 0, 0, w) > lh { // the narrowest rail that still wraps the legend onto as few lines
 		lo, hi := w, maxW
 		for range 20 {
 			if mid := (lo + hi) / 2; p.flowLegend(a, 0, 0, mid) > lh {
@@ -911,6 +952,9 @@ func (p *playScene) layoutRail(a *app, v ui.Rect) {
 	p.name = ui.Rect{X: x, Y: p.spinY + p.spinR + nameGap, W: w, H: nameH}
 	// The legend sits right under the name it belongs with, and the chip under them.
 	legend := ui.Rect{X: x, Y: p.name.Bottom() + chipGap, W: w, H: max(0, min(lh, room-d))}
+	if p.compact { // whole lines only, so no clipped row sits under the wheel
+		legend.H = max(0, min(lh, nameH+math.Floor((room-d-nameH)/(legendPitch*u)+1e-9)*legendPitch*u))
+	}
 	p.legendView.Set(legend, lh)
 	p.callout = ui.Rect{X: x, Y: legend.Y, W: w, H: ch}
 	if lh > 0 {
@@ -919,12 +963,15 @@ func (p *playScene) layoutRail(a *app, v ui.Rect) {
 	p.peek = [3]ui.Rect{{X: p.spinX - p.spinR, Y: p.spinY - p.spinR, W: d, H: d}, p.name, legend}
 }
 
-// The mover's name row and the team legend: a dot's radius and the space after it, the space between a team's chip
-// and its dots, between teams on a line, and a line's pitch, in px.
+// A seat dot's radius, and the team legend: a bar's height (a stub is square), the space between its segments, the
+// least room it has to grow past its stubs, the space either side of it in a row, between columns, and a line's
+// pitch, in px.
 const (
 	turnDot       = 8
-	turnDotGap    = 8
-	legendChipGap = 6
+	legendBar     = 2 * turnDot
+	legendSegGap  = 2
+	legendGrow    = 40
+	legendChipGap = 8
 	legendGap     = 16
 	legendPitch   = 32
 )
@@ -956,58 +1003,73 @@ func (p *playScene) teamSizes() (size [core.MaxTeams]int, teams int) {
 	return size, teams
 }
 
-// legendGroup is the width of a team of n in the legend: its chip, then a dot for each player.
-func legendGroup(a *app, n int) float64 {
-	return teamChipW(a) + (legendChipGap+float64(n)*2*turnDot+float64(n-1)*turnDotGap)*a.u
+// totalWidth is the room a legend row keeps for its team's total: the most orbs the board holds, hidden in part.
+func (p *playScene) totalWidth(a *app) float64 {
+	return ui.TextWidth("~", a.f.LabelBold) + ui.TextWidth(p.orbsMax, a.f.LabelBold)
 }
 
-// legendWidth is the widest team's group, which a line of the legend must hold.
+// legendWidth is the least width of the widest team's row, which a column of the legend must hold: its chip, a bar
+// with a stub for each player and room to grow, and its total.
 func (p *playScene) legendWidth(a *app) float64 {
 	size, teams := p.teamSizes()
-	w := 0.0
-	for _, n := range size[:teams] {
-		if n > 0 {
-			w = max(w, legendGroup(a, n))
-		}
+	n := 0
+	for _, s := range size[:teams] {
+		n = max(n, s)
 	}
-	return w
+	if n == 0 {
+		return 0
+	}
+	return teamChipW(a) + p.totalWidth(a) + (2*legendChipGap+float64(n)*(legendBar+legendSegGap)-legendSegGap+legendGrow)*a.u
 }
 
-// flowLegend sets a team game's legend in the w px from x, down from y: a group for each team with players, in team
-// order, wrapping onto centred lines. It returns the legend's height, 0 in a classic game.
+// flowLegend sets a team game's legend in the w px from x, down from y: a row for each team with players, in team
+// order, across as many equal columns as fit. It returns the legend's height, 0 in a classic game.
 func (p *playScene) flowLegend(a *app, x, y, w float64) float64 {
 	u := a.u
 	size, teams := p.teamSizes()
 	p.legend = [core.MaxTeams]ui.Rect{}
-	lines, first, lineW := 0, 0, 0.0
-	place := func(end int) { // centres the teams from first up to end on the next line
-		lx := x + (w-lineW)/2
-		for t := first; t < end; t++ {
-			if size[t] > 0 {
-				p.legend[t] = ui.Rect{X: lx, Y: y + float64(lines)*legendPitch*u, W: legendGroup(a, size[t]), H: ui.ChipHeight * u}
-				lx += p.legend[t].W + legendGap*u
-			}
+	n := 0
+	for _, s := range size[:teams] {
+		if s > 0 {
+			n++
 		}
-		lines, first, lineW = lines+1, end, 0
 	}
-	for t, n := range size[:teams] {
-		if n == 0 {
-			continue
-		}
-		gw := legendGroup(a, n)
-		if lineW > 0 && lineW+legendGap*u+gw > w {
-			place(t)
-		}
-		if lineW > 0 {
-			lineW += legendGap * u
-		}
-		lineW += gw
-	}
-	if lineW == 0 {
+	if n == 0 {
 		return 0
 	}
-	place(teams)
-	return (float64(lines-1)*legendPitch + ui.ChipHeight) * u
+	gap := legendGap * u
+	cols := max(1, min(n, int((w+gap)/(p.legendWidth(a)+gap))))
+	cw := (w - float64(cols-1)*gap) / float64(cols)
+	k := 0
+	for t, s := range size[:teams] {
+		if s > 0 {
+			p.legend[t] = ui.Rect{X: x + float64(k%cols)*(cw+gap), Y: y + float64(k/cols)*legendPitch*u, W: cw, H: ui.ChipHeight * u}
+			k++
+		}
+	}
+	return (float64((n+cols-1)/cols-1)*legendPitch + ui.ChipHeight) * u
+}
+
+// barStub is the stub each of a team's n players still in keeps in its bar of track px, gap px apart, as a player
+// still in keeps a slice of the wheel: square where they fit.
+func barStub(track, stub, gap float64, n int) float64 {
+	return min(stub, max(0, (track-float64(n-1)*gap)/float64(n)))
+}
+
+// barScale is the width an orb adds to a player's segment past their stub: the same in every bar, as on the wheel,
+// and as much as lets the longest bar fill its track. in and orbs are each team's players still in and their orbs;
+// with no orbs to show it is 0.
+func barScale(track, stub, gap float64, in, orbs *[core.MaxTeams]int) float64 {
+	k := math.Inf(1)
+	for t, n := range in {
+		if n > 0 && orbs[t] > 0 {
+			k = min(k, (track-float64(n)*barStub(track, stub, gap, n)-float64(n-1)*gap)/float64(orbs[t]))
+		}
+	}
+	if math.IsInf(k, 1) {
+		return 0
+	}
+	return max(0, k)
 }
 
 // layoutRoster centres the Players dialog: the seat table in one column, or two for more than six seats where they
@@ -1378,7 +1440,7 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 	}
 
 	// The mover's name alone, called out in the display face: the wheel's pointer or the turn dot shows their colour,
-	// and the legend's ring their team.
+	// and the legend's solid chip their team.
 	ui.DrawText(dst, p.labels[p.shown], p.nameFace(a), p.name.Cx(), p.name.Cy(), text.AlignCenter, sc.Ink)
 
 	// The chain callout, in the mover's ink.
@@ -1390,31 +1452,61 @@ func (p *playScene) drawRail(dst *ebiten.Image, a *app) {
 		ui.DrawText(dst, p.chainText, face, p.callout.Cx(), p.callout.Cy(), text.AlignCenter, ui.WithAlpha(ui.InkOn(c), alpha))
 	}
 
-	// A team game's legend: each team's chip, then its players' dots. Out players are empty rings, a team with
-	// nobody left dims, and a ring marks the mover. A legend taller than a short rail has room for scrolls, clipped.
+	// A team game's legend: a row per team, its chip (solid for the mover's team), a bar of its players' segments in
+	// seat order, shared out as the wheel's slices are, and its total. Out players drop out of the bar, and a team with
+	// nobody left dims. A legend taller than a short rail has room for scrolls, clipped.
 	ldst := dst
 	if p.legendView.MaxScroll() > 0 {
 		ldst = p.legendView.Clip(dst)
 	}
+	var in, orbs [core.MaxTeams]int
+	for i := range p.seats {
+		if t := p.game.Team[i]; p.alive[i] {
+			in[t]++
+			if !p.cover { // nothing to tell the player handing the device over: stubs only
+				orbs[t] += p.orbs[i]
+			}
+		}
+	}
+	cw, tw, bh, gap, track := teamChipW(a), p.totalWidth(a), legendBar*u, legendSegGap*u, 0.0
+	for _, r := range p.legend { // every row is as wide, and so is every bar
+		if r.W > 0 {
+			track = max(0, r.W-cw-tw-2*legendChipGap*u)
+			break
+		}
+	}
+	k := barScale(track, bh, gap, &in, &orbs)
 	for t, r := range p.legend {
 		if r.W == 0 {
 			continue
 		}
-		ink, dx := sc.Dim, r.X+teamChipW(a)+(legendChipGap+turnDot)*u
+		ink, fill := sc.Ink, sc.Tile
+		if in[t] == 0 {
+			ink, fill = sc.Dim, ui.WithAlpha(sc.Tile, 0.5)
+		}
+		bar := ui.Rect{X: r.X + cw + legendChipGap*u, Y: r.Cy() - bh/2, W: track, H: bh}
+		ui.FillRound(ldst, bar, bh/4, fill)
+		x, stub := bar.X, barStub(track, bh, gap, in[t])
 		for i := range p.seats {
-			if int(p.game.Team[i]) != t {
+			if int(p.game.Team[i]) != t || !p.alive[i] {
 				continue
 			}
-			if p.alive[i] {
-				ink = sc.Ink
+			seg := ui.Rect{X: x, Y: bar.Y, W: stub + k*float64(p.orbs[i]), H: bh} // under the cover k is 0
+			ui.FillRound(ldst, seg, min(bh, seg.W)/4, sc.Players[i])
+			if a.set.Marks && seg.W >= bh {
+				ui.DrawMark(ldst, i, seg.Cx(), seg.Cy(), bh/2, sc.Players[i])
 			}
-			ui.SeatDot(ldst, sc, i, dx, r.Cy(), turnDot*u, !p.alive[i], a.set.Marks)
-			if i == p.shown && !p.over {
-				ui.Ring(ldst, dx, r.Cy(), (turnDot+4)*u, 2*u, sc.Ink)
-			}
-			dx += (2*turnDot + turnDotGap) * u
+			x += seg.W + gap
 		}
-		drawTeamChip(ldst, a, ui.Rect{X: r.X, Y: r.Y, W: teamChipW(a), H: r.H}, uint8(t), ink, sc.Ground, false)
+		drawTeamChip(ldst, a, ui.Rect{X: r.X, Y: r.Y, W: cw, H: r.H}, uint8(t), ink, sc.Ground, t == int(p.game.Team[p.shown]) && !p.over)
+		s := p.teamS[t]
+		switch {
+		case p.cover:
+			s = "?"
+		case s == "":
+			s = "0"
+		}
+		ui.DrawText(ldst, s, a.f.LabelBold, r.Right(), r.Cy(), text.AlignEnd, ink)
 	}
 	p.legendView.DrawScrollbar(dst, a.ui())
 

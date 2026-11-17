@@ -57,7 +57,7 @@ Your choices are saved for next time.
 
 ## The game
 
-The board fills the screen beside a rail with Menu, a turn wheel showing each player's orb count, the name of the player to move and the "Chain ×N" callout. The wheel is a pie: the more orbs a player has, the wider their slice, and a player who is out has none. Held upright, a phone puts the name and a current-player dot under the board instead. A team game adds a legend under the name: each team's letter, then its players' colours, with a ring on the mover and an empty ring for a player who is out. Tap the wheel, the dot, the name or the legend for Players: every seat's team, name and orb count. Only the player to move has their tiles lit in their colour.
+The board fills the screen beside a rail with Menu, a turn wheel showing each player's orb count, the name of the player to move and the "Chain ×N" callout. The wheel is a pie: the more orbs a player has, the wider their slice, and a player who is out has none. Held upright, a phone puts the name and a current-player dot under the board instead. A team game adds a legend under the name: a bar per team with a block of each player's colour that grows and shrinks with their orbs, as their wheel slice does (the leading team's bar is full), the team's total beside it, and the mover's team letter filled in. A player who is out leaves the bar. Tap the wheel, the dot, the name or the legend for Players: every seat's team, name and orb count. Only the player to move has their tiles lit in their colour.
 
 Bots wait 300 to 600 ms before moving, so you can follow them. Long chains play back faster and faster; Space or a tap finishes the playback at once.
 

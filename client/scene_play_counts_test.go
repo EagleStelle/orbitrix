@@ -161,4 +161,28 @@ func TestWheelSlicesFollowOrbs(t *testing.T) {
 	if math.Abs(p.wedgeAngle(2)+math.Pi*sh[2]-1.5*math.Pi) > 1e-9 {
 		t.Fatal("the last slice must end where the first begins")
 	}
+	if p.teamS[0] != "3" || p.teamS[1] != "1" {
+		t.Fatalf("a team's total must add up its players' orbs: %q", p.teamS[:2])
+	}
+}
+
+// Team bars share out as the wheel does: a stub for each player still in, so a team yet to play shows, and one width
+// per orb in every bar, so equal counts are equal widths and the longest bar fills its track; a track too short for
+// square stubs narrows them.
+func TestTeamBarScale(t *testing.T) {
+	bar := func(track float64, in, orbs [core.MaxTeams]int, team int) float64 {
+		n := float64(in[team])
+		return n*barStub(track, 16, 2, in[team]) + (n-1)*2 + barScale(track, 16, 2, &in, &orbs)*float64(orbs[team])
+	}
+	in, orbs := [core.MaxTeams]int{2, 3, 1}, [core.MaxTeams]int{10, 6, 0}
+	if a, b, c := bar(200, in, orbs, 0), bar(200, in, orbs, 1), bar(200, in, orbs, 2); math.Abs(a-200) > 1e-9 || b >= a || c != 16 {
+		t.Fatalf("the leader must fill its bar, the others follow their orbs: %g %g %g", a, b, c)
+	}
+	if k := barScale(200, 16, 2, &in, &[core.MaxTeams]int{}); k != 0 {
+		t.Fatalf("no orbs must leave only stubs, not %g px an orb", k)
+	}
+	in, orbs = [core.MaxTeams]int{1, 6}, [core.MaxTeams]int{2, 3}
+	if b := bar(40, in, orbs, 1); math.Abs(b-40) > 1e-9 || barStub(40, 16, 2, 6) >= 16 {
+		t.Fatalf("a team too big for square stubs must narrow them and still fit its track: %g", b)
+	}
 }

@@ -418,6 +418,7 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 			for i := range p.seats {
 				p.orbs[i], p.orbS[i] = c.count-i, strconv.Itoa(c.count-i)
 			}
+			p.teamTotals()
 		}
 		if c.hover == "out" { // every third seat out, so the Out chips show
 			for i := 2; i < len(p.seats); i += 3 {
