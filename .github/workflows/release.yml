@@ -23,6 +23,8 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: write
+      id-token: write # Sigstore signs the attestations with the workflow's identity
+      attestations: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -66,6 +68,16 @@ jobs:
         run: |
           go tool mage desktop mac linux android
           cd dist && sha256sum orbitrix.exe orbitrix.apk orbitrix-mac.zip orbitrix-linux.zip > SHA256SUMS.txt
+
+      # Signed build provenance: proves each file was built by this workflow from this tag's commit.
+      - name: Attest the clients
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/orbitrix.exe
+            dist/orbitrix.apk
+            dist/orbitrix-mac.zip
+            dist/orbitrix-linux.zip
 
       # The notes are the Full Changelog link alone: since the previous tag, or every commit for the first release.
       - name: Publish the release

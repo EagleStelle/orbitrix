@@ -124,7 +124,7 @@ Pushing a tag such as `v1.0.0` runs `.github/workflows/release.yml`:
 
 1. The whole CI workflow runs first.
 2. The tag must match `version` in `magefile.go` and `versionName` in `android/build.gradle.kts`.
-3. The Windows, macOS, Linux and Android clients are built with the release key and `ORBITRIX_SERVER`, and published as a GitHub release with `SHA256SUMS.txt`. The release notes are the Full Changelog link to the previous tag.
+3. The Windows, macOS, Linux and Android clients are built with the release key and `ORBITRIX_SERVER`, and published as a GitHub release with `SHA256SUMS.txt`. Each client gets a signed build provenance attestation; `gh attestation verify orbitrix.exe -R EagleStelle/orbitrix` checks a download. The release notes are the Full Changelog link to the previous tag.
 4. The server image is pushed to Docker Hub as `eaglestelle/orbitrix-server:<version>` and `:latest`.
 
 The repository needs these settings (Settings > Secrets and variables > Actions):
