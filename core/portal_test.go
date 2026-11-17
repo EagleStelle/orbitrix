@@ -114,12 +114,12 @@ func TestPortalValidation(t *testing.T) {
 		edit  func(*MapDefinition)
 		issue string
 	}{
-		{"missing pair", func(m *MapDefinition) { m.Cells[32] = MapCell{} }, "Portal group"},
-		{"adjacent pair", func(m *MapDefinition) { m.Cells[17], m.Cells[32] = m.Cells[32], MapCell{} }, "Portal group"},
-		{"third endpoint", func(m *MapDefinition) { m.Cells[24] = m.Cells[16] }, "Portal group"},
-		{"zero group", func(m *MapDefinition) { m.Cells[16].Group, m.Cells[32].Group = 0, 0 }, "Portal group"},
-		{"extra color", func(m *MapDefinition) { m.Cells[16].Group, m.Cells[32].Group = 13, 13 }, "12 group colors"},
-		{"both directions blocked", func(m *MapDefinition) { m.Cells[39].Terrain, m.Cells[33].Terrain = Wall, Wall }, "Portal needs"},
+		{"missing pair", func(m *MapDefinition) { m.Cells[32] = MapCell{} }, "A Portal has no partner yet"},
+		{"adjacent pair", func(m *MapDefinition) { m.Cells[17], m.Cells[32] = m.Cells[32], MapCell{} }, "A Portal pair sits side by side"},
+		{"third endpoint", func(m *MapDefinition) { m.Cells[24] = m.Cells[16] }, "More than two Portals share a color"},
+		{"zero group", func(m *MapDefinition) { m.Cells[16].Group, m.Cells[32].Group = 0, 0 }, "A Portal has no color"},
+		{"extra color", func(m *MapDefinition) { m.Cells[16].Group, m.Cells[32].Group = 13, 13 }, "Some pieces have an old color"},
+		{"both directions blocked", func(m *MapDefinition) { m.Cells[39].Terrain, m.Cells[33].Terrain = Wall, Wall }, "A Portal pair has no way through"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := portalMap()

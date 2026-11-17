@@ -2,6 +2,7 @@ package core
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -52,20 +53,29 @@ func TestSpringLaunchesBoxes(t *testing.T) {
 }
 
 func TestSpringPlacement(t *testing.T) {
-	for name, edit := range map[string]func(*MapDefinition){
-		"no Wall":           func(m *MapDefinition) { m.Cells[21].Terrain = Floor },
-		"Walls either side": func(m *MapDefinition) { m.Cells[23].Terrain = Wall },
-		"corner":            func(m *MapDefinition) { m.Cells[15].Terrain = Wall },
-		"Void in front":     func(m *MapDefinition) { m.Cells[23].Terrain = Void },
-		"Breakable Wall":    func(m *MapDefinition) { m.Cells[23].Terrain = BreakableWall },
-		"Door in front":     func(m *MapDefinition) { m.Cells[23].Circuit, m.Cells[23].Group = Door, 1 },
-		"Barrier in front":  func(m *MapDefinition) { m.Edges = []MapEdge{{A: 22, B: 23, Kind: Barrier}} },
-		"Wall and Barrier":  func(m *MapDefinition) { m.Edges = []MapEdge{{A: 22, B: 15, Kind: Barrier}} },
+	const facing, blocked = "A Spring can't tell which way to face", "Something blocks a Spring's launch"
+	for name, tc := range map[string]struct {
+		edit func(*MapDefinition)
+		cell int
+		want string
+	}{
+		"no Wall":           {func(m *MapDefinition) { m.Cells[21].Terrain = Floor }, 22, facing},
+		"Walls either side": {func(m *MapDefinition) { m.Cells[23].Terrain = Wall }, 22, facing},
+		"corner":            {func(m *MapDefinition) { m.Cells[15].Terrain = Wall }, 22, facing},
+		"Void in front":     {func(m *MapDefinition) { m.Cells[23].Terrain = Void }, 22, blocked},
+		"Breakable Wall":    {func(m *MapDefinition) { m.Cells[23].Terrain = BreakableWall }, 22, blocked},
+		"Door in front":     {func(m *MapDefinition) { m.Cells[23].Circuit, m.Cells[23].Group = Door, 1 }, 22, blocked},
+		"Barrier in front":  {func(m *MapDefinition) { m.Edges = []MapEdge{{A: 22, B: 23, Kind: Barrier}} }, 22, facing},
+		"Wall and Barrier":  {func(m *MapDefinition) { m.Edges = []MapEdge{{A: 22, B: 15, Kind: Barrier}} }, 22, facing},
+		"Gate in front":     {func(m *MapDefinition) { m.Edges = []MapEdge{{A: 22, B: 23, Kind: Gate, Group: 1}} }, 22, "A Gate blocks a Spring's launch"},
+		"off the board":     {func(m *MapDefinition) { m.Cells[26].Terrain, m.Cells[27].Feature = Wall, Spring }, 27, "A Spring launches off the board"},
 	} {
 		m := springMap()
-		edit(&m)
-		if !slices.ContainsFunc(m.Validate(), func(i MapIssue) bool { return slices.Equal(i.Cells, []int{22}) }) {
-			t.Errorf("%s: accepted", name)
+		tc.edit(&m)
+		if !slices.ContainsFunc(m.Validate(), func(i MapIssue) bool {
+			return slices.Equal(i.Cells, []int{tc.cell}) && strings.HasPrefix(i.Message, tc.want)
+		}) {
+			t.Errorf("%s: want %q in %v", name, tc.want, m.Validate())
 		}
 	}
 	for name, edit := range map[string]func(*MapDefinition){

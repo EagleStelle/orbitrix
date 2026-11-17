@@ -98,14 +98,14 @@ func TestBreakableFloorValidationAndSharing(t *testing.T) {
 	}
 	m := breakableFloorMap()
 	m.Cells[12].Feature = Furnace
-	if !has(m, "Features need Floor", 12) {
+	if !has(m, "A piece isn't on plain Floor", 12) {
 		t.Fatal("a feature on Breakable Floor must be refused")
 	}
 	// The corner keeps no route once both its neighbors break, even with a Breakable Wall to open later.
 	for _, corner := range []Terrain{Floor, BreakableFloor, BreakableWall} {
 		m = NewMap(5, 5)
 		m.Cells[0].Terrain, m.Cells[1].Terrain, m.Cells[5].Terrain = corner, BreakableFloor, BreakableFloor
-		if !has(m, "Floor needs a route", 0) {
+		if !has(m, "Breakable Floors could seal a cell in", 0) {
 			t.Fatalf("%v corner sealed by Breakable Floors must be refused", corner)
 		}
 	}
@@ -113,7 +113,7 @@ func TestBreakableFloorValidationAndSharing(t *testing.T) {
 	for i := range 7 {
 		split.Cells[3*7+i].Terrain = BreakableFloor
 	}
-	if !has(split, "All Floor must connect", 48) {
+	if !has(split, "Part of the map is cut off", 48) {
 		t.Fatal("a board that Breakable Floors alone hold together must be refused")
 	}
 	m = NewMap(7, 7)

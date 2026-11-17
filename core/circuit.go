@@ -24,6 +24,8 @@ const (
 	BreakableBarrier
 )
 
+var edgeNames = [...]string{Barrier: "Barrier", Gate: "Gate", BreakableBarrier: "Breakable Barrier"}
+
 // CircuitOpen applies circuit polarity to an output's individual starting state.
 func CircuitOpen(initiallyOpen, reversed bool) bool { return initiallyOpen != reversed }
 

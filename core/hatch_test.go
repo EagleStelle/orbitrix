@@ -123,7 +123,7 @@ func TestHatchValidationAndSnapshotRejections(t *testing.T) {
 	for row := range 5 {
 		m.Cells[10+row] = MapCell{Circuit: Hatch, Group: 1}
 	}
-	if !slices.ContainsFunc(m.Validate(), func(issue MapIssue) bool { return strings.HasPrefix(issue.Message, "All Floor must connect") }) {
+	if !slices.ContainsFunc(m.Validate(), func(issue MapIssue) bool { return strings.HasPrefix(issue.Message, "Part of the map is cut off") }) {
 		t.Fatal("Hatches must not be the only connection between players")
 	}
 	g, err := NewGameWithMap(hatchMap(), 2)
@@ -159,7 +159,7 @@ func TestHatchEstimate(t *testing.T) {
 				if hp == Endless {
 					for _, cell := range cells {
 						if !slices.ContainsFunc(hatches.Validate(), func(issue MapIssue) bool {
-							return strings.HasPrefix(issue.Message, "Too many Holes") && slices.Contains(issue.Cells, cell)
+							return strings.HasPrefix(issue.Message, "Games would never end") && slices.Contains(issue.Cells, cell)
 						}) {
 							t.Fatalf("Endless must mark Hatch %d", cell)
 						}

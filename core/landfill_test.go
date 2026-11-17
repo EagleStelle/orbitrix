@@ -146,7 +146,7 @@ func TestLandfillValidationAndSharing(t *testing.T) {
 		sealed.Edges = append(sealed.Edges, MapEdge{A: min(source, 12), B: max(source, 12), Kind: Barrier})
 	}
 	if !slices.ContainsFunc(sealed.Validate(), func(issue MapIssue) bool {
-		return strings.Contains(issue.Message, "All Floor must connect") && slices.Contains(issue.Cells, 12)
+		return strings.Contains(issue.Message, "Part of the map is cut off") && slices.Contains(issue.Cells, 12)
 	}) {
 		t.Fatal("an unreachable Landfill must be reported")
 	}
@@ -191,7 +191,7 @@ func TestLandfillFillTargetIsItsStartingCapacityAsFloor(t *testing.T) {
 			t.Errorf("%s: fill target %d, want %d", name, got, tc.want)
 		}
 		refused := slices.ContainsFunc(m.Validate(), func(issue MapIssue) bool {
-			return strings.HasPrefix(issue.Message, "Landfill needs initial capacity") && slices.Contains(issue.Cells, tc.cell)
+			return strings.HasPrefix(issue.Message, "A Landfill's capacity is below two") && slices.Contains(issue.Cells, tc.cell)
 		})
 		if refused != (tc.want < 2) {
 			t.Errorf("%s: refused=%v; the Floor it becomes needs capacity two", name, refused)

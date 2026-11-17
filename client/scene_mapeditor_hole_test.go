@@ -18,7 +18,7 @@ func TestEditorSealedHoleIsAnIssueNotARefusal(t *testing.T) {
 		}
 	}
 	e.validate()
-	if len(e.m.Edges) != 4 || len(e.issues) != 1 || e.issues[0].Message != "A Hole needs a Floor side without a Barrier" || !e.bad[12] {
+	if len(e.m.Edges) != 4 || len(e.issues) != 1 || e.issues[0].Message != "Barriers seal a Hole off. Erase one of them" || !e.bad[12] {
 		t.Fatalf("issues %v", e.issues)
 	}
 }

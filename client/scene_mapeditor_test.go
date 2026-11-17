@@ -360,8 +360,43 @@ func TestEditorLimitsLinkPairsToTwelve(t *testing.T) {
 	if e.paint(70, 0, 0) || e.m.Cells[70].Feature != core.NoFeature {
 		t.Fatal("created a thirteenth pair")
 	}
-	if e.note != "Choose an unused pair color." {
+	if e.note != "That color already has a pair. Pick another color" {
 		t.Fatalf("missing recovery message: %s", e.note)
+	}
+}
+
+func TestEditorRepairsLonePairEnd(t *testing.T) {
+	a := setupTestApp(1040, 640, 1, 2)
+	for _, tool := range []int{brushLink, brushPortal} {
+		e := newMapEditor(a, newHome(), core.NewMap(7, 7), func(core.MapDefinition) error { return nil })
+		e.selectTool(tool)
+		e.paint(8, 0, 0)
+		e.paint(40, 0, 0)
+		e.selectTool(brushErase)
+		e.paint(40, 0, 0)
+		e.selectTool(tool)
+		if e.paint(8, 0, 0) || e.note != "" {
+			t.Fatalf("%s: tapping the lone end said %q", editorTools[tool], e.note)
+		}
+		if !e.paint(26, 0, 0) || e.m.Cells[26].Feature != editorBrushes[tool].Feature || e.m.Cells[26].Group != e.m.Cells[8].Group || e.pair != -1 {
+			t.Fatalf("%s: a new end did not pair with the lone one: %q", editorTools[tool], e.note)
+		}
+	}
+}
+
+func TestEditorNamesRefusingGround(t *testing.T) {
+	a := setupTestApp(1040, 640, 1, 2)
+	m := core.NewMap(5, 5)
+	m.Cells[6].Terrain, m.Cells[18].Terrain = core.Void, core.Sinkhole
+	e := newMapEditor(a, newHome(), m, func(core.MapDefinition) error { return nil })
+	for _, tc := range []struct {
+		tool, cell int
+		want       string
+	}{{brushTurret, 6, "Void can't hold a Turret. Paint Floor first"}, {brushLink, 18, "A Sinkhole can't hold a Link. Paint Floor first"}} {
+		e.selectTool(tc.tool)
+		if e.paint(tc.cell, 0, 0) || e.note != tc.want {
+			t.Fatalf("note %q, want %q", e.note, tc.want)
+		}
 	}
 }
 

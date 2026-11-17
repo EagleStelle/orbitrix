@@ -220,22 +220,27 @@ func (m MapDefinition) SpringFacing(cell int) int {
 	return facing
 }
 
-// springFits reports whether a Spring has one Wall or Barrier behind it and, in front with no edge between, a cell that takes
-// orbs or passes them on: Floor without a Spring or Door, a Hole or a Landfill.
-func (m MapDefinition) springFits(cell int) bool {
+// springIssue says why a Spring can't launch, or "" when it can: it needs one Wall or Barrier behind it and, in front
+// with no edge between, a cell that takes orbs or passes them on: Floor without a Spring or Door, a Hole or a Landfill.
+func (m MapDefinition) springIssue(cell int) string {
 	facing := m.SpringFacing(cell)
-	front := -1
-	if facing >= 0 {
-		front = m.neighbor(cell, facing)
+	if facing < 0 {
+		return "A Spring can't tell which way to face. Stand it against only one Wall or Barrier"
 	}
+	front := m.neighbor(cell, facing)
 	if front < 0 {
-		return false
+		return "A Spring launches off the board. Move its Wall or Barrier to another side"
 	}
-	f := m.Cells[front]
-	if !m.floor(front) && f.Terrain != Hole && f.Terrain != Landfill || f.Feature == Spring || f.Circuit == Door {
-		return false
+	// A Barrier in front would be a second one behind it, so only a Gate or Breakable Barrier gets here.
+	for _, e := range m.Edges {
+		if e.A == cell && e.B == front || e.B == cell && e.A == front {
+			return "A " + edgeNames[e.Kind] + " blocks a Spring's launch. Erase the " + edgeNames[e.Kind]
+		}
 	}
-	return !slices.ContainsFunc(m.Edges, func(e MapEdge) bool { return e.A == cell && e.B == front || e.B == cell && e.A == front })
+	if f := m.Cells[front]; !m.floor(front) && f.Terrain != Hole && f.Terrain != Landfill || f.Feature == Spring || f.Circuit == Door {
+		return "Something blocks a Spring's launch. Paint Floor in front of it"
+	}
+	return ""
 }
 
 func (m MapDefinition) neighbor(cell, direction int) int {
@@ -431,11 +436,8 @@ func (m MapDefinition) Validate() []MapIssue {
 	var portals [256][]int
 	var switches, gates, doors [256][]int
 	for i, c := range m.Cells {
-		if c.Feature != NoFeature && c.Terrain != Floor {
-			issues = append(issues, MapIssue{Message: "Features need Floor", Cells: []int{i}})
-		}
-		if c.Circuit != NoCircuit && (c.Terrain != Floor || c.Feature != NoFeature) {
-			issues = append(issues, MapIssue{Message: "Circuit components need empty Floor", Cells: []int{i}})
+		if (c.Feature != NoFeature || c.Circuit != NoCircuit) && c.Terrain != Floor {
+			issues = append(issues, MapIssue{Message: "A piece isn't on plain Floor. Paint Floor there and place it again", Cells: []int{i}})
 		}
 		switch {
 		case c.Feature == Link:
@@ -448,7 +450,7 @@ func (m MapDefinition) Validate() []MapIssue {
 			doors[c.Group] = append(doors[c.Group], i)
 		default:
 			if c.Group != 0 {
-				issues = append(issues, MapIssue{Message: "Only Links, Portals and circuit components use a group", Cells: []int{i}, Group: c.Group})
+				issues = append(issues, MapIssue{Message: "A cell has a color it can't use. Paint it again", Cells: []int{i}, Group: c.Group})
 			}
 		}
 		if c.Terrain == BreakableWall {
@@ -461,30 +463,32 @@ func (m MapDefinition) Validate() []MapIssue {
 				}
 			}
 			if neighbors < 2 {
-				issues = append(issues, MapIssue{Message: "Breakable Wall needs at least two neighboring Floor cells", Cells: []int{i}})
+				issues = append(issues, MapIssue{Message: "A Breakable Wall has Floor on fewer than two sides. Add Floor beside it", Cells: []int{i}})
 			}
 		}
-		if c.Feature == Spring && c.Terrain == Floor && !m.springFits(i) {
-			issues = append(issues, MapIssue{Message: "A Spring needs exactly one Wall or Barrier beside it and no solid objects in front", Cells: []int{i}})
+		if c.Feature == Spring && c.Terrain == Floor {
+			if message := m.springIssue(i); message != "" {
+				issues = append(issues, MapIssue{Message: message, Cells: []int{i}})
+			}
 		}
 		if c.Terrain == Landfill && m.FillTarget(i) < 2 { // the Floor it becomes would explode on its first orb
-			issues = append(issues, MapIssue{Message: "Landfill needs initial capacity of at least two", Cells: []int{i}})
+			issues = append(issues, MapIssue{Message: "A Landfill's capacity is below two. Open more of its sides", Cells: []int{i}})
 		}
 	}
 	seenEdges := make(map[[2]int]int, len(m.Edges))
 	for i, e := range m.Edges {
-		if !m.EdgeFits(e.A, e.B) {
-			issues = append(issues, MapIssue{Message: "Barriers and Gates need Floor or Landfill on both sides, or beside a Hole", Edges: []int{i}})
+		if !m.EdgeFits(e.A, e.B) { // a Wall, Void or Breakable Wall on a side, or Holes on both
+			issues = append(issues, MapIssue{Message: "A " + edgeNames[e.Kind] + " can't stand here. Move it between two Floor cells", Edges: []int{i}})
 		}
 		key := [2]int{min(e.A, e.B), max(e.A, e.B)}
 		if prev, found := seenEdges[key]; found {
-			issues = append(issues, MapIssue{Message: "Only one Barrier or Gate can occupy an edge", Edges: []int{prev, i}})
+			issues = append(issues, MapIssue{Message: "Two pieces share an edge. Erase one", Edges: []int{prev, i}})
 		}
 		seenEdges[key] = i
 		if e.Kind == Gate {
 			gates[e.Group] = append(gates[e.Group], i)
 		} else if e.Group != 0 {
-			issues = append(issues, MapIssue{Message: "Barriers do not use a gate group", Edges: []int{i}, Group: e.Group})
+			issues = append(issues, MapIssue{Message: "A " + edgeNames[e.Kind] + " has a color it can't use. Paint it again", Edges: []int{i}, Group: e.Group})
 		}
 	}
 	// A Hole sealed by Barriers on every Floor side can never swallow an orb; Gates may open.
@@ -505,7 +509,7 @@ func (m MapDefinition) Validate() []MapIssue {
 			}
 		}
 		if sides > 0 && len(sealed) == sides {
-			issues = append(issues, MapIssue{Message: "A Hole needs a Floor side without a Barrier", Cells: []int{i}, Edges: sealed})
+			issues = append(issues, MapIssue{Message: "Barriers seal a Hole off. Erase one of them", Cells: []int{i}, Edges: sealed})
 		}
 	}
 	for group := 0; group < len(links); group++ {
@@ -513,17 +517,43 @@ func (m MapDefinition) Validate() []MapIssue {
 		portalCells := portals[group]
 		circuitCells := append(slices.Clone(switches[group]), doors[group]...)
 		if group > MaxMapGroups && len(cells)+len(portalCells)+len(circuitCells)+len(gates[group]) > 0 {
-			issues = append(issues, MapIssue{Message: "Choose one of the 12 group colors", Cells: append(append(slices.Clone(cells), portalCells...), circuitCells...), Edges: slices.Clone(gates[group]), Group: uint8(group)})
+			issues = append(issues, MapIssue{Message: "Some pieces have an old color. Paint them again in one of the 12", Cells: append(append(slices.Clone(cells), portalCells...), circuitCells...), Edges: slices.Clone(gates[group]), Group: uint8(group)})
 			continue
 		}
-		if len(cells) > 0 && (group == 0 || len(cells) != 2 || m.adjacent(cells[0], cells[len(cells)-1])) {
-			issues = append(issues, MapIssue{Message: "Link group needs exactly two nonadjacent Floor endpoints and a nonzero group", Cells: slices.Clone(cells), Group: uint8(group)})
+		// Each Link or Portal color holds one pair of distant endpoints.
+		for _, pair := range [...]struct {
+			name string
+			ends []int
+		}{{"Link", cells}, {"Portal", portalCells}} {
+			message := ""
+			switch {
+			case len(pair.ends) == 0:
+			case group == 0:
+				message = "A " + pair.name + " has no color. Erase it and place it again"
+			case len(pair.ends) == 1:
+				message = "A " + pair.name + " has no partner yet. Place another " + pair.name + " in its color"
+			case len(pair.ends) > 2:
+				message = "More than two " + pair.name + "s share a color. Erase all but two"
+			case m.adjacent(pair.ends[0], pair.ends[1]):
+				message = "A " + pair.name + " pair sits side by side. Move one end further away"
+			}
+			if message != "" {
+				issues = append(issues, MapIssue{Message: message, Cells: slices.Clone(pair.ends), Group: uint8(group)})
+			}
 		}
-		if len(portalCells) > 0 && (group == 0 || len(portalCells) != 2 || m.adjacent(portalCells[0], portalCells[len(portalCells)-1])) {
-			issues = append(issues, MapIssue{Message: "Portal group needs exactly two nonadjacent Floor endpoints and a nonzero group", Cells: slices.Clone(portalCells), Group: uint8(group)})
-		}
-		if len(circuitCells)+len(gates[group]) > 0 && (group == 0 || len(switches[group]) == 0 || len(gates[group])+len(doors[group]) == 0) {
-			issues = append(issues, MapIssue{Message: "A circuit needs at least one switch and one Gate, Door or Hatch", Cells: circuitCells, Edges: slices.Clone(gates[group]), Group: uint8(group)})
+		if len(circuitCells)+len(gates[group]) > 0 {
+			message := ""
+			switch {
+			case group == 0:
+				message = "A circuit has no color. Paint its pieces again"
+			case len(switches[group]) == 0:
+				message = "A circuit has no switch. Add a Latch, Toggle or Hold in its color"
+			case len(gates[group])+len(doors[group]) == 0:
+				message = "A circuit has nothing to open or close. Add a Gate, Door or Hatch in its color"
+			}
+			if message != "" {
+				issues = append(issues, MapIssue{Message: message, Cells: circuitCells, Edges: slices.Clone(gates[group]), Group: uint8(group)})
+			}
 		}
 	}
 	portalAxes := m.InitialPortalAxes()
@@ -536,7 +566,7 @@ func (m MapDefinition) Validate() []MapIssue {
 			continue
 		}
 		if portalAxes[entry] == 0 {
-			issues = append(issues, MapIssue{Message: "Portal needs an open horizontal or vertical route", Cells: []int{entry, pair}, Group: c.Group})
+			issues = append(issues, MapIssue{Message: "A Portal pair has no way through. Open the left and right sides of both, or their top and bottom", Cells: []int{entry, pair}, Group: c.Group})
 		}
 	}
 	var neighbors [5]int
@@ -550,13 +580,15 @@ func (m MapDefinition) Validate() []MapIssue {
 		}
 		switch capacity, f := m.Capacity(i), m.Cells[i].Feature; {
 		case capacity < 2:
-			issues = append(issues, MapIssue{Message: "Floor needs initial capacity of at least two", Cells: []int{i}})
-		case capacity < 3 && (f == Furnace || f == Crusher):
-			issues = append(issues, MapIssue{Message: "Furnaces and Crushers need initial capacity of at least three", Cells: []int{i}})
+			issues = append(issues, MapIssue{Message: "A cell's capacity is below two. Open more of its sides", Cells: []int{i}})
+		case capacity < 3 && f == Furnace:
+			issues = append(issues, MapIssue{Message: "A Furnace's capacity is below three. Move it to a cell with capacity three or more", Cells: []int{i}})
+		case capacity < 3 && f == Crusher:
+			issues = append(issues, MapIssue{Message: "A Crusher's capacity is below three. Move it to a cell with capacity three or more", Cells: []int{i}})
 		}
 	}
 	if first < 0 {
-		return append(issues, MapIssue{Message: "Map needs playable Floor"})
+		return append(issues, MapIssue{Message: "The map has no Floor to play on. Paint some Floor"})
 	}
 	if slices.ContainsFunc(m.Cells, func(c MapCell) bool { return c.Terrain == BreakableFloor }) {
 		issues = append(issues, m.sealedByBreaking()...)
@@ -655,7 +687,7 @@ func (m MapDefinition) Validate() []MapIssue {
 			accessible = accessible || regions[controller] != 0 && (regions[controller] == regions[e.A] || regions[controller] == regions[e.B])
 		}
 		if !accessible {
-			issues = append(issues, MapIssue{Message: "Gate must share a Floor group with a switch", Cells: slices.Clone(switches[e.Group]), Edges: []int{i}, Group: e.Group})
+			issues = append(issues, MapIssue{Message: "A Gate's switches are all out of reach. Add a Latch, Toggle or Hold in its color beside it", Cells: slices.Clone(switches[e.Group]), Edges: []int{i}, Group: e.Group})
 		}
 	}
 	ref := 0 // the region of the first playable Floor that can't break away
@@ -672,12 +704,13 @@ func (m MapDefinition) Validate() []MapIssue {
 		}
 	}
 	if len(disconnected) > 0 {
-		issues = append(issues, MapIssue{Message: "All Floor must connect through Landfills, breakable walls, breakable barriers or reachable Gates, never only Breakable Floors, Sinkholes or Hatches", Cells: disconnected})
+		// Breakable Floors, Sinkholes and Hatches can split the map later, so it may look joined today.
+		issues = append(issues, MapIssue{Message: "Part of the map is cut off, or could be. Join it to the rest with Floor", Cells: disconnected})
 	}
 	if _, _, pace := m.Estimate(); pace == Instant || pace == Endless {
-		issue := MapIssue{Message: "Too many Holes, Sinkholes, Hatches, Spillways, Crushers and Vaults: games would never end"}
+		issue := MapIssue{Message: "Games would never end. Remove some of the pieces that drain orbs"}
 		if pace == Instant {
-			issue.Message = "Too many Furnaces, Reservoirs and Turrets: games would end almost at once"
+			issue.Message = "Games would end almost at once. Remove some of the pieces that make orbs"
 		}
 		for i, c := range m.Cells {
 			drains := c.Terrain == Hole || c.Terrain == Sinkhole || c.Circuit == Hatch || c.Feature == Spillway || c.Feature == Crusher || c.Feature == Vault
@@ -715,7 +748,7 @@ func (m MapDefinition) sealedByBreaking() []MapIssue {
 	if len(sealed) == 0 {
 		return nil
 	}
-	return []MapIssue{{Message: "Floor needs a route that breaking Breakable Floors can't remove", Cells: sealed}}
+	return []MapIssue{{Message: "Breakable Floors could seal a cell in. Give it a side of plain Floor", Cells: sealed}}
 }
 
 // Estimate predicts a game's average moves on the starting layout (0 when Endless), its length in thousandths of an

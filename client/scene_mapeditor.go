@@ -377,7 +377,7 @@ func (e *mapEditor) paintEdge(a, b int) bool {
 		return true
 	}
 	if !e.m.EdgeFits(a, b) {
-		e.notify("Place edges between floor or landfill cells, or beside a hole.")
+		e.notify("A " + editorTools[e.tool] + " can't go here. Try it between two Floor cells")
 		return false
 	}
 	e.m.Edges = append(e.m.Edges, next)
@@ -452,7 +452,7 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 			return false
 		}
 		if e.m.Cells[i].Terrain != core.Floor {
-			e.notify(editorTools[e.tool] + "s need floor underneath.")
+			e.refuseTerrain(i)
 			return false
 		}
 		if e.tool == brushPortal && e.m.Cells[i].Feature == core.Portal && (e.pair < 0 || e.pair == i) {
@@ -460,9 +460,20 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 			e.refreshPortal()
 			return false
 		}
+		if e.pair < 0 { // an end left alone, as by Erase, pairs with the next one of its color
+			ends := 0
+			for j, c := range e.m.Cells {
+				if c.Feature == editorBrushes[e.tool].Feature && c.Group == e.group {
+					ends, e.pair = ends+1, j
+				}
+			}
+			if ends != 1 {
+				e.pair = -1
+			}
+		}
 		if e.pair >= 0 && e.pair != i {
 			if ui.AbsInt(e.pair/e.m.Rows-i/e.m.Rows)+ui.AbsInt(e.pair%e.m.Rows-i%e.m.Rows) == 1 {
-				e.notify("Choose a distant cell for the partner portal.")
+				e.notify("Too close to the other " + editorTools[e.tool] + ". Pick a cell further away")
 				return false
 			}
 			next = core.MapCell{Feature: editorBrushes[e.tool].Feature, Group: e.m.Cells[e.pair].Group}
@@ -470,6 +481,8 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 				next.PortalMode = e.m.Cells[e.pair].PortalMode
 			}
 			e.pair = -1
+		} else if e.pair == i && e.m.Cells[i].Group == e.group {
+			return false // tapping the waiting end again keeps it waiting
 		} else {
 			var used [256]bool
 			for _, c := range e.m.Cells {
@@ -478,7 +491,7 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 				}
 			}
 			if e.group == 0 || used[e.group] {
-				e.notify("Choose an unused pair color.")
+				e.notify("That color already has a pair. Pick another color")
 				return false
 			}
 			next = core.MapCell{Feature: editorBrushes[e.tool].Feature, Group: e.group}
@@ -492,7 +505,7 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 		}
 	case brushReservoir, brushSpillway, brushFurnace, brushCrusher, brushVault, brushTurret, brushBox, brushSpring, brushLatch, brushToggle, brushHold, brushDoor, brushHatch:
 		if e.m.Cells[i].Terrain != core.Floor {
-			e.notify("Components need floor underneath.")
+			e.refuseTerrain(i)
 			return false
 		}
 		next.Feature = editorBrushes[e.tool].Feature
@@ -513,6 +526,17 @@ func (e *mapEditor) paint(i int, x, y float64) bool {
 	e.revision++
 	return true
 }
+
+// refuseTerrain names the ground that turned the piece away, rather than listing where pieces go.
+func (e *mapEditor) refuseTerrain(i int) {
+	t := e.m.Cells[i].Terrain
+	ground := editorTools[slices.IndexFunc(editorBrushes[:], func(b boardview.Brush) bool { return b.Terrain == t })]
+	if t != core.Void {
+		ground = "A " + ground
+	}
+	e.notify(ground + " can't hold a " + editorTools[e.tool] + ". Paint Floor first")
+}
+
 func resizeMap(m core.MapDefinition, cols, rows int) core.MapDefinition {
 	n := core.NewMap(cols, rows)
 	n.Name = m.Name

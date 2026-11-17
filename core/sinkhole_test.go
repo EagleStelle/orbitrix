@@ -160,7 +160,7 @@ func TestSinkholeValidationAndSharing(t *testing.T) {
 	}
 	m := sinkholeMap()
 	m.Cells[12].Feature = Furnace
-	if !has(m, "Features need Floor", 12) {
+	if !has(m, "A piece isn't on plain Floor", 12) {
 		t.Fatal("a feature on a Sinkhole must be refused")
 	}
 	// Players split apart could never meet once the Sinkholes between them collapse.
@@ -168,7 +168,7 @@ func TestSinkholeValidationAndSharing(t *testing.T) {
 	for r := range 5 {
 		split.Cells[2*5+r].Terrain = Sinkhole
 	}
-	if !has(split, "All Floor must connect", 24) {
+	if !has(split, "Part of the map is cut off", 24) {
 		t.Fatal("a board held together only by Sinkholes must be refused")
 	}
 	m = sinkholeMap()
@@ -208,7 +208,7 @@ func TestSinkholeEstimate(t *testing.T) {
 	}
 	for _, i := range []int{20, 24, 56, 60} {
 		if !slices.ContainsFunc(m.Validate(), func(issue MapIssue) bool {
-			return strings.HasPrefix(issue.Message, "Too many Holes, Sinkholes") && slices.Contains(issue.Cells, i)
+			return strings.HasPrefix(issue.Message, "Games would never end") && slices.Contains(issue.Cells, i)
 		}) {
 			t.Fatalf("Endless must mark Sinkhole %d", i)
 		}

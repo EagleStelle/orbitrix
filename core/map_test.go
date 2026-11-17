@@ -44,54 +44,54 @@ func TestMapDraftValidation(t *testing.T) {
 		edit func(*MapDefinition)
 		text string
 	}{
-		{"unpaired Link", func(m *MapDefinition) { m.Cells[12] = MapCell{Feature: Link, Group: 1} }, "Link group"},
+		{"unpaired Link", func(m *MapDefinition) { m.Cells[12] = MapCell{Feature: Link, Group: 1} }, "A Link has no partner yet"},
 		{"adjacent Links", func(m *MapDefinition) {
 			m.Cells[12], m.Cells[13] = MapCell{Feature: Link, Group: 1}, MapCell{Feature: Link, Group: 1}
-		}, "Link group"},
+		}, "A Link pair sits side by side"},
 		{"three Links", func(m *MapDefinition) {
 			for _, i := range []int{0, 12, 24} {
 				m.Cells[i] = MapCell{Feature: Link, Group: 1}
 			}
-		}, "Link group"},
-		{"zero Link group", func(m *MapDefinition) { m.Cells[12] = MapCell{Feature: Link} }, "Link group"},
+		}, "More than two Links share a color"},
+		{"zero Link group", func(m *MapDefinition) { m.Cells[12] = MapCell{Feature: Link} }, "A Link has no color"},
 		{"extra Link color", func(m *MapDefinition) {
 			m.Cells[6], m.Cells[18] = MapCell{Feature: Link, Group: 13}, MapCell{Feature: Link, Group: 13}
-		}, "12 group colors"},
+		}, "Some pieces have an old color"},
 		{"extra circuit color", func(m *MapDefinition) {
 			m.Cells[6] = MapCell{Circuit: Latch, Group: 13}
 			m.Edges = []MapEdge{{A: 12, B: 13, Kind: Gate, Group: 13}}
-		}, "12 group colors"},
-		{"orphan Switch", func(m *MapDefinition) { m.Cells[12] = MapCell{Circuit: Latch, Group: 1} }, "circuit"},
-		{"orphan Gate", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 12, B: 13, Kind: Gate, Group: 1}} }, "circuit"},
-		{"feature on Wall", func(m *MapDefinition) { m.Cells[12] = MapCell{Terrain: Wall, Feature: Reservoir} }, "Features need Floor"},
-		{"unused group", func(m *MapDefinition) { m.Cells[12].Group = 1 }, "Only Links, Portals and circuit"},
-		{"Barrier group", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 12, B: 13, Group: 1}} }, "Barriers do not use"},
-		{"Breakable Barrier group", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 12, B: 13, Kind: BreakableBarrier, Group: 1}} }, "Barriers do not use"},
+		}, "Some pieces have an old color"},
+		{"orphan Switch", func(m *MapDefinition) { m.Cells[12] = MapCell{Circuit: Latch, Group: 1} }, "A circuit has nothing to open or close"},
+		{"orphan Gate", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 12, B: 13, Kind: Gate, Group: 1}} }, "A circuit has no switch"},
+		{"feature on Wall", func(m *MapDefinition) { m.Cells[12] = MapCell{Terrain: Wall, Feature: Reservoir} }, "A piece isn't on plain Floor"},
+		{"unused group", func(m *MapDefinition) { m.Cells[12].Group = 1 }, "A cell has a color it can't use"},
+		{"Barrier group", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 12, B: 13, Group: 1}} }, "A Barrier has a color it can't use"},
+		{"Breakable Barrier group", func(m *MapDefinition) { m.Edges = []MapEdge{{A: 12, B: 13, Kind: BreakableBarrier, Group: 1}} }, "A Breakable Barrier has a color it can't use"},
 		{"Breakable Barrier on Wall", func(m *MapDefinition) {
 			m.Cells[12].Terrain = Wall
 			m.Edges = []MapEdge{{A: 12, B: 13, Kind: BreakableBarrier}}
-		}, "need Floor or Landfill on both sides"},
+		}, "A Breakable Barrier can't stand here"},
 		{"duplicate edge", func(m *MapDefinition) {
 			m.Edges = []MapEdge{{A: 12, B: 13}, {A: 13, B: 12}}
-		}, "Only one Barrier or Gate"},
+		}, "Two pieces share an edge"},
 		{"edge on Wall", func(m *MapDefinition) {
 			m.Cells[12].Terrain = Wall
 			m.Edges = []MapEdge{{A: 12, B: 13}}
-		}, "need Floor or Landfill on both sides"},
-		{"corner dead end", func(m *MapDefinition) { m.Cells[1].Terrain = Wall }, "capacity of at least two"},
+		}, "A Barrier can't stand here"},
+		{"corner dead end", func(m *MapDefinition) { m.Cells[1].Terrain = Wall }, "A cell's capacity is below two"},
 		{"isolated Floor", func(m *MapDefinition) {
 			for _, i := range []int{7, 11, 13, 17} {
 				m.Cells[i].Terrain = Wall
 			}
-		}, "All Floor must connect"},
+		}, "Part of the map is cut off"},
 		{"weak Breakable Wall", func(m *MapDefinition) {
 			m.Cells[0].Terrain, m.Cells[1].Terrain = BreakableWall, Wall
-		}, "Breakable Wall needs"},
+		}, "A Breakable Wall has Floor on fewer than two sides"},
 		{"no Floor", func(m *MapDefinition) {
 			for i := range m.Cells {
 				m.Cells[i].Terrain = Void
 			}
-		}, "Map needs playable Floor"},
+		}, "The map has no Floor to play on"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -285,7 +285,7 @@ func TestMapEnclosedFloorConnectivity(t *testing.T) {
 				if g.TerrainAt(2*m.Rows+4) != BreakableWall || g.Geo.Cap[3*m.Rows+3] != 2 {
 					t.Fatal("connectivity validation changed the starting terrain or capacity")
 				}
-			} else if !slices.ContainsFunc(issues, func(issue MapIssue) bool { return strings.Contains(issue.Message, "All Floor must connect") }) {
+			} else if !slices.ContainsFunc(issues, func(issue MapIssue) bool { return strings.Contains(issue.Message, "Part of the map is cut off") }) {
 				t.Fatalf("permanent enclosure must remain invalid: %v", issues)
 			}
 			if m.Cells[2*m.Rows+4].Terrain != terrain {
@@ -355,7 +355,7 @@ func TestMapGateFloorGroups(t *testing.T) {
 					}
 					var badEdges []int
 					for _, issue := range issues {
-						if strings.Contains(issue.Message, "Floor group") {
+						if strings.Contains(issue.Message, "A Gate's switches are all out of reach") {
 							badEdges = append(badEdges, issue.Edges...)
 							if len(issue.Cells) != 1 || !m.Cells[issue.Cells[0]].Circuit.IsSwitch() {
 								t.Fatalf("Gate issue must identify its switch: %+v", issue)

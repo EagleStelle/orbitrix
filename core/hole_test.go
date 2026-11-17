@@ -69,16 +69,16 @@ func TestHoleValidation(t *testing.T) {
 	}
 	corner := holeMap()
 	corner.Edges = []MapEdge{{A: 0, B: 1, Kind: Barrier}, {A: 0, B: 5, Kind: BreakableBarrier}}
-	const enclosed = "A Hole needs a Floor side without a Barrier"
+	const enclosed = "Barriers seal a Hole off"
 	for name, tc := range map[string]struct {
 		m       MapDefinition
 		want    string
 		present bool
 	}{
-		"Holes do not connect Floor": {split, "All Floor must connect", true},
-		"edge between Holes":         {pit, "need Floor or Landfill on both sides", true},
-		"feature on a Hole":          {feature, "Features need Floor", true},
-		"Barrier beside a Hole":      {sealed(Barrier), "Floor on both sides", false},
+		"Holes do not connect Floor": {split, "Part of the map is cut off", true},
+		"edge between Holes":         {pit, "A Barrier can't stand here", true},
+		"feature on a Hole":          {feature, "A piece isn't on plain Floor", true},
+		"Barrier beside a Hole":      {sealed(Barrier), "can't stand here", false},
 		"one open Floor side":        {sealed(Barrier, Barrier, BreakableBarrier), enclosed, false},
 		"sealed by Barriers":         {sealed(Barrier, Barrier, BreakableBarrier, Barrier), enclosed, true},
 		"a Gate keeps it open":       {sealed(Barrier, Barrier, Barrier, Gate), enclosed, false},
@@ -97,7 +97,7 @@ func TestHoleValidation(t *testing.T) {
 func TestEstimate(t *testing.T) {
 	marked := func(m MapDefinition) []int {
 		for _, issue := range m.Validate() {
-			if strings.HasPrefix(issue.Message, "Too many") {
+			if strings.HasPrefix(issue.Message, "Games would") {
 				return issue.Cells
 			}
 		}
