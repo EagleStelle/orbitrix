@@ -330,6 +330,16 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		if c.tail {
 			p.seatView.Offset = p.seatView.MaxScroll()
 		}
+		if c.hover == "knock" { // seat 1 put out the human; two more knockouts follow in bars of their own
+			p.outs = [][2]int{{1, 0}, {1, 2}, {3, 3}}
+			p.tickOuts(a)
+			p.snack.ticks, overlay = snackIn, p
+		}
+		if c.hover == "knock-self" {
+			p.outs = [][2]int{{3, 3}}
+			p.tickOuts(a)
+			p.snack.ticks, overlay = snackIn, p
+		}
 		p.layoutScrolled(a)
 		p.draw(out, a)
 	} else if c.screen == "" {
@@ -483,6 +493,11 @@ func TestCaptureSetup(t *testing.T) {
 		{name: "chip-play-12p-dark", w: 1040, h: 640, players: 12, play: true, hover: "out", dark: true, tail: true},
 		{name: "chip-play-landscape-short", w: 780, h: 360, players: 12, cols: 30, rows: 18, play: true, hover: "out", tail: true},
 		{name: "chip-play-portrait", w: 360, h: 740, players: 12, cols: 13, rows: 18, play: true, hover: "out", dark: true},
+		{name: "knock-desktop", w: 1440, h: 900, players: 6, play: true, hover: "knock"},
+		{name: "knock-teams-dark", w: 1040, h: 640, players: 12, play: true, teams: 3, hover: "knock", dark: true, player: "Bartholomew"},
+		{name: "knock-mobile", w: 390, h: 844, players: 8, play: true, hover: "knock"},
+		{name: "knock-mobile-teams-dark", w: 390, h: 844, players: 12, play: true, teams: 3, hover: "knock", dark: true, player: "Bartholomew The 2"},
+		{name: "knock-landscape-self", w: 844, h: 390, players: 8, play: true, hover: "knock-self"},
 		{name: "rail-desktop", w: 1440, h: 900, players: 6, play: true, hover: "out"},
 		{name: "rail-desktop-teams", w: 1440, h: 900, players: 12, play: true, teams: 3, hover: "out", turn: 4},
 		{name: "rail-desktop-teams-dark", w: 1040, h: 640, players: 12, play: true, teams: 6, dark: true, turn: 7},

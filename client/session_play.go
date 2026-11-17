@@ -53,6 +53,7 @@ func (p *playScene) pumpNet(a *app) bool {
 			p.game, p.b, p.seq = g, boardview.New(g), n.snap.Seq
 			p.resync, p.sent, p.pace, p.lv = false, false, -1, ui.Rect{}
 			p.settle()
+			p.outs, p.snack = nil, snackbar{} // as in a game joined under way
 		}
 		n.snap = nil
 	}

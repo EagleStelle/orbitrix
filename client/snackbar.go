@@ -18,6 +18,8 @@ type snackbar struct {
 	timeout, age  int     // timeout 0 keeps the snackbar visible until its owner dismisses it
 	avoid         ui.Rect // a fixed action row to keep clear, or zero
 	span          ui.Rect // the column to centre in, or zero for the safe area
+	// content draws the bar's inside in place of message, more and actions, at the bar's opacity.
+	content func(dst *ebiten.Image, a *app, bar ui.Rect, opacity float64)
 }
 
 func (s *snackbar) frame(a *app) (bar ui.Rect, buttons [2]ui.Rect, opacity float64) {
@@ -39,6 +41,9 @@ func (s *snackbar) frame(a *app) (bar ui.Rect, buttons [2]ui.Rect, opacity float
 	buttons[1] = ui.Rect{X: bar.Right() - 104*u, Y: bar.Cy() - 20*u, W: 96 * u, H: 40 * u}
 	buttons[0] = ui.Rect{X: buttons[1].X - 68*u, Y: buttons[1].Y, W: 64 * u, H: 40 * u}
 	p := min(1, float64(s.ticks)/snackIn)
+	if s.timeout > 0 { // a timed bar sinks away as it rose, so the next one reads as a bar of its own
+		p = min(p, float64(s.timeout-s.age)/snackIn)
+	}
 	opacity = 1 - (1-p)*(1-p)*(1-p)
 	dy := min((1-opacity)*16*u, limit-bar.Bottom())
 	bar.Y += dy
@@ -76,6 +81,10 @@ func (s *snackbar) draw(dst *ebiten.Image, a *app) {
 	bar, buttons, opacity := s.frame(a)
 	sc, f, u := a.sc, &a.f, a.u
 	ui.FillPill(dst, bar, ui.WithAlpha(sc.Ink, opacity))
+	if s.content != nil {
+		s.content(dst, a, bar, opacity)
+		return
+	}
 	if s.actions == [2]string{} && s.more == "" {
 		lines := wrap(s.message, f.Small, max(1, bar.W-48*u))
 		for i, l := range lines {

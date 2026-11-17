@@ -21,6 +21,7 @@ const (
 	iconExport        // an arrow out of a tray
 	iconDelete        // a bin
 	iconUse           // a check
+	iconShot          // an orb flying right, speed lines behind it: a knockout, 28 px wide
 
 	// The Rules card's options, drawn bolder and cached by gameBlock.renderIcons.
 	iconDevice   // a phone
@@ -159,6 +160,13 @@ func drawIcon(dst *ebiten.Image, icon int, x, y, u float64, ink, ground color.RG
 	case iconUse:
 		ui.Line(dst, x-8*u, y+u, x-2.5*u, y+6.5*u, 2.75*u, ink)
 		ui.Line(dst, x-2.5*u, y+6.5*u, x+8*u, y-5.5*u, 2.75*u, ink)
+	case iconShot:
+		// Pointing one way, so the player left of it reads as the one who put out the player right of it.
+		w = 3 * u
+		ui.FillCircle(dst, x+7*u, y, 6.5*u, ink)
+		line(-13, 0, -3, 0)
+		line(-10, -6, -2, -6)
+		line(-10, 6, -2, 6)
 	}
 }
 

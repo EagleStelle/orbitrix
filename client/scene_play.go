@@ -96,6 +96,10 @@ type playScene struct {
 	medal        [2][core.MaxPlayers]int    // a seat's index in ui.Medals, or past them for none
 	tab          int                        // the board an upright screen shows
 
+	// The knockout snackbars: tally queues who put whom out, and tickOuts shows them one after another.
+	outs  [][2]int // the mover, or -1 for nobody, and the seat that went out
+	snack snackbar
+
 	// Online: the room this game is played in. Moves arrive from the host instead of being made here.
 	net      *session
 	seq      uint32 // moves played on this board
@@ -186,6 +190,7 @@ func newPlayOn(a *app, g *core.Game, seats []int, labels []string, items []int) 
 	}
 	p.orbsMax = strings.Repeat("8", len(strconv.Itoa(most)))
 	p.settle()
+	p.outs = nil // seats already out of a game under way are old news
 	p.spin = p.wedgeAngle(p.shown)
 	return p
 }
@@ -216,7 +221,8 @@ func (p *playScene) settle() {
 }
 
 // tally notes the seats that went out since it last ran, and credits mover with each of them but itself. A seat
-// nobody put out (mover -1) is nobody's knockout.
+// nobody put out (mover -1) is nobody's knockout. Each goes to the knockout snackbar, but for the move that ends
+// the game: the results are up before a bar could be read.
 // shortcut: kept by this screen, so a player who joins or resyncs mid-game misses earlier knockouts; move the tally
 // into core's snapshot if that matters.
 func (p *playScene) tally(mover int) {
@@ -226,8 +232,114 @@ func (p *playScene) tally(mover int) {
 			if mover >= 0 && mover != i {
 				p.kills[mover]++
 			}
+			if !p.game.Over() {
+				p.outs = append(p.outs, [2]int{mover, i})
+			}
 		}
 	}
+}
+
+// The knockout snackbar: ticks a bar stays up, and the space between a seat's dot, chip and name, and between the
+// seats and the shot, in px.
+const (
+	knockTicks   = 3 * 60
+	knockGap     = 6
+	knockIconGap = 12
+	knockIconW   = 28
+)
+
+// tickOuts runs the knockout snackbars: a bar of its own for each knockout, one after another, each held back until
+// the board shows that player's last orb gone, so a chain still playing gives nothing away. It sits on the board's
+// foot, above an upright screen's legend and name, as wide as what it says; taps go through it to the cells.
+func (p *playScene) tickOuts(a *app) {
+	if len(p.outs) == 0 {
+		return
+	}
+	if p.snack.timeout == 0 {
+		if p.b.Playing && p.orbs[p.outs[0][1]] > 0 {
+			return
+		}
+		p.snack = snackbar{timeout: knockTicks, content: p.drawKnock}
+	}
+	fixed, names := p.knockWidth(a)
+	board := p.boardView.Viewport
+	p.snack.span = ui.Rect{X: board.Cx() - (fixed+names)/2, W: fixed + names}
+	p.snack.avoid = ui.Rect{}
+	if a.portrait() {
+		if p.snack.avoid = p.name; p.peek[2].H > 0 {
+			p.snack.avoid = p.peek[2]
+		}
+	}
+	p.snack.update(a)
+	if p.snack.expired() {
+		p.outs, p.snack = p.outs[1:], snackbar{}
+	}
+}
+
+func (p *playScene) snackbar() *snackbar {
+	if p.snack.timeout == 0 || p.paused || p.roster || p.watch != nil || p.goneP >= 0 || p.over && !p.b.Playing {
+		return nil
+	}
+	return &p.snack
+}
+
+// knockPair is the knockout the snackbar shows: the seat put out, and the seat that did it, or -1 where nobody
+// else did.
+func (p *playScene) knockPair() (by, out int) {
+	by, out = p.outs[0][0], p.outs[0][1]
+	if by == out {
+		by = -1
+	}
+	return
+}
+
+// knockWidth measures the knockout bar as drawKnock sets it out: everything but the names, and the names.
+func (p *playScene) knockWidth(a *app) (fixed, names float64) {
+	u := a.u
+	seat := (2*turnDot + knockGap) * u
+	if p.game.Mix != nil {
+		seat += teamChipW(a) + knockGap*u
+	}
+	by, out := p.knockPair()
+	fixed, names = (2*24+knockIconW+knockIconGap)*u+seat, ui.TextWidth(p.labels[out], a.f.Small)
+	if by >= 0 {
+		fixed, names = fixed+seat+knockIconGap*u, names+ui.TextWidth(p.labels[by], a.f.Small)
+	}
+	return
+}
+
+// drawKnock fills a knockout snackbar: the player who did it, a shot flying right, the player put out, each as their
+// dot, a team game's chip and their name. A player nobody else put out stands alone after the shot.
+func (p *playScene) drawKnock(dst *ebiten.Image, a *app, bar ui.Rect, alpha float64) {
+	u, ink := a.u, ui.WithAlpha(a.sc.Ground, alpha)
+	fixed, names := p.knockWidth(a)
+	// shortcut: names squeeze where two long ones don't fit a narrow phone; set them on two lines if that reads badly.
+	scale := min(1, (bar.W-fixed)/max(1, names))
+	x, cy := bar.X+24*u, bar.Cy()
+	seat := func(i int) {
+		r, c := turnDot*u, a.sc.Players[i]
+		ui.FillCircle(dst, x+r, cy, r+2*u, ink) // a rim, so an ink close to the bar's own still shows
+		ui.FillCircle(dst, x+r, cy, r, ui.WithAlpha(c, alpha))
+		if a.set.Marks {
+			ui.DrawMarkIn(dst, i, x+r, cy, r, ui.WithAlpha(ui.InkOn(c), alpha))
+		}
+		x += 2*r + knockGap*u
+		if p.game.Mix != nil {
+			chip := ui.Rect{X: x, Y: cy - ui.ChipHeight*u/2, W: teamChipW(a), H: ui.ChipHeight * u}
+			drawTeamChip(dst, a, chip, p.game.Team[i], ink, ink, false)
+			x += chip.W + knockGap*u
+		}
+		ui.DrawScaledText(dst, p.labels[i], a.f.Small, x, cy, text.AlignStart, scale, ink)
+		x += ui.TextWidth(p.labels[i], a.f.Small) * scale
+	}
+	by, out := p.knockPair()
+	if by >= 0 {
+		seat(by)
+		x += knockIconGap * u
+	}
+	drawIcon(dst, iconShot, x+knockIconW/2*u, cy, u, ink, ink)
+	x += (knockIconW + knockIconGap) * u
+	seat(out)
 }
 
 // rank sets out the results: the stats, and each board's order, words and medals. Seats level on a board share a
@@ -501,6 +613,7 @@ func (p *playScene) advance(a *app) {
 	wasPlaying := p.b.Playing
 	p.b.Tick(a.snd)
 	p.tickRail()
+	p.tickOuts(a)
 	if wasPlaying && !p.b.Playing {
 		p.settle()
 	}
