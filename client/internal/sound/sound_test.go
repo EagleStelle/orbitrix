@@ -160,11 +160,11 @@ func TestCombinedSoundsKeepFifteenVoiceLimit(t *testing.T) {
 	s, _, peak := testSound()
 	for k := range 30 {
 		s.last = time.Now().Add(-minGap)
-		s.Wave(k, 16, 1<<len(effectTones)-1)
+		s.Wave(k, 16, 1<<len(s.effects)-1)
 		if *peak > 15 {
 			t.Fatalf("simultaneous voices reached %d", *peak)
 		}
-		for i := range min(5, len(s.voices)-len(effectTones)) {
+		for i := range min(5, len(s.voices)-len(s.effects)) {
 			if !s.notes[k%7+2*i].IsPlaying() {
 				t.Fatal("voice stealing cut a note from the current burst")
 			}
@@ -199,6 +199,9 @@ func TestEffectPCMIsTunedDistinctAndFaded(t *testing.T) {
 		if len(pcm) != 4*int(tone.length*sampleRate) {
 			t.Fatalf("effect %d has an invalid stereo PCM length", effect)
 		}
+		rendered = append(rendered, pcm)
+	}
+	for effect, pcm := range append(rendered, synthKnockout()) {
 		peak := 0
 		for i := 0; i < len(pcm); i += 4 {
 			left := int(int16(binary.LittleEndian.Uint16(pcm[i:])))
@@ -214,12 +217,11 @@ func TestEffectPCMIsTunedDistinctAndFaded(t *testing.T) {
 		if !bytes.Equal(pcm[:4], make([]byte, 4)) || !bytes.Equal(pcm[len(pcm)-4:], make([]byte, 4)) {
 			t.Fatalf("effect %d lacks silent attack/release endpoints", effect)
 		}
-		for _, previous := range rendered {
+		for _, previous := range rendered[:min(effect, len(rendered))] {
 			if bytes.Equal(pcm, previous) {
 				t.Fatalf("effect %d duplicates another cue", effect)
 			}
 		}
-		rendered = append(rendered, pcm)
 	}
 }
 
@@ -261,6 +263,7 @@ func TestGeneratedCuesHaveConsistentLoudness(t *testing.T) {
 	for i, name := range []string{"link", "latch", "toggle-on", "toggle-off", "hold-on", "hold-off", "wall-hit", "wall-break", "fall"} {
 		t.Run(name, func(t *testing.T) { check(t, synthEffect(effectTones[i])) })
 	}
+	t.Run("knockout", func(t *testing.T) { check(t, synthKnockout()) })
 }
 
 func TestNormalizeSilenceAndTransientHeadroom(t *testing.T) {
@@ -289,10 +292,11 @@ func TestDenseNormalizedBurstsKeepMixHeadroom(t *testing.T) {
 	for _, tone := range effectTones {
 		pcm = append(pcm, synthEffect(tone))
 	}
+	pcm = append(pcm, synthKnockout())
 	for _, cells := range []int{1, 16} {
 		for k := range 7 {
 			s, players, _ := testSound()
-			s.Wave(k, cells, Link|Latch|ToggleOn|ToggleOff|HoldOn|HoldOff|WallHit|WallBreak|Fall|LandfillFull)
+			s.Wave(k, cells, Link|Latch|ToggleOn|ToggleOff|HoldOn|HoldOff|WallHit|WallBreak|Fall|LandfillFull|Knockout)
 			for frame := range int(noteLength * sampleRate) {
 				mix := 0.0
 				for i, p := range players {

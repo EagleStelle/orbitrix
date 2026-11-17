@@ -16,6 +16,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"orbitrix/client/internal/boardview"
+	"orbitrix/client/internal/sound"
 	"orbitrix/client/internal/ui"
 	"orbitrix/client/platform"
 	"orbitrix/core"
@@ -260,6 +261,7 @@ func (p *playScene) tickOuts(a *app) {
 			return
 		}
 		p.snack = snackbar{timeout: knockTicks, content: p.drawKnock}
+		a.snd.Effect(sound.Knockout)
 	}
 	fixed, names := p.knockWidth(a)
 	board := p.boardView.Viewport
@@ -615,7 +617,10 @@ func (p *playScene) advance(a *app) {
 	p.tickRail()
 	p.tickOuts(a)
 	if wasPlaying && !p.b.Playing {
-		p.settle()
+		over := p.over
+		if p.settle(); p.over && !over {
+			a.snd.Effect(sound.Knockout) // the winning move's knockouts get no bar, but are heard
+		}
 	}
 	if p.net != nil {
 		p.playNet(a)

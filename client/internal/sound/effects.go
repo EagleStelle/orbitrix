@@ -20,6 +20,7 @@ const (
 	Spring
 	Shield
 	Turret
+	Knockout // a player put out; synthKnockout renders it, after the effectTones
 )
 
 type effectTone struct {
@@ -45,6 +46,48 @@ var effectTones = [...]effectTone{
 	{[3]int{7, 11, -1}, .28, .001, .05, .06, [4]float64{1, .2, .65, .2}},     // Spring: a reed boing rising, E5 to D6
 	{[3]int{5, 8, 12}, .4, .006, .12, .03, [4]float64{1, .6, .1, .3}},        // Shield: a bright hum sweeping up and ringing, C5 G5 E6
 	{[3]int{0, 9, -1}, .3, .001, .05, .05, [4]float64{1, .5, .3, .2}},        // Turret: a woody thump and its shell's ping, C4 then A5
+}
+
+// synthKnockout renders a player put out, longer and heavier than any map cue: a hit sagging an octave onto C4,
+// A6, G6 and E6 cracking over it, the whole scale falling from A6 to C4, and C4 and G4 aching underneath, each
+// against a slightly flat twin that throbs fast at first and slows like a fading pulse.
+func synthKnockout() []byte {
+	const length = 2.6
+	n := int(length * sampleRate)
+	hz := func(note int) float64 { return 440 * math.Pow(2, float64(pentatonic[note]-69)/12) }
+	mono := make([]float64, n)
+	phase, peak := 0.0, 0.0
+	for i := range n {
+		t := float64(i) / sampleRate
+		phase += 2 * math.Pi * hz(0) * (1 + math.Exp(-t/.05)) / sampleRate // C5 sagging to C4
+		v := 1.4 * (math.Sin(phase) + .5*math.Sin(2*phase)) * min(1, t/.002) * math.Exp(-t/.35)
+		for _, note := range [...]int{14, 13, 12} {
+			v += .35 * math.Sin(2*math.Pi*hz(note)*t) * min(1, t/.001) * math.Exp(-t/.04)
+		}
+		for k := range len(pentatonic) {
+			s := t - .1 - float64(k)*.05
+			if s < 0 {
+				break
+			}
+			f := hz(len(pentatonic) - 1 - k)
+			v += .45 * (math.Sin(2*math.Pi*f*s) + .3*math.Sin(4*math.Pi*f*s)) * min(1, s/.002) * math.Exp(-s/.09)
+		}
+		if s := t - .15; s > 0 {
+			env := min(1, s/.25) * math.Exp(-s/1)
+			drift := s + 3*.6*(1-math.Exp(-s/.6)) // the twin's flatness integrated: 4 Hz of beating easing to 1 Hz
+			for _, note := range [...]int{0, 3} {
+				v += .5 * env * (math.Sin(2*math.Pi*hz(note)*s) + math.Sin(2*math.Pi*(hz(note)*s-drift)))
+			}
+		}
+		mono[i] = v * min(1, float64(n-1-i)/(.05*sampleRate))
+		peak = max(peak, math.Abs(mono[i]))
+	}
+	buf := make([]byte, 4*n)
+	for i, v := range mono {
+		x := uint16(int16(v / peak * .65 * math.MaxInt16))
+		buf[4*i], buf[4*i+1], buf[4*i+2], buf[4*i+3] = byte(x), byte(x>>8), byte(x), byte(x>>8)
+	}
+	return normalize(buf)
 }
 
 func synthEffect(tone effectTone) []byte {

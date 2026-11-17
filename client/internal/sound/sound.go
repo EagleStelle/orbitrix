@@ -29,7 +29,7 @@ type player interface {
 // Sound shares a 15-voice limit and a global minimum gap across notes and map effects.
 type Sound struct {
 	notes   [len(pentatonic)]player
-	effects [len(effectTones)]player
+	effects [len(effectTones) + 1]player // the effectTones, then Knockout
 	voices  [len(pentatonic)]player
 	used    [len(pentatonic)]uint64
 	serial  uint64
@@ -49,6 +49,7 @@ func New() *Sound {
 	for i, tone := range effectTones {
 		s.effects[i] = ctx.NewPlayerFromBytes(synthEffect(tone))
 	}
+	s.effects[len(effectTones)] = ctx.NewPlayerFromBytes(synthKnockout())
 	return s
 }
 
