@@ -153,6 +153,11 @@ Decisions that future changes have to respect, and why. How things work is in [a
 - The editor keeps a compact desktop list, category-based short-landscape list, and portrait icon-and-label shelf.
   The inspector shows functional help and the pair/circuit swatch without duplicating the selected name or icon.
   Physical-phone touch painting and camera-to-import behavior remain unverified on hardware.
+- Sound is one song, not separate effects. A new cue is an `effectTones` entry: tones of the current chord and
+  note delays in half beats, never a fixed pitch, so any cues that sound together form the chord. It goes through
+  `normalize`, and no cue may need the peak ceiling to reach the shared loudness: lower `loudTarget` for all
+  instead. Seats have no pitch of their own; placements follow the progression. Sounds wait for the beat and merge,
+  never drop, which is what keeps fast and skipped chains musical.
 
 ## Platforms
 

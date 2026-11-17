@@ -12,11 +12,23 @@ import (
 const (
 	sampleRate = 44100
 	noteLength = 0.8 // seconds
-	minGap     = 100 * time.Millisecond
+	beat       = 100 * time.Millisecond
+	burstGain  = 0.8 // a whole burst at full volume, whatever it holds
 )
 
 // pentatonic is C major pentatonic (C D E G A) over three octaves from C4, as MIDI note numbers.
 var pentatonic = [...]int{60, 62, 64, 67, 69, 72, 74, 76, 79, 81, 84, 86, 88, 91, 93}
+
+// chords is the song every sound follows, a looped progression: each chord's nine tones in pentatonic, low to high.
+var chords = [...][9]int{
+	{0, 2, 3, 5, 7, 8, 10, 12, 13}, // C: C E G
+	{0, 2, 4, 5, 7, 9, 10, 12, 14}, // Am: C E A
+	{1, 3, 4, 6, 8, 9, 11, 13, 14}, // Dsus4: D G A
+	{0, 1, 3, 5, 6, 8, 10, 11, 13}, // Gsus4: C D G
+}
+
+// roots are the placement notes, the progression's bass line C5 A4 D5 G4.
+var roots = [len(chords)]int{5, 4, 6, 3}
 
 type player interface {
 	SetVolume(float64)
@@ -26,32 +38,48 @@ type player interface {
 	IsPlaying() bool
 }
 
-// Sound shares a 15-voice limit and a global minimum gap across notes and map effects.
+// burst is what sounds together on one beat.
+type burst struct {
+	effects Effects
+	cells   int  // exploding cells of every wave merged into the beat
+	placed  bool // a placement note
+	closing bool // a chain's last wave is among them
+}
+
+// Sound shares a 15-voice limit and one beat across notes and map effects.
 type Sound struct {
-	notes   [len(pentatonic)]player
-	effects [len(effectTones) + 1]player // the effectTones, then Knockout
-	voices  [len(pentatonic)]player
-	used    [len(pentatonic)]uint64
-	serial  uint64
-	last    time.Time
-	pending Effects
-	Muted   bool
-	Volume  float64 // master volume, 0..1
+	notes    [len(pentatonic)]player
+	effects  [len(chords)][len(effectTones)]player
+	knockout player
+	voices   [len(pentatonic)]player
+	used     [len(pentatonic)]uint64
+	serial   uint64
+	last     time.Time
+	wait     burst // held for the next beat
+	step     int   // note bursts played: the song's place in chords
+	lift     int   // waves played in this chain, raising the voicing
+	Muted    bool
+	Volume   float64 // master volume, 0..1
 }
 
 // New creates the audio context and synthesizes every note once.
 func New() *Sound {
 	ctx := audio.NewContext(sampleRate)
 	s := &Sound{}
-	for i, midi := range pentatonic {
-		s.notes[i] = ctx.NewPlayerFromBytes(synth(440 * math.Pow(2, float64(midi-69)/12)))
+	for i := range pentatonic {
+		s.notes[i] = ctx.NewPlayerFromBytes(synth(hz(i)))
 	}
-	for i, tone := range effectTones {
-		s.effects[i] = ctx.NewPlayerFromBytes(synthEffect(tone))
+	for chord := range chords {
+		for i, tone := range effectTones {
+			s.effects[chord][i] = ctx.NewPlayerFromBytes(synthEffect(tone, chord))
+		}
 	}
-	s.effects[len(effectTones)] = ctx.NewPlayerFromBytes(synthKnockout())
+	s.knockout = ctx.NewPlayerFromBytes(synthKnockout())
 	return s
 }
+
+// hz is the frequency of a pentatonic note.
+func hz(note int) float64 { return 440 * math.Pow(2, float64(pentatonic[note]-69)/12) }
 
 // synth renders one note as 16-bit stereo PCM: a sine with soft 2nd and 3rd harmonics, a 6 ms attack and an
 // exponential decay, faded out over the last 20 ms so it never clicks.
@@ -69,65 +97,84 @@ func synth(freq float64) []byte {
 	return normalize(buf)
 }
 
-// Place plays one note for an orb placed by player: each seat has its own pitch in the middle octave.
-func (s *Sound) Place(player int, effects Effects) { s.chord(5+player%5, 1, effects) }
+// Place plays the next chord's root for a placed orb, so a match's moves walk the bass line.
+func (s *Sound) Place(effects Effects) { s.queue(burst{effects: effects, placed: true}) }
 
-// Wave plays a chord for the k-th explosion wave of a chain: 1 note for a single cell up to 5 notes for 16 or
-// more, rooted higher as the chain goes on so long chains climb and wrap.
-func (s *Sound) Wave(k, cells int, effects Effects) {
-	s.chord(k%7, min(5, bits.Len(uint(cells))), effects)
+// Wave plays the next chord for an explosion wave of a chain: 1 note for a single cell up to 5 notes for 16 or
+// more, voiced higher as the chain goes on. A chain's last wave lands on C.
+func (s *Sound) Wave(cells int, last bool, effects Effects) {
+	s.queue(burst{effects: effects, cells: cells, closing: last})
 }
 
 // Effect plays terrain changes when there is no following explosion wave.
-func (s *Sound) Effect(effects Effects) { s.chord(0, 0, effects) }
+func (s *Sound) Effect(effects Effects) { s.queue(burst{effects: effects}) }
 
-// Update drains coalesced map cues after the minimum gap, including the last wave's effects.
-func (s *Sound) Update() {
-	if s != nil && s.pending != 0 {
-		s.chord(0, 0, 0)
-	}
-}
+// Update plays what waits for the beat, including the last wave's.
+func (s *Sound) Update() { s.queue(burst{}) }
 
-// chord plays n notes stacked two scale steps apart from root. A nil sound plays nothing (the Home demo board).
-func (s *Sound) chord(root, n int, effects Effects) {
+// queue merges b into the waiting burst and plays it on the beat: at once after a pause, else on the next 100 ms.
+// A nil sound plays nothing (the Home demo board).
+func (s *Sound) queue(b burst) {
 	if s == nil {
 		return
 	}
 	if s.Muted || s.Volume == 0 {
-		s.pending = 0
+		s.wait = burst{}
 		return
 	}
-	effects |= s.pending
-	if n == 0 && effects == 0 {
+	waited := s.wait != burst{}
+	b.effects, b.cells = b.effects|s.wait.effects, b.cells+s.wait.cells
+	b.placed, b.closing = b.placed || s.wait.placed, b.closing || s.wait.closing
+	if b == (burst{}) {
 		return
 	}
 	now := time.Now()
-	if now.Sub(s.last) < minGap {
-		s.pending = effects
+	if now.Sub(s.last) < beat {
+		s.wait = b
 		return
 	}
-	s.pending = 0
-	s.last = now
-	count := bits.OnesCount16(uint16(effects))
+	s.wait = burst{}
+	if s.last = s.last.Add(beat); !waited || now.Sub(s.last) >= beat {
+		s.last = now // only a burst that waited keeps the running pulse even
+	}
+	if b.placed {
+		s.lift = 0
+	}
+	count := bits.OnesCount16(uint16(b.effects))
+	chord, n := max(s.step-1, 0)%len(chords), 0 // cues alone join the chord still ringing
+	if b.cells > 0 || b.placed {
+		if b.closing {
+			s.step = 0
+		}
+		chord, n = s.step%len(chords), 1
+		s.step++
+	}
+	if b.cells > 0 {
+		n = min(5, bits.Len(uint(b.cells)))
+	}
 	n = min(n, len(s.voices)-count) // a burst of every cue gives up chord notes rather than steal its own voices
-	noteVolume := 0.55 / math.Sqrt(float64(max(1, n))) * s.Volume
-	effectVolume := 0.55 / math.Sqrt(float64(max(1, count))) * s.Volume
+	noteVolume := burstGain / math.Sqrt(float64(max(1, n))) * s.Volume
+	effectVolume := burstGain / math.Sqrt(float64(max(1, count))) * s.Volume
 	// Split power equally between orbs and map cues so larger chords cannot bury a single effect.
 	if n > 0 && count > 0 {
 		noteVolume *= math.Sqrt(0.5)
 		effectVolume *= math.Sqrt(0.5)
 	}
-	for i := range n {
-		note := root + 2*i
-		if note >= len(s.notes) {
-			break
+	if b.cells > 0 {
+		for i := range n {
+			s.play(s.notes[chords[chord][s.lift%5+i]], noteVolume)
 		}
-		s.play(s.notes[note], noteVolume)
+		s.lift++
+	} else if n > 0 {
+		s.play(s.notes[roots[chord]], noteVolume)
 	}
-	for i, p := range s.effects {
-		if effects&(1<<i) != 0 {
+	for i, p := range s.effects[chord] {
+		if b.effects&(1<<i) != 0 {
 			s.play(p, effectVolume)
 		}
+	}
+	if b.effects&Knockout != 0 {
+		s.play(s.knockout, effectVolume)
 	}
 }
 

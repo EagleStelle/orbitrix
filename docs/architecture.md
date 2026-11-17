@@ -66,10 +66,14 @@ An Ebitengine game with one scene at a time: Home, Setup (which is also the host
 - Bots think on a goroutine against a copy of the game; the 300 to 600 ms delay before a bot's move is presentation only.
 - Audio: C major pentatonic notes, C4 to A6, generated at startup as PCM. Links and Portal traversals share glass chimes; Latch, Toggle and
   Hold use distinct keyed/reed/mallet voices, with lower release notes for Toggle and Hold. Wall damage uses a woody
-  knock; destruction uses a falling three-note crumble. Startup synthesis matches each cue's loudest 50 ms RMS
-  window to 0.18 full scale, capped at a 0.65 peak. Orb chords and map cues share burst power equally, so large
-  chords cannot bury individual effects. Duplicate cues coalesce, with a global 100 ms minimum gap and at most
-  15 playing voices. Rate-limited map cues wait for the next burst; the game update drains final-wave cues too.
+  knock; destruction uses a falling three-note crumble. Every sound follows one looped chord progression (C, Am,
+  Dsus4, Gsus4): a placement plays the next chord's root, a wave the next chord, a chain's last wave lands on C,
+  and each map cue is rendered once per chord so it plays that chord's tones. Sounds share a 100 ms beat: one after
+  a pause plays at once, one inside the beat waits for the next, and waves landing in the same beat merge into one
+  chord, so fast and skipped chains keep an even pulse. Startup synthesis brings every buffer to one A-weighted
+  level over its loudest 200 ms. Every burst has the same total power, shared equally by orb chords and map cues,
+  so large chords cannot bury individual effects. At most 15 voices play; the game update drains waiting bursts,
+  final-wave cues too.
 - Settings: JSON written through a temporary file, through `client/platform`.
 - Client ownership: `scene_*.go` holds screens and orchestration; `client/internal/ui` owns shared presentation primitives and controls, and `client/internal/boardview` owns board drawing and wave replay. Shared UI takes presentation/input values instead of application state. `client/internal/sound` owns synthesis and playback; `client/internal/mapstore` owns map library validation and transactional writes through injected storage functions. See [the client guide](../client/README.md).
 - Screens that don't change redraw only on input (and every 30 ticks as a backstop), except on Android, where skipped frames flicker.

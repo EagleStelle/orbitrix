@@ -299,7 +299,7 @@ func (b *Board) Start(cell int, mover int8, waves []core.Wave, produceAt int, sn
 	if !b.settling {
 		_, produced = b.next() // a Furnace's orb made now shares the placement note
 	}
-	snd.Place(int(mover), effects|produced|b.linkSound())
+	snd.Place(effects | produced | b.linkSound())
 }
 
 // dropTaken drops the orbs on the cells the last terrain step took away, a broken floor, a collapsed Sinkhole or an
@@ -465,9 +465,9 @@ func (b *Board) landfillFalling() bool {
 func (b *Board) stepSound(snd *sound.Sound, made bool, effects sound.Effects) {
 	switch {
 	case b.Playing && len(b.Waves[b.Wave]) > b.State.shots: // Turrets firing alone play their cue, no chord
-		snd.Wave(b.Wave, len(b.Waves[b.Wave])-b.State.shots, effects)
+		snd.Wave(len(b.Waves[b.Wave])-b.State.shots, b.Wave == len(b.Waves)-1, effects)
 	case made:
-		snd.Place(int(b.mover), effects)
+		snd.Place(effects)
 	default:
 		snd.Effect(effects)
 	}
