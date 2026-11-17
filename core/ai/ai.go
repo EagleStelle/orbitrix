@@ -77,15 +77,16 @@ type Bot struct {
 	made int32 // orbs our working Furnaces make minus those our Crushers eat after any move
 	pops bool  // one of our working Furnaces explodes after any move
 
-	sim   core.Game
-	moves []int
-	list  []scored
-	ties  []int
-	mark  []bool
-	queue []int16
-	dist  [3][]int16
-	bets  [3][]bet
-	cands []int
+	sim    core.Game
+	belief core.Game // in the fog, the game as the player to move knows it
+	moves  []int
+	list   []scored
+	ties   []int
+	mark   []bool
+	queue  []int16
+	dist   [3][]int16
+	bets   [3][]bet
+	cands  []int
 
 	frontier []float64 // Raider: enemy fill within two steps of each cell
 
@@ -112,8 +113,22 @@ type scored struct {
 }
 
 // Choose returns the cell the player to move in g should play, or -1 if the game is over. The result depends only
-// on g, s, seed and budget (see DefaultBudget); an unknown strategy plays like Jester, as in the prototype.
+// on g, s, seed and budget (see DefaultBudget); an unknown strategy plays like Jester, as in the prototype. In the
+// fog it thinks on the game as its player knows it (core.Game.Believed).
 func (b *Bot) Choose(g *core.Game, s Strategy, seed uint64, budget int) int {
+	if !g.Fog {
+		return b.choose(g, s, seed, budget)
+	}
+	g.Believed(&b.belief, int8(g.Turn))
+	cell := b.choose(&b.belief, s, seed, budget)
+	if cell >= 0 && !g.Legal(cell) { // a cell beside unseen terrain can be playable only in the belief
+		b.moves = g.LegalMoves(b.moves[:0])
+		cell = b.pick(b.moves)
+	}
+	return cell
+}
+
+func (b *Bot) choose(g *core.Game, s Strategy, seed uint64, budget int) int {
 	b.moves = g.LegalMoves(b.moves[:0])
 	if len(b.moves) == 0 {
 		return -1

@@ -28,15 +28,18 @@ var gameRows = [...]struct {
 }{
 	{"Play on", []string{"This Device", "Same Wi-Fi", "Online"}, []int{iconDevice, iconWifi, iconOnline}, 0b111},
 	{"Mode", []string{"Turn-based", "Real-time"}, []int{iconTurns, iconRealtime}, 0b01},
-	{"Add-ons", []string{"Teams", "Drop", "Combine", "Fog of war", "Tiles"}, []int{iconTeams, iconDrop, iconCombine, iconFog, iconTiles}, 0b00001},
+	{"Add-ons", []string{"Teams", "Fog of war", "Drop", "Combine", "Tiles"}, []int{iconTeams, iconFog, iconDrop, iconCombine, iconTiles}, 0b00011},
 }
 
-// addonsOn are the add-ons a game has on, a bit per option of the Add-ons group.
-func addonsOn(teams bool) uint8 {
+// addonsOn are the add-ons a game has on, a bit per option of the Add-ons group: Teams, then Fog of war.
+func addonsOn(teams, fog bool) (on uint8) {
 	if teams {
-		return 1
+		on |= 1
 	}
-	return 0
+	if fog {
+		on |= 1 << 1
+	}
+	return on
 }
 
 // teamLetters name a team game's teams on the chip each seat carries, and teamNames in the menu the chip opens.

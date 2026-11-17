@@ -67,8 +67,8 @@ func TestSetupWhereRow(t *testing.T) {
 		t.Fatal("Same Wi-Fi must prepare a LAN room and keep the seats and board")
 	}
 	click(1, 1) // Real-time is not built
-	click(2, 0) // nor Drop
-	click(2, 2) // nor Fog of war
+	click(2, 2) // nor Drop
+	click(2, 3) // nor Combine
 	if a.next != nil || a.set.Where != whereWifi {
 		t.Fatal("unbuilt options must do nothing")
 	}

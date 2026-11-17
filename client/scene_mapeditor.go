@@ -957,8 +957,8 @@ func newMapTestSetup(a *app, back scene, m core.MapDefinition) *mapTestSetup {
 	m = m.Clone()
 	s.Map = &m
 	s.Cols, s.Rows = m.Cols, m.Rows
-	s.Teams, s.Team = false, nil   // a test game has no Rules card: every player for themselves
-	setup := &setupScene{menu: -1} // always on this device, whatever Setup last played
+	s.Teams, s.Team, s.Fog = false, nil, false // a test game has no Rules card: every player for themselves, in sight
+	setup := &setupScene{menu: -1}             // always on this device, whatever Setup last played
 	setup.test = true
 	return &mapTestSetup{setup: setup, settings: s, back: back}
 }

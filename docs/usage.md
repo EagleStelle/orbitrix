@@ -18,6 +18,19 @@ With the Teams add-on on, players keep their own colours and play in teams of ri
 - On a map, a device works for the colour with the most orbs in its cell, and a Vault's shield lets teammates' orbs in.
 - A player with no orbs left is out even while their team plays on. The game ends the moment only one team has orbs, and every player of that team wins.
 
+### Fog of war
+
+With the Fog of war add-on on, you see only around your orbs: every cell next to one of your cells, diagonals included, and in a team game around your teammates' too.
+
+- Your first orb goes anywhere. After that you may place only on cells you see.
+- Sight moves with the orbs: as your orbs fly, the fog opens around them and closes behind them, without waiting for them to land.
+- Cells you have never seen are covered by fog: their terrain, devices and orbs are unknown. Cells you have seen but can't see now show the map as you last saw it, under a veil: walls, doors and devices stay as they were then, and their orbs are hidden. Bots remember the map the same way. The fog is one mass; walls, barriers and gates you have seen stay drawn whole along its edge.
+- A rival's orb count is only what you see of it, marked with "~" in front (~3) while some of their orbs are out of sight, or "?" while you see none of them; the "~" goes once you see them all. The turn wheel's slices follow those counts. Who is out stays public. Chains out of sight are heard but get no "Chain ×N".
+- Bots play by the same sight: they see only around their own orbs and learn the map as they go.
+- A first orb into a cell that turns out to be blocked (a wall, a hole, another player's cell) just flashes; pick again.
+- On one device, each human sees their own side. When the turn passes to a human on another side, the board waits under "Pass to <name>" until they tap, and every count reads "?" meanwhile.
+- Once every human here is out, or the game is won, the fog lifts.
+
 ## Home
 
 Home shows the ORBITRIX wordmark, the twelve seat colours, a live bot game on the mat, and the round play button with the name bar to its right, with Maps, Settings and Exit under them. Exit is missing in the browser.
@@ -32,7 +45,7 @@ The play button (or Enter in the name bar) opens Setup.
 - Rules: square option tiles, each an icon over its label, in three groups stacked one a row.
   - Join a room, in the heading, is always there: it opens the join page, with Same Wi-Fi and Online tabs, a list of rooms and a code.
   - Play on: This Device (alone against bots, or with friends passing one device around), Same Wi-Fi (native LAN rooms, browser joining by QR, and browser rooms joined by invite and reply links) or Online (rooms through the site's server; in the web build and in native builds made with `ORBITRIX_SERVER`). Same Wi-Fi and Online turn Start into Open room. The choice is remembered. While a room is open the group is held; Back closes the room and keeps your setup.
-  - Mode (Turn-based) and Add-ons, extras that can be on together. Teams is built; Real-time, Drop, Combine, Fog of war and Tiles are listed dimmed until they are.
+  - Mode (Turn-based) and Add-ons, extras that can be on together. Teams and Fog of war are built; Real-time, Drop, Combine and Tiles are listed dimmed until they are.
 
 - Players: the heading's − and + set the count from 2 to 12. Each seat is Human or one of the twelve bots, with its difficulty shown as five pips. The seat dropdown also has Swap position, which moves you into that seat and gives the bot there yours (two humans never trade), and Remove player, which takes the seat out and moves the seats after it up.
 - Teams: with the add-on on, every seat has a pill with its team's letter at its left. Tap it and pick any team, A to F, from the list; teams can be any size. In a room each player picks their own team, and the host can move anyone. Start reads "Needs two teams" while every player is on one team.

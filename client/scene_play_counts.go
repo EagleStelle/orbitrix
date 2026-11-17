@@ -13,10 +13,7 @@ import (
 // drawOrbCount draws player's count in the circle of radius r at (x, y): inside their wheel slice, half radians to
 // each side of its middle, or filling the portrait dot when half is 0.
 func (p *playScene) drawOrbCount(dst *ebiten.Image, a *app, player int, x, y, r, half float64) {
-	value := p.orbS[player]
-	if value == "" {
-		value = "0"
-	}
+	value := p.orbText(player)
 	face := a.f.BodyBold
 	if p.compact && half > 0 {
 		face = a.f.LabelBold

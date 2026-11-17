@@ -58,6 +58,7 @@ type Config struct {
 	// Teams makes it a team game, Team holding each seat's team, below core.MaxTeams; teams may be any size.
 	Teams     bool
 	Team      []uint8
+	Fog       bool // the fog of war add-on
 	TurnTimer time.Duration
 	Grace     time.Duration // seat hold after a drop; 0 means DefaultGrace
 	AIDelay   time.Duration // pause before each AI move or pass, so the stream of moves isn't a burst
@@ -426,7 +427,7 @@ func (r *Room) Lobby() proto.Lobby {
 
 func (r *Room) lobby() proto.Lobby {
 	l := proto.Lobby{Cols: uint8(r.cfg.Cols), Rows: uint8(r.cfg.Rows), TurnTimer: uint16(r.cfg.TurnTimer / time.Second),
-		Playing: r.game != nil, Teams: r.cfg.Teams, Seats: make([]proto.Seat, len(r.seats))}
+		Playing: r.game != nil, Teams: r.cfg.Teams, Fog: r.cfg.Fog, Seats: make([]proto.Seat, len(r.seats))}
 	if r.cfg.Map != nil {
 		m := r.cfg.Map.Clone()
 		l.Map = &m
@@ -465,6 +466,9 @@ func (r *Room) Start() error {
 	g, err := configuredGame(r.cfg, len(r.seats))
 	if err == nil && r.cfg.Teams {
 		err = g.SetTeams(r.teams())
+	}
+	if err == nil && r.cfg.Fog {
+		err = g.SetFog()
 	}
 	if err != nil {
 		return fmt.Errorf("hub: %w", err)
@@ -575,6 +579,20 @@ func (r *Room) SetTeams(team []uint8) error {
 		r.seats[i].team = team[i]
 	}
 	r.broadcastLobby()
+	return nil
+}
+
+// SetFog turns the fog of war on or off for the room's next game. Only in the lobby.
+func (r *Room) SetFog(on bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.shut || r.game != nil {
+		return ErrState
+	}
+	if r.cfg.Fog != on {
+		r.cfg.Fog = on
+		r.broadcastLobby()
+	}
 	return nil
 }
 

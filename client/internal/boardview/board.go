@@ -136,6 +136,26 @@ type Board struct {
 	mapTheme    *ui.Palette
 	mapRevision uint64
 	mapMarks    bool
+
+	// Viewer is the player whose sight a fog game shows, -1 for the whole board. fogNow holds what each side sees as
+	// the board shows it, a bit per core.Cells.Side, nil without fog; mem what each side saw, as the board showed it.
+	Viewer            int8
+	fogNow            []uint16
+	cover             []float32 // each cell's fog tile, eased toward what the viewer has never seen
+	veil              []float32 // and its veil, toward what the viewer doesn't see now
+	faded             int8      // the viewer cover and veil were eased for
+	mem               core.Memory
+	memDirty          uint16        // sides whose memory changed since memImg was drawn
+	recalled          core.Game     // the viewer's side's memory of the map
+	memImg            *ebiten.Image // recalled's map layer
+	memSide           int8
+	memTheme          *ui.Palette
+	memMarks          bool
+	memRevision       uint64        // the board's revision memImg was drawn at
+	memFill, memBoxes []uint8       // the Landfills and Boxes memImg shows
+	arms              []uint8       // per cell, the gutters of the remembered map holding an edge or a Spring's mount (arm)
+	fogImg            *ebiten.Image // the fog tile, then a white square for veils
+	fogTheme          *ui.Palette
 }
 
 // New creates the board renderer and its wave playback state.
@@ -146,6 +166,12 @@ func New(g *core.Game) *Board {
 		burstStart: make([]float64, n), burstLen: make([]float64, n), burstOwner: make([]int8, n),
 		landfillDurability: append([]uint8(nil), g.Durability...),
 		shownBoxes:         append([]uint8(nil), g.Boxes...),
+		Viewer:             -1,
+	}
+	if g.Fog {
+		b.fogNow, b.memDirty = make([]uint16, n), 0xffff
+		b.cover, b.veil, b.faded = make([]float32, n), make([]float32, n), -2
+		b.mem.CopyFrom(&g.Memory)
 	}
 	if g.Map != nil {
 		b.landfillTarget = make([]uint8, n)
@@ -189,6 +215,7 @@ func (b *Board) Layout(area ui.Rect, u float64) {
 		b.OrbImg.Deallocate()
 	}
 	b.releaseMapLayers()
+	b.releaseFog()
 	cell := b.base * b.k
 	ts := int(math.Ceil(cell*(1-2*TileGutter))) + 2
 	b.TileImg = ebiten.NewImage(ts, ts)
@@ -372,6 +399,8 @@ func (b *Board) FastForward() {
 // tick advances the animations by one 60 Hz tick. Short waves can finish several per tick.
 func (b *Board) Tick(snd *sound.Sound) {
 	b.Clock++
+	b.Look()
+	b.fade()
 	filled := b.settleFalls()
 	if b.Playing && b.settling && !b.landfillFalling() {
 		b.settling = false
@@ -491,43 +520,40 @@ func (b *Board) produce() (made bool, effects sound.Effects) {
 // every other tile stays printed blank (turn -1 lights none).
 func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, marks bool) {
 	b.Palette, b.marks = sc, marks
+	b.Look()
+	if b.faded != b.Viewer {
+		b.fade() // a new viewer's fog is set at once, before it shows
+	}
 	if marks {
 		for p := range b.markInk {
 			b.markInk[p] = ui.InkOn(sc.Players[p])
 		}
 	}
 	ts := float64(b.TileImg.Bounds().Dx())
+	mapped := b.State.Replay // the map drawn: in the fog, as the viewer's side knows it, which in sight is the board itself
+	if mapped != nil && b.fogged() {
+		b.recall(sc)
+		mapped = &b.recalled
+	}
 	for i, o := range b.State.Owner {
-		c := sc.Tile
-		if b.State.Replay != nil {
-			terrain := b.State.Replay.TerrainAt(i)
-			if b.State.Replay.Map.Cells[i].Terrain == core.Landfill && b.landfillDurability[i] > 0 {
-				terrain = core.Landfill
-			}
-			if terrain == core.Floor && i < len(b.shownBoxes) && b.State.Replay.Boxes[i]&^b.shownBoxes[i]&core.CrateFloor != 0 {
-				terrain = core.Hole // a Box is still sinking into it; a Landfill stays one above
-			}
-			switch terrain {
-			case core.Void, core.Hole, core.Landfill: // the map layer draws the pit
-				continue
-			case core.Wall, core.BreakableWall:
-				c = sc.TileHi
-			case core.Floor:
-				design := b.State.Replay.Map.Cells[i].Terrain
-				if boxes := b.State.Replay.Boxes; len(boxes) != 0 && boxes[i]&core.CrateFloor != 0 {
-					design = core.Floor // a filled pit, plain Floor even where a Sinkhole stood
-				}
-				c = mapArtFloorColor(sc, design)
-			}
+		c, tile := b.tileColor(sc, mapped, i, b.Sees(i))
+		if !tile {
+			continue
 		}
-		if turn >= 0 && o != core.NoOwner && b.State.Has(i, int8(turn)) {
+		if turn >= 0 && o != core.NoOwner && b.State.Has(i, int8(turn)) && b.Sees(i) {
 			c = ui.Mix(c, sc.Players[turn], tileTint)
 		}
 		x, y := b.Centre(i)
 		b.quad(x, y, ts/2, 0, ts, c, 1)
 	}
 	b.flush(dst, b.TileImg)
-	if b.State.Replay != nil {
+	b.drawFogBase(dst, sc)
+	switch {
+	case mapped == &b.recalled:
+		var op ebiten.DrawImageOptions
+		op.GeoM.Translate(b.ox, b.oy)
+		dst.DrawImage(b.memImg, &op)
+	case mapped != nil:
 		b.drawMapLayer(dst, sc)
 	}
 	b.drawBoxes(dst, sc)
@@ -535,7 +561,8 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 
 	// Orbs, rim then fill (then mark) for each, in one batch.
 	for i, n := range b.State.Count {
-		if n == 0 {
+		clarity := b.clarity(i)
+		if n == 0 || clarity <= 0 {
 			continue
 		}
 		cx, cy := b.Centre(i)
@@ -551,7 +578,7 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 		if stride := len(mix) / len(b.State.Count); mix != nil {
 			mix = mix[i*stride : (i+1)*stride]
 		}
-		for _, p := range b.Orbs.update(i, int(n), int(b.State.Geo.Cap[i]), tms, b.base) {
+		for _, p := range b.Orbs.update(i, int(n), int(b.knownCap(mapped, i)), tms, b.base) {
 			if mix != nil && !shut {
 				for left == 0 && q+1 < len(mix) {
 					q++
@@ -560,11 +587,11 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 				left--
 				owner = q
 			}
-			b.Orb(cx+p[0]*b.k, cy+p[1]*b.k, owner)
+			b.orb(cx+p[0]*b.k, cy+p[1]*b.k, owner, clarity)
 		}
 	}
 	for i, d := range b.landfillDurability {
-		if d > 0 && b.State.Replay != nil && b.State.Replay.Map.Cells[i].Terrain == core.Landfill {
+		if d > 0 && b.Sees(i) && b.State.Replay != nil && b.State.Replay.Map.Cells[i].Terrain == core.Landfill {
 			// Resting orbs glide into the bigger clump as more fall in.
 			n := int(b.landfillTarget[i] - d)
 			falling, depth := b.landfillFalls(i)
@@ -588,6 +615,9 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 			b.burstLen[i] = 0
 			continue
 		}
+		if !b.Sees(i) {
+			continue
+		}
 		cx, cy := b.Centre(i)
 		e := 1 - (1-f)*(1-f) // ease out
 		r := max(1, (0.25+0.7*e)*b.base*b.k)
@@ -597,32 +627,11 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 
 	// Orbs lost in Holes, under the orbs in flight to the targets of the wave being shown.
 	for _, o := range b.falls {
-		if !o.box {
+		if !o.box && b.Sees(int(o.hole)) {
 			b.queueFall(o)
 		}
 	}
-	if b.Playing && !b.settling {
-		for k, e := range b.Waves[b.Wave] {
-			if k < b.State.shots { // a Turret's one shot, the way it faces
-				slot, _ := b.State.Geo.Aim(int(e), b.State.Replay.Durability[e])
-				x, y := b.flightPosition(int(e), slot, b.bounce(int(b.State.Geo.Targets(int(e))[slot]), b.State.from[k], f))
-				b.Orb(x, y, int(b.State.from[k]))
-				continue
-			}
-			for connection, target := range b.State.Geo.Targets(int(e)) {
-				owner := b.State.flew(k, connection)
-				x, y := b.flightPosition(int(e), connection, b.bounce(int(target), owner, f))
-				b.Orb(x, y, int(owner))
-			}
-			if outlets := b.State.Geo.Outlets; outlets != nil && outlets[e] != 0 {
-				// A Reservoir's extra orb trails the one flying the way its arrow points.
-				slot, _ := b.State.Geo.Outlet(int(e), b.State.Replay.Pressed[e])
-				owner := b.State.flew(k, core.MaxConnections)
-				x, y := b.flightPosition(int(e), slot, b.bounce(int(b.State.Geo.Targets(int(e))[slot]), owner, f*.8))
-				b.Orb(x, y, int(owner))
-			}
-		}
-	}
+	b.flights(nil)
 	b.flush(dst, b.OrbImg)
 	if g := b.State.Replay; g != nil {
 		cell := b.base * b.k
@@ -630,6 +639,7 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 			x, y := b.Centre(i)
 			r := ui.Rect{X: x - cell/2, Y: y - cell/2, W: cell, H: cell}
 			switch {
+			case !b.Sees(i):
 			case c.Circuit == core.Door && b.State.Count[i] > 0 && !b.State.Geo.Playable(i):
 				drawMapSprite(dst, sc, r, mapSpriteKey{group: c.Group, lock: true})
 			case c.Feature == core.Vault && core.Shield(g.Pressed[i]) > 0: // over the orbs, which sit behind it
@@ -637,7 +647,87 @@ func (b *Board) Draw(dst *ebiten.Image, sc *ui.Palette, tms float64, turn int, m
 			}
 		}
 	}
+	b.drawFog(dst, sc)
 }
+
+// tileColor is cell i's tile on g's map (nil for a classic board), or false where the map layer draws a pit instead.
+// shown follows the board's playback: a Landfill until its last orb lands, a pit while a Box sinks into it.
+func (b *Board) tileColor(sc *ui.Palette, g *core.Game, i int, shown bool) (color.RGBA, bool) {
+	if g == nil {
+		return sc.Tile, true
+	}
+	terrain := g.TerrainAt(i)
+	if shown && g.Map.Cells[i].Terrain == core.Landfill && b.landfillDurability[i] > 0 {
+		terrain = core.Landfill
+	}
+	if shown && terrain == core.Floor && i < len(b.shownBoxes) && g.Boxes[i]&^b.shownBoxes[i]&core.CrateFloor != 0 {
+		terrain = core.Hole // a Box is still sinking into it; a Landfill stays one above
+	}
+	switch terrain {
+	case core.Void, core.Hole, core.Landfill: // the map layer draws the pit
+		return color.RGBA{}, false
+	case core.Wall, core.BreakableWall:
+		return sc.TileHi, true
+	case core.Floor:
+		design := g.Map.Cells[i].Terrain
+		if len(g.Boxes) != 0 && g.Boxes[i]&core.CrateFloor != 0 {
+			design = core.Floor // a filled pit, plain Floor even where a Sinkhole stood
+		}
+		return mapArtFloorColor(sc, design), true
+	}
+	return sc.Tile, true
+}
+
+// flights goes over every orb in flight in the wave being shown. With sight nil it queues each one the viewer may see;
+// else it sets in sight, a bit per side as core.Cells.Observe does, the cells each one's side sees from where it is now,
+// so sight travels with the orbs.
+func (b *Board) flights(sight []uint16) {
+	if !b.Playing || b.settling {
+		return
+	}
+	f := b.flight()
+	for k, e := range b.Waves[b.Wave] {
+		from, targets := int(e), b.State.Geo.Targets(int(e))
+		if k < b.State.shots { // a Turret's one shot, the way it faces
+			slot, _ := b.State.Geo.Aim(from, b.State.Replay.Durability[e])
+			b.flying(sight, from, slot, b.State.from[k], f)
+			continue
+		}
+		for slot := range targets {
+			b.flying(sight, from, slot, b.State.flew(k, slot), f)
+		}
+		if outlets := b.State.Geo.Outlets; outlets != nil && outlets[e] != 0 {
+			// A Reservoir's extra orb trails the one flying the way its arrow points.
+			slot, _ := b.State.Geo.Outlet(from, b.State.Replay.Pressed[e])
+			b.flying(sight, from, slot, b.State.flew(k, core.MaxConnections), f*.8)
+		}
+	}
+}
+
+// flying is flights for one orb of owner's, leaving cell from by target slot, f of the way through its wave.
+func (b *Board) flying(sight []uint16, from, slot int, owner int8, f float64) {
+	to := int(b.State.Geo.Targets(from)[slot])
+	x, y := b.flightPosition(from, slot, b.bounce(to, owner, f))
+	switch {
+	case sight == nil:
+		if b.shows(from, to) {
+			b.Orb(x, y, int(owner))
+		}
+	case owner >= 0:
+		if at := b.CellAt(x, y); at >= 0 {
+			geo, bit := b.State.Geo, uint16(1)<<b.State.Side(owner)
+			col, row := geo.Coords(at)
+			for c := max(col-1, 0); c <= min(col+1, geo.Cols-1); c++ {
+				for r := max(row-1, 0); r <= min(row+1, geo.Rows-1); r++ {
+					sight[geo.Index(c, r)] |= bit
+				}
+			}
+		}
+	}
+}
+
+// shows reports whether an orb flying from one cell to another shows: the viewer sees either end.
+func (b *Board) shows(from, to int) bool { return b.Sees(from) || b.Sees(to) }
 
 func (b *Board) flightPosition(cell, connection int, fraction float64) (float64, float64) {
 	return b.along(cell, int(b.State.Geo.Targets(cell)[connection]), b.State.Geo.PortalPath(cell, connection), fraction)
@@ -831,17 +921,20 @@ func (b *Board) renderMapLayer(dst *ebiten.Image, sc *ui.Palette) {
 }
 
 // Orb queues a player's orb, or a floor-colored, unmarked trapped orb for NoOwner.
-func (b *Board) Orb(x, y float64, p int) {
+func (b *Board) Orb(x, y float64, p int) { b.orb(x, y, p, 1) }
+
+// orb is Orb at alpha a: an orb fading in or out of the fog.
+func (b *Board) orb(x, y float64, p int, a float64) {
 	s := b.OrbSize
 	h := b.OrbDrawSize / 2
 	fill := b.Palette.Tile
 	if p >= 0 {
 		fill = b.Palette.Players[p]
 	}
-	b.quad(x, y, h, 0, s, b.Palette.Ground, 1)
-	b.quad(x, y, h, s, s, fill, 1)
+	b.quad(x, y, h, 0, s, b.Palette.Ground, a)
+	b.quad(x, y, h, s, s, fill, a)
 	if b.marks && p >= 0 {
-		b.quad(x, y, h, float64(2+p)*s, s, b.markInk[p], 1)
+		b.quad(x, y, h, float64(2+p)*s, s, b.markInk[p], a)
 	}
 }
 
@@ -874,7 +967,7 @@ func (b *Board) flush(dst, src *ebiten.Image) {
 // drawBadges labels crowded cells, including custom-map cells after a long chain.
 func (b *Board) drawBadges(dst *ebiten.Image, sc *ui.Palette) {
 	for i, n := range b.State.Count {
-		if n <= 4 {
+		if n <= 4 || !b.Sees(i) {
 			continue
 		}
 		t := b.tileRect(i)

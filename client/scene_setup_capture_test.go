@@ -4,6 +4,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -24,6 +25,7 @@ import (
 	"orbitrix/client/internal/ui"
 	"orbitrix/client/online"
 	"orbitrix/core"
+	"orbitrix/core/ai"
 	"orbitrix/proto"
 	"orbitrix/server/lan"
 	"orbitrix/server/signal"
@@ -269,6 +271,107 @@ func (g *setupCaptureGame) Draw(*ebiten.Image) {
 		m.tab = tabNetwork
 		m.layout(a)
 		m.draw(out, a)
+	case "fog-recall": // the human saw walls, a closed Door and their Furnace; out of sight the walls broke, the Door opened and a rival took the Furnace
+		m := core.NewMap(7, 5)
+		m.Cells[16].Terrain, m.Cells[18].Terrain, m.Cells[20].Terrain = core.BreakableWall, core.BreakableWall, core.Hole
+		m.Cells[11], m.Cells[27] = core.MapCell{Circuit: core.Door, Group: 1}, core.MapCell{Circuit: core.Toggle, Group: 1}
+		m.Cells[14].Feature = core.Furnace
+		m.Edges = []core.MapEdge{{A: 6, B: 7, Kind: core.Barrier}, {A: 1, B: 2, Kind: core.BreakableBarrier}, {A: 21, B: 26, Kind: core.Barrier},
+			{A: 23, B: 28, Kind: core.Gate, Group: 1}, {A: 31, B: 32, Kind: core.Barrier}, {A: 28, B: 33, Kind: core.Barrier}}
+		position := func(orbs map[int]int8, then func(s *core.Snapshot)) *core.Game {
+			g, err := core.NewGameWithMap(m, 2)
+			if err != nil {
+				return nil
+			}
+			s := g.Snapshot()
+			s.Fog, s.Played, s.Moves = true, 0b11, 10
+			for i, o := range orbs {
+				s.Count[i], s.Owner[i] = 1, o
+			}
+			if then != nil {
+				then(&s)
+			}
+			g, _ = core.Restore(s)
+			return g
+		}
+		saw := map[int]int8{34: 1}
+		for i := range 20 {
+			if i != 11 && i != 16 && i != 18 {
+				saw[i] = 0
+			}
+		}
+		now := position(map[int]int8{0: 0, 13: 1, 14: 1, 34: 1}, func(s *core.Snapshot) {
+			s.Durability[16], s.Durability[18], s.CircuitOn = 0, 0, []uint8{1}
+		})
+		before := position(saw, nil)
+		if now == nil || before == nil {
+			g.err = fmt.Errorf("fog-recall: the map or a position doesn't restore")
+			return
+		}
+		p := newPlayOn(a, before, []int{seatHuman, seatHuman + 1}, []string{"Human", "Raider"}, pauseLocal)
+		p.game = now
+		p.b.Sync(now)
+		p.settle()
+		if c.hover == "live" {
+			p.b.Viewer = -1
+		}
+		p.tickRail()
+		p.layout(a)
+		p.draw(out, a)
+	case "fog-edges": // a Box, a Spring against an unseen Wall, and Barriers and a Gate on the fog line
+		m := core.NewMap(7, 5)
+		m.Cells[11].Feature, m.Cells[12].Feature, m.Cells[16].Terrain = core.Spring, core.Box, core.Wall
+		m.Cells[4] = core.MapCell{Circuit: core.Toggle, Group: 2}
+		m.Edges = []core.MapEdge{{A: 12, B: 17, Kind: core.Barrier}, {A: 12, B: 13, Kind: core.Barrier}, {A: 13, B: 18, Kind: core.Gate, Group: 2}}
+		position := func(col int) *core.Game {
+			g, err := core.NewGameWithMap(m, 2)
+			if err != nil {
+				return nil
+			}
+			s := g.Snapshot()
+			s.Fog, s.Played, s.Moves = true, 0b11, 10
+			for r := range 5 {
+				if i := col*5 + r; i != 4 && m.Cells[i].Feature == core.NoFeature {
+					s.Count[i], s.Owner[i] = 1, 0
+				}
+			}
+			s.Count[34], s.Owner[34] = 1, 1
+			g, _ = core.Restore(s)
+			return g
+		}
+		before, now := position(2), position(1) // the Spring's Wall seen once, then out of sight
+		if c.hover == "remembered" {
+			now = position(0)
+		}
+		if before == nil || now == nil {
+			g.err = fmt.Errorf("fog-edges: the map or a position doesn't restore")
+			return
+		}
+		p := newPlayOn(a, before, []int{seatHuman, seatHuman + 1}, []string{"Human", "Raider"}, pauseLocal)
+		p.game = now
+		p.b.Sync(now)
+		p.settle()
+		p.tickRail()
+		p.layout(a)
+		p.draw(out, a)
+	case "fog": // a fog game under way on a random map, from the human's side
+		m := core.RandomMap(11, 9, 3)
+		a.set.Map, a.set.Fog = &m, true
+		p, err := newPlay(a, m.Cols, m.Rows, a.set.seats)
+		if err != nil {
+			g.err = err
+			return
+		}
+		var bot ai.Bot
+		for move := 0; move < 9*len(p.seats) && !p.game.Over(); move++ {
+			_ = p.game.Simulate(bot.Choose(p.game, ai.Raider, uint64(move), 50))
+		}
+		p.b = boardview.New(p.game)
+		p.settle()
+		p.cover, p.coverText = c.hover == "cover", "Pass to Human"
+		p.tickRail()
+		p.layout(a)
+		p.draw(out, a)
 	case "pause", "results":
 		p, err := newPlay(a, a.set.Cols, a.set.Rows, a.set.seats)
 		if err != nil {
@@ -369,6 +472,17 @@ func TestCaptureSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := &setupCaptureGame{dir: dir, cases: []setupCaptureCase{
+		{name: "fog-desktop", w: 1040, h: 640, players: 3, screen: "fog"},
+		{name: "fog-dark", w: 1040, h: 640, players: 3, screen: "fog", dark: true},
+		{name: "fog-teams", w: 390, h: 844, players: 4, teams: 2, screen: "fog"},
+		{name: "fog-cover", w: 1040, h: 640, players: 3, screen: "fog", hover: "cover"},
+		{name: "fog-recall", w: 1040, h: 640, players: 2, screen: "fog-recall"},
+		{name: "fog-recall-live", w: 1040, h: 640, players: 2, screen: "fog-recall", hover: "live"},
+		{name: "fog-edges", w: 1040, h: 640, players: 2, screen: "fog-edges"},
+		{name: "fog-edges-dark", w: 1040, h: 640, players: 2, screen: "fog-edges", dark: true},
+		{name: "fog-edges-remembered", w: 1040, h: 640, players: 2, screen: "fog-edges", hover: "remembered"},
+		{name: "fog-edges-remembered-dark", w: 1040, h: 640, players: 2, screen: "fog-edges", hover: "remembered", dark: true},
+		{name: "fog-recall-dark", w: 1040, h: 640, players: 2, screen: "fog-recall", dark: true},
 		{name: "teams-setup-desktop", w: 1040, h: 640, players: 6, teams: 3},
 		{name: "teams-setup-menu", w: 1040, h: 640, players: 6, teams: 3, hover: "teammenu", dark: true},
 		{name: "teams-setup-mobile", w: 360, h: 740, players: 6, teams: 2, hover: "teammenu"},

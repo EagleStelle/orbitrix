@@ -48,6 +48,8 @@ type settings struct {
 	// Teams is the Teams add-on, and Team each seat's team, below core.MaxTeams; teams may be any size.
 	Teams bool    `json:"teamsOn,omitempty"`
 	Team  []uint8 `json:"team,omitempty"`
+	// Fog is the Fog of war add-on.
+	Fog bool `json:"fog,omitempty"`
 
 	// Rolled: Map is a roll of Setup's die, which keeps the size picker. rolled is that map, so choosing any other
 	// map ends it without a reset.

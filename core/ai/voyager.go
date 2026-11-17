@@ -206,7 +206,7 @@ func (b *Bot) shortlist(g *core.Game, k int) []scored {
 	salt := uint32(b.rng.Uint64())
 	list := b.list[:0]
 	for i, o := range g.Owner {
-		if !g.Placeable(i) || o != core.NoOwner && !g.Has(i, p) {
+		if !g.Placeable(i) || o != core.NoOwner && !g.Has(i, p) || !g.Reach(i, p) {
 			continue
 		}
 		held := o != core.NoOwner // p has orbs here, though a teammate may own the cell
@@ -265,7 +265,7 @@ func (b *Bot) rolloutMove(g *core.Game) int {
 		i := int((bits & 0xffff) * n >> 16)
 		bits >>= 16
 		o := g.Owner[i]
-		if !g.Placeable(i) || o != core.NoOwner && !g.Has(i, p) {
+		if !g.Placeable(i) || o != core.NoOwner && !g.Has(i, p) || !g.Reach(i, p) {
 			continue
 		}
 		found++

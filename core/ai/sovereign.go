@@ -496,7 +496,7 @@ func (t *sovSearch) moves(n *core.Game, p int8, list []sovMove, limit int) []sov
 	cells := len(n.Owner)
 	logit := t.s.cache[int(p)*cells : int(p+1)*cells]
 	for i, o := range n.Owner {
-		if o == core.NoOwner || o == p {
+		if (o == core.NoOwner || o == p) && n.Reach(i, p) {
 			list = sovInsert(list, sovMove{score: int32(logit[i]), cell: int16(i), player: p}, limit)
 		}
 	}

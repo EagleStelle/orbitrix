@@ -13,7 +13,7 @@ import (
 
 // Version is the first byte of every message. Peers on different versions can't talk; a host answers a Hello from
 // another version with Bye{ReasonVersion}, which every version decodes alike (version, type, reason).
-const Version = 4
+const Version = 5
 
 // Limits checked when decoding.
 const (
@@ -127,6 +127,7 @@ type Lobby struct {
 	TurnTimer  uint16 // seconds a human has to move; 0 means no limit
 	Playing    bool
 	Teams      bool // a team game: each seat's Team counts
+	Fog        bool // the fog of war add-on
 	Seats      []Seat
 	Map        *core.MapDefinition // nil selects the ordinary rectangular board
 }
@@ -194,7 +195,7 @@ func Append(dst []byte, m Msg) []byte {
 		dst = append(append(dst, m.Seat), m.Token[:]...)
 	case Lobby:
 		dst = binary.BigEndian.AppendUint16(append(dst, m.Cols, m.Rows), m.TurnTimer)
-		dst = append(appendBool(appendBool(dst, m.Playing), m.Teams), byte(len(m.Seats)))
+		dst = append(appendBool(appendBool(appendBool(dst, m.Playing), m.Teams), m.Fog), byte(len(m.Seats)))
 		for _, s := range m.Seats {
 			dst = append(appendStr(appendBool(append(dst, byte(s.State), s.AI), s.Ready), s.Name), s.Team)
 		}
@@ -220,6 +221,7 @@ func Append(dst []byte, m Msg) []byte {
 		dst = appendBytes(dst, g.Boxes)
 		dst = appendBytes(dst, g.Team)
 		dst = appendBytes(dst, g.Mix)
+		dst = appendBool(dst, g.Fog)
 	case Bye:
 		dst = append(dst, byte(m.Reason))
 	}
@@ -389,7 +391,7 @@ func (r *reader) mapDefinition() *core.MapDefinition {
 }
 
 func (r *reader) lobby() Lobby {
-	l := Lobby{Cols: r.u8(), Rows: r.u8(), TurnTimer: r.u16(), Playing: r.bool(), Teams: r.bool()}
+	l := Lobby{Cols: r.u8(), Rows: r.u8(), TurnTimer: r.u16(), Playing: r.bool(), Teams: r.bool(), Fog: r.bool()}
 	n := int(r.u8())
 	if n > core.MaxPlayers {
 		r.fail()
@@ -427,5 +429,6 @@ func (r *reader) snapshot() Snapshot {
 	g.Boxes = r.bytes(core.MaxSize * core.MaxSize)
 	g.Team = r.bytes(core.MaxPlayers)
 	g.Mix = r.bytes(core.MaxSize * core.MaxSize * core.MaxPlayers)
+	g.Fog = r.bool()
 	return s
 }

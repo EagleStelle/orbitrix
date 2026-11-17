@@ -325,6 +325,8 @@ func (h *hostRoom) apply(a *app) {
 			log.Printf("room: %v", err)
 		} else if err := n.room.SetTeams(cfg.Team); err != nil {
 			log.Printf("room teams: %v", err)
+		} else if err := n.room.SetFog(cfg.Fog); err != nil {
+			log.Printf("room fog: %v", err)
 		}
 	}
 	if n.lan != nil {
@@ -699,7 +701,7 @@ func (r *roomScene) draw(dst *ebiten.Image, a *app) {
 	if n.wifi() {
 		where = whereWifi
 	}
-	r.game.draw(b, a, where, 0, addonsOn(n.lobby.Teams), true, true, false)
+	r.game.draw(b, a, where, 0, addonsOn(n.lobby.Teams, n.lobby.Fog), true, true, false)
 	ui.FillRound(b, r.block, 24*u, sc.Tile)
 	ui.DrawText(b, "Players", f.Heading, r.block.X+r.bp, r.block.Y+r.bp+10*u, text.AlignStart, sc.Ink)
 	for i, st := range n.lobby.Seats {

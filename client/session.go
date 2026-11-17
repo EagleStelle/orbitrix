@@ -82,6 +82,7 @@ func hubConfig(a *app) hub.Config {
 	if a.set.Teams {
 		cfg.Teams, cfg.Team = true, append([]uint8{}, a.set.Team...)
 	}
+	cfg.Fog = a.set.Fog
 	return cfg
 }
 

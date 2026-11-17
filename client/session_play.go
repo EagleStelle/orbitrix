@@ -26,6 +26,8 @@ func newNetPlay(a *app, n *session) *playScene {
 	}
 	p := newPlayOn(a, g, n.seats(), n.labels(), pauseOnline)
 	p.net, p.seq, p.lobbyN = n, seq, n.lobbyN
+	p.b.Viewer = -1 // newPlayOn looked before it knew which seat is this player's
+	p.look()
 	return p
 }
 

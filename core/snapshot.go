@@ -18,6 +18,8 @@ type Snapshot struct {
 	Boxes               []uint8
 	// A team game only: each player's team, and Game.Mix.
 	Team, Mix []uint8
+	// Fog is the fog of war add-on. What each side has seen isn't kept: a restored game starts it from what they see.
+	Fog bool
 }
 
 // Snapshot returns a copy of g's state that shares no memory with g.
@@ -25,7 +27,7 @@ func (g *Game) Snapshot() Snapshot {
 	s := Snapshot{
 		Cols: g.Geo.Cols, Rows: g.Geo.Rows, Players: g.Players,
 		Turn: g.Turn, Moves: g.Moves, Played: g.Played, Winner: g.Winner,
-		Count: append([]uint8(nil), g.Count...), Owner: append([]int8(nil), g.Owner...),
+		Count: append([]uint8(nil), g.Count...), Owner: append([]int8(nil), g.Owner...), Fog: g.Fog,
 	}
 	if g.Mix != nil {
 		s.Team, s.Mix = append([]uint8(nil), g.Team[:g.Players]...), append([]uint8(nil), g.Mix...)
@@ -177,6 +179,9 @@ func Restore(s Snapshot) (*Game, error) {
 	copy(g.Owner, s.Owner)
 	copy(g.Mix, s.Mix)
 	g.Turn, g.Moves, g.Played, g.Winner = s.Turn, s.Moves, s.Played, s.Winner
+	if s.Fog {
+		g.setFog()
+	}
 	return g, nil
 }
 

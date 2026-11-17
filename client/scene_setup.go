@@ -721,7 +721,7 @@ func (s *setupScene) draw(dst *ebiten.Image, a *app) {
 		if s.locked() {
 			off = 0xff
 		}
-		s.game.draw(s.content, a, a.set.where(), off, addonsOn(a.set.Teams), false, s.open == foldRules, true)
+		s.game.draw(s.content, a, a.set.where(), off, addonsOn(a.set.Teams, a.set.Fog), false, s.open == foldRules, true)
 		ui.DrawButton(s.content, a.ui(), s.game.join, "Join a room", "", ui.ButtonGround, !s.locked()) // always there; held while this player hosts
 	}
 	s.drawPlayers(s.content, a)
@@ -1027,9 +1027,14 @@ func (s *setupScene) updateGame(a *app) bool {
 	if s.test {
 		return false
 	}
-	if s.game.hit(a, len(gameRows)-1) == 0 { // Teams: it changes in an open room too, until Start
+	switch s.game.hit(a, len(gameRows)-1) { // the add-ons change in an open room too, until Start
+	case 0:
 		a.set.Teams = !a.set.Teams // an earlier game's line-up comes back with it
 		s.menu = -1
+		s.changed(a)
+		return true
+	case 1:
+		a.set.Fog = !a.set.Fog
 		s.changed(a)
 		return true
 	}

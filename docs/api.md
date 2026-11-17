@@ -61,7 +61,7 @@ Issued only to a password-verified host and to joiners that host approved, with 
 
 ## Game protocol (`proto`)
 
-Binary, on every transport: `ws` on the LAN, a WebRTC data channel online and `loopback` for the host's own player. Each message is a version byte (`proto.Version`, currently 4), a type byte, then fixed big-endian fields. Strings are length-prefixed: names up to 24 bytes, codes up to 8. Encodings are canonical, so whatever decodes re-encodes to the same bytes.
+Binary, on every transport: `ws` on the LAN, a WebRTC data channel online and `loopback` for the host's own player. Each message is a version byte (`proto.Version`, currently 5), a type byte, then fixed big-endian fields. Strings are length-prefixed: names up to 24 bytes, codes up to 8. Encodings are canonical, so whatever decodes re-encodes to the same bytes.
 
 | Type | Direction | Fields |
 |---|---|---|
@@ -72,16 +72,16 @@ Binary, on every transport: `ws` on the LAN, a WebRTC data channel online and `l
 | `Leave` | player to host | gives the seat up, with no grace period |
 | `Team` | player to host | `Team`: moves the player to that team in a team game's lobby, if it has room |
 | `Welcome` | host to player | `Seat`, `Token` for rejoining |
-| `Lobby` | host to player | `Cols`, `Rows`, `TurnTimer`, `Playing`, `Teams` (the Teams add-on is on), `Seats[]` (`State`, `AI`, `Ready`, `Name`, `Team`), optional map definition |
+| `Lobby` | host to player | `Cols`, `Rows`, `TurnTimer`, `Playing`, `Teams` (the Teams add-on is on), `Fog` (the Fog of war add-on is on), `Seats[]` (`State`, `AI`, `Ready`, `Name`, `Team`), optional map definition |
 | `MoveApplied` | host to player | `Seq`, `Player`, `C`, `R` (255, 255 for a pass), `Hash` after the move |
-| `Snapshot` | host to player | `Seq` and the whole game, including optional map definition, `Durability`, `CircuitOn`, per-cell `Pressed`, per-edge `EdgeDurability`, per-cell `Boxes` on maps with Boxes, and in a team game each player's `Team` and the per-cell, per-player orb counts `Mix`; `Seq` 0 starts a game |
+| `Snapshot` | host to player | `Seq` and the whole game, including optional map definition, `Durability`, `CircuitOn`, per-cell `Pressed`, per-edge `EdgeDurability`, per-cell `Boxes` on maps with Boxes, and in a team game each player's `Team` and the per-cell, per-player orb counts `Mix`, and `Fog`; `Seq` 0 starts a game |
 | `Bye` | host to player | the reason the host closed the connection |
 
 Seat states are AI, Open, Here, Away (dropped, inside the 60 s grace), Gone (left mid-game) and Skipped. Close reasons are Closed, Version, BadCode, Full, Kicked, Replaced and Timeout.
 
 A client applies each `MoveApplied` with `core` and compares the hash. A mismatch, a gap in `Seq` or a move that doesn't fit drops what is queued and sends `Resync`.
 
-Map definitions in `Lobby` and `Snapshot` use the bounded portable map encoding, with dimensions matching the board. Protocol decoding requires its current canonical encoding. `core.Restore` validates 0/1 `Pressed` values only on switch cells and Hold occupancy agreement. `CircuitOn` lists reversed circuit groups without duplicates and independently of individual switch states. The hash includes terrain, passive features, circuit components, output starting states, wall durability, `Pressed` and polarity. Closed Doors and temporarily isolated Floor preserve trapped orbs. Protocol is version 4: Teams added the `Team` message and the team fields of `Lobby` and `Snapshot` after public release v1.1.0 (protocol 3). Peers must run the same development build; the shared development identifier does not guarantee compatible rules. Portable exports remain format 2, with format-1/2 and temporary format-3 imports supported; see [maps.md](maps.md).
+Map definitions in `Lobby` and `Snapshot` use the bounded portable map encoding, with dimensions matching the board. Protocol decoding requires its current canonical encoding. `core.Restore` validates 0/1 `Pressed` values only on switch cells and Hold occupancy agreement. `CircuitOn` lists reversed circuit groups without duplicates and independently of individual switch states. The hash includes terrain, passive features, circuit components, output starting states, wall durability, `Pressed` and polarity. Closed Doors and temporarily isolated Floor preserve trapped orbs. Protocol is version 5: Teams added the `Team` message and the team fields of `Lobby` and `Snapshot` after public release v1.1.0 (protocol 3), and Fog of war the `Fog` fields. Peers must run the same development build; the shared development identifier does not guarantee compatible rules. Portable exports remain format 2, with format-1/2 and temporary format-3 imports supported; see [maps.md](maps.md).
 
 The hub's limits on every connection: `Hello` within 5 s, inbound player messages of at most 128 bytes, 20 a second with a burst of 40, and a drop after 64 queued messages. Host-to-player lobby and snapshot messages can be larger because they carry maps; WebSocket messages have a 128 KiB read bound. Late or illegal moves are ignored.
 

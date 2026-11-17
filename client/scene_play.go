@@ -67,6 +67,7 @@ type playScene struct {
 	alive     [core.MaxPlayers]bool
 	orbs      [core.MaxPlayers]int
 	orbS      [core.MaxPlayers]string
+	part      [core.MaxPlayers]bool // in the fog, a rival's count is only the orbs the viewer sees: some are hidden
 	orbLabels [core.MaxPlayers]boardview.Counter
 	spin      float64                  // spinner pointer angle, chasing the shown player's wedge
 	share     [core.MaxPlayers]float64 // each seat's part of the wheel, by slice; they sum to 1
@@ -75,7 +76,10 @@ type playScene struct {
 	chainOwner       int
 	chainText        string
 	chainN           int
-	biggest          int // longest chain this game, in waves
+	biggest          int  // longest chain this game, in waves
+	seenChain        bool // the viewer of a fog game has seen a cell of the chain playing, so its callout shows
+	cover            bool // a fog game passed to a human here on another side: the board waits under a cover for their tap
+	coverText        string
 
 	paused   bool
 	roster   bool       // the Players dialog is open: every seat's team, name and orbs, over a game that goes on
@@ -157,6 +161,9 @@ func newPlay(a *app, cols, rows int, seats []int) (*playScene, error) {
 	if err == nil && a.set.Teams {
 		err = g.SetTeams(a.set.Team)
 	}
+	if err == nil && a.set.Fog {
+		err = g.SetFog()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("new game: %w", err)
 	}
@@ -202,6 +209,7 @@ func (p *playScene) settle() {
 	for i := range p.game.Players {
 		p.alive[i] = p.game.Alive(i)
 	}
+	p.look()
 	p.slice()
 	p.tally(-1) // a seat skipped before it placed an orb, or already out in the host's snapshot
 	human, humanIn := false, false
@@ -404,6 +412,10 @@ func (p *playScene) move(a *app, cell int) {
 	}
 	p.b.State.Events = p.game.TerrainEvents
 	p.b.Start(cell, int8(mover), waves, p.game.ProducedAt, a.snd)
+	p.seenChain = false
+	if p.game.Over() { // the fog lifts on the win, so everyone sees the last chain
+		p.b.Viewer, p.cover = -1, false
+	}
 	p.tally(mover)
 	p.biggest = max(p.biggest, len(waves))
 	if len(waves) >= 2 {
@@ -427,6 +439,9 @@ func (p *playScene) restartGame(a *app) {
 	}
 	if err == nil && p.game.Mix != nil {
 		err = g.SetTeams(p.game.Team[:p.game.Players])
+	}
+	if err == nil && p.game.Fog {
+		err = g.SetFog()
 	}
 	if err == nil {
 		np := newPlayOn(a, g, p.seats, p.labels, pauseLocal)
@@ -521,6 +536,10 @@ func (p *playScene) update(a *app) error {
 
 	if a.clicked(ui.CompactHit(p.menu, a.u)) {
 		p.paused = true
+		return nil
+	}
+	if p.cover {
+		p.cover = !a.in.clicked
 		return nil
 	}
 	for _, r := range p.peek {
@@ -689,7 +708,12 @@ func (p *playScene) tickRail() {
 		p.spin += d * 0.16
 	}
 
-	if p.b.Playing && len(p.b.Waves) >= 2 {
+	if p.b.Playing && p.b.Wave >= 0 && p.b.Wave < len(p.b.Waves) {
+		for _, e := range p.b.Waves[p.b.Wave] {
+			p.seenChain = p.seenChain || p.b.Sees(int(e))
+		}
+	}
+	if p.b.Playing && len(p.b.Waves) >= 2 && p.seenChain {
 		p.chain, p.chainHold = p.b.Wave+1, calloutHold
 	} else if p.chainHold > 0 {
 		p.chainHold--
@@ -698,22 +722,39 @@ func (p *playScene) tickRail() {
 		p.chainN, p.chainText = p.chain, "Chain ×"+strconv.Itoa(p.chain)
 	}
 
-	var orbs [core.MaxPlayers]int
+	// Each player's orbs, and in the fog those the viewer sees: a rival counts only those, marked while some are hidden.
+	var orbs, seen [core.MaxPlayers]int
+	p.b.Look()
 	if mix := p.b.State.Mix; mix != nil { // a team game's cell holds several colours: count each player's own
 		stride := len(mix) / len(p.b.State.Count)
-		for i, n := range mix {
-			orbs[i%stride] += int(n)
+		for k, n := range mix {
+			if orbs[k%stride] += int(n); p.b.Sees(k / stride) {
+				seen[k%stride] += int(n)
+			}
 		}
 	} else {
 		for i, o := range p.b.State.Owner {
-			if o != core.NoOwner {
-				orbs[o] += int(p.b.State.Count[i])
+			if o == core.NoOwner {
+				continue
+			}
+			if orbs[o] += int(p.b.State.Count[i]); p.b.Sees(i) {
+				seen[o] += int(p.b.State.Count[i])
 			}
 		}
 	}
 	for i := range p.seats {
-		if orbs[i] != p.orbs[i] || p.orbS[i] == "" {
-			p.orbs[i], p.orbS[i] = orbs[i], strconv.Itoa(orbs[i])
+		n, part := orbs[i], false
+		if v := p.b.Viewer; v >= 0 && !p.game.Allied(int8(i), v) {
+			n, part = seen[i], seen[i] < orbs[i]
+		}
+		if n != p.orbs[i] || part != p.part[i] || p.orbS[i] == "" {
+			p.orbs[i], p.part[i], p.orbS[i] = n, part, strconv.Itoa(n)
+			switch {
+			case part && n == 0: // none of them in sight: a count of nothing would read as out
+				p.orbS[i] = "?"
+			case part:
+				p.orbS[i] = "~" + p.orbS[i]
+			}
 		}
 	}
 	p.slice()
@@ -732,7 +773,7 @@ func (p *playScene) slice() {
 		switch {
 		case !p.alive[i]:
 			p.share[i] = 0
-		case total == 0:
+		case total == 0 || p.cover: // nothing to tell, or nothing to tell the player handing the device over
 			p.share[i] = 1 / float64(in)
 		default:
 			p.share[i] = 0.5/float64(in) + 0.5*float64(p.orbs[i])/float64(total)
@@ -1303,6 +1344,9 @@ func (p *playScene) draw(dst *ebiten.Image, a *app) {
 		p.b.DrawHover(dst, p.flash, ui.WithAlpha(sc.Players[p.game.Turn], float64(p.flashT)/flashTicks), u)
 	}
 	p.boardView.DrawScrollbar(dst, a.ui())
+	if p.cover {
+		p.drawCover(dst, a)
+	}
 	p.drawRail(dst, a)
 	switch {
 	case p.over && !p.b.Playing:
@@ -1410,8 +1454,9 @@ func (p *playScene) drawRoster(dst *ebiten.Image, a *app) {
 		ui.DrawText(seatsDst, label, name, lx, r.Cy(), text.AlignStart, ink)
 		if alive {
 			room := r.Right() - in - lx - ui.TextWidth(label, name) - gap
-			scale := min(1, room/max(1, ui.TextWidth(p.orbS[i], bold)))
-			ui.DrawScaledText(seatsDst, p.orbS[i], bold, r.Right()-in, r.Cy(), text.AlignEnd, scale, ink)
+			orbs := p.orbText(i)
+			scale := min(1, room/max(1, ui.TextWidth(orbs, bold)))
+			ui.DrawScaledText(seatsDst, orbs, bold, r.Right()-in, r.Cy(), text.AlignEnd, scale, ink)
 		} else {
 			ui.DrawChip(seatsDst, a.ui(), ui.Chip{Word: "Out", Kind: ui.ChipDanger}, r.Right()-in, r.Cy(), p.chipH(a))
 		}

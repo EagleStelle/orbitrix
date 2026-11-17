@@ -510,3 +510,25 @@ func TestTeams(t *testing.T) {
 		t.Fatal("teams set mid-game")
 	}
 }
+
+// TestFog turns the fog on in the lobby: the lobby says so, the game starts in the fog, and the fog stays as it was
+// once the game is under way.
+func TestFog(t *testing.T) {
+	room := newRoom(t, hub.Config{Cols: 5, Rows: 5, Seats: humans(1, hub.Seat{AI: ai.Jester})})
+	a := join(t, room, "", proto.Token{})
+	if err := room.SetFog(true); err != nil {
+		t.Fatal(err)
+	}
+	a.lobbyWhere(func(l proto.Lobby) bool { return l.Fog })
+	a.send(proto.Ready{On: true})
+	a.lobbyWhere(func(l proto.Lobby) bool { return l.Seats[0].Ready })
+	if err := room.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if s := waitFor[proto.Snapshot](a); !s.Game.Fog {
+		t.Fatal("the game starts without fog")
+	}
+	if room.SetFog(false) != hub.ErrState {
+		t.Fatal("fog lifted mid-game")
+	}
+}

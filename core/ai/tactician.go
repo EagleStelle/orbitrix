@@ -115,7 +115,7 @@ func (t *tactic) candidates(n *core.Game, player int8, level, limit int) []score
 	geo := n.Geo
 	dst := t.b.levels[level][:0]
 	for i, o := range n.Owner {
-		if !n.Placeable(i) || o != core.NoOwner && !n.Has(i, player) {
+		if !n.Placeable(i) || o != core.NoOwner && !n.Has(i, player) || !n.Reach(i, player) {
 			continue
 		}
 		held := o != core.NoOwner // player has orbs here, though a teammate may own the cell

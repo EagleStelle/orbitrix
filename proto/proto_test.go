@@ -22,6 +22,9 @@ func samples(t testing.TB) []Msg {
 		err = teams.SetTeams([]uint8{0, 1, 0})
 	}
 	if err == nil {
+		err = teams.SetFog()
+	}
+	if err == nil {
 		_, err = teams.Apply(5)
 	}
 	if err != nil {
@@ -43,7 +46,7 @@ func samples(t testing.TB) []Msg {
 			{State: SeatSkipped, Name: "Bo"},
 		}},
 		Lobby{Cols: 3, Rows: 3},
-		Lobby{Cols: 5, Rows: 5, Teams: true, Seats: []Seat{{State: SeatHere, Name: "Host", Team: 2}, {State: SeatAI}}},
+		Lobby{Cols: 5, Rows: 5, Teams: true, Fog: true, Seats: []Seat{{State: SeatHere, Name: "Host", Team: 2}, {State: SeatAI}}},
 		MoveApplied{Seq: 1 << 30, Player: 2, C: 4, R: 7, Hash: 0xdeadbeefcafef00d},
 		MoveApplied{Seq: 3, Player: 1, C: Pass, R: Pass},
 		Snapshot{Seq: 12, Game: g.Snapshot()},
@@ -83,8 +86,9 @@ func TestDecodeRejects(t *testing.T) {
 		"bad utf-8":     append(Append(nil, Hello{})[:2], 1, 0xff, 0),
 		"13 seats":      {Version, byte(TypeLobby), 9, 9, 0, 0, 0, 0, 0, 13},
 		"bad seat":      {Version, byte(TypeLobby), 9, 9, 0, 0, 0, 0, 0, 1, byte(numSeatStates), 0, 0, 0, 0},
-		"one team":      {Version, byte(TypeLobby), 9, 9, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0},
-		"no such team":  {Version, byte(TypeLobby), 9, 9, 0, 0, 0, 2, 1, 1, byte(SeatOpen), 0, 0, 0, 2, 0, 0, 0, 0},
+		"stray team":    {Version, byte(TypeLobby), 9, 9, 0, 0, 0, 0, 0, 1, byte(SeatOpen), 0, 0, 0, 1, 0},
+		"bad fog":       {Version, byte(TypeLobby), 9, 9, 0, 0, 0, 0, 2, 0, 0},
+		"no such team":  {Version, byte(TypeLobby), 9, 9, 0, 0, 0, 1, 0, 1, byte(SeatOpen), 0, 0, 0, core.MaxTeams, 0},
 		"team 6":        {Version, byte(TypeTeam), core.MaxTeams},
 		"short board":   Append(nil, Snapshot{Game: core.Snapshot{Cols: 3, Rows: 3}})[:20],
 	} {

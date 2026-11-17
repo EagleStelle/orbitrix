@@ -34,7 +34,12 @@ type Game struct {
 	// ProducedAt counts the waves of the last recorded move before the mover's Furnaces and Crushers ran; -1 when
 	// the mover owned none.
 	ProducedAt int
-	topology   *mapTopology // immutable designs and bounded, shared connection tables
+	// Fog is the fog of war add-on (see Reach), and Memory what each side has seen of it, which bots know the map
+	// from. Search copies keep Fog with an empty Memory.
+	Fog      bool
+	Memory   Memory
+	sight    []uint16     // scratch for look
+	topology *mapTopology // immutable designs and bounded, shared connection tables
 
 	// Exploded counts the cell explosions in the last move: a deterministic measure of its cost, which the AI's
 	// budget charges for. It isn't part of the game state (not hashed or snapshotted).
@@ -107,6 +112,8 @@ func (g *Game) CopyFrom(src *Game) {
 	g.Pressed = append(g.Pressed[:0], src.Pressed...)
 	g.Boxes = append(g.Boxes[:0], src.Boxes...)
 	g.TerrainEvents, g.ProducedAt = g.TerrainEvents[:0], -1
+	g.Fog = src.Fog
+	g.Memory.CopyFrom(&src.Memory)
 }
 
 // Clone returns an independent copy of g.
@@ -123,10 +130,11 @@ func (g *Game) Over() bool { return g.Winner != NoOwner }
 func (g *Game) Alive(p int) bool { return g.Orbs[p] > 0 || g.Played&(1<<p) == 0 }
 
 // Legal reports whether the current player may place an orb in cell: the game isn't over and the cell is
-// empty or holds orbs of theirs, which in a team game a teammate's cell does only once theirs have landed there.
+// empty or holds orbs of theirs, which in a team game a teammate's cell does only once theirs have landed there. In
+// the fog it must also be one they Reach.
 func (g *Game) Legal(cell int) bool {
 	return !g.Over() && g.Placeable(cell) && g.Count[cell] < 255 &&
-		(g.Owner[cell] == NoOwner || g.Has(cell, int8(g.Turn)))
+		(g.Owner[cell] == NoOwner || g.Has(cell, int8(g.Turn))) && g.Reach(cell, int8(g.Turn))
 }
 
 // Placeable reports whether cell i can take an orb at all: playable, and no Box stands on it.
@@ -141,7 +149,7 @@ func (g *Game) LegalMoves(dst []int) []int {
 	}
 	p := int8(g.Turn)
 	for i, o := range g.Owner {
-		if g.Placeable(i) && g.Count[i] < 255 && (o == NoOwner || g.Has(i, p)) {
+		if g.Placeable(i) && g.Count[i] < 255 && (o == NoOwner || g.Has(i, p)) && g.Reach(i, p) {
 			dst = append(dst, i)
 		}
 	}
@@ -230,6 +238,9 @@ func (g *Game) play(cell int, record bool) error {
 			g.produce(p, record, wave)
 		}
 		g.settleMakers()
+	}
+	if g.Memory.Seen != nil {
+		g.look()
 	}
 	if !g.Over() {
 		g.advance()

@@ -182,7 +182,7 @@ func (b *Board) drawBoxes(dst *ebiten.Image, sc *ui.Palette) {
 	at := func(x, y float64) ui.Rect { return ui.Rect{X: x - cell/2, Y: y - cell/2, W: cell, H: cell} }
 	tr := MapTransform{Turned: b.Turned}
 	for i, c := range g.Map.Cells {
-		if c.Feature == core.Spring {
+		if c.Feature == core.Spring && b.knows(i) {
 			key := mapSpriteKey{feature: core.Spring, arrow: springSide(g.Map, tr, i)}
 			if b.moving[i]&squashed != 0 {
 				key.squash = uint8(math.Round(springSquash * math.Sin(math.Pi*f)))
@@ -191,12 +191,19 @@ func (b *Board) drawBoxes(dst *ebiten.Image, sc *ui.Palette) {
 		}
 	}
 	for i, v := range g.Boxes {
-		if v&core.BoxHere != 0 && g.TerrainAt(i) != core.Wall { // a closed Door hides one
+		if v&core.BoxHere != 0 && g.TerrainAt(i) != core.Wall && b.Sees(i) { // a closed Door hides one
 			drawMapSprite(dst, sc, at(b.slideAt(i, false, f)), mapSpriteKey{feature: core.Box})
 		}
 	}
+	if r := &b.recalled; b.fogged() {
+		for i, v := range r.Boxes { // out of sight, where the side last saw one
+			if v&core.BoxHere != 0 && !b.Sees(i) && b.knows(i) && r.TerrainAt(i) != core.Wall {
+				drawMapSprite(dst, sc, at(b.Centre(i)), mapSpriteKey{feature: core.Box})
+			}
+		}
+	}
 	for _, o := range b.falls {
-		if !o.box {
+		if !o.box || !b.Sees(int(o.hole)) {
 			continue
 		}
 		// Like an orb filling a Landfill it accelerates down, shrinking to the Floor crate it becomes and turning into it:

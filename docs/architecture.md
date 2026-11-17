@@ -126,7 +126,7 @@ In a room:
 
 - Pure core: `core` and `core/ai` import no Ebitengine, net or OS packages, which keeps them deterministic, testable without a window, and identical on every target.
 - Transport-agnostic hub: one engine for online and LAN play, behind a three-method `Conn`, so a new transport needs no change to the rules of a room.
-- Host authority with client replay: clients recompute ordinary moves from small messages, and a state hash catches any divergence. Lobby and snapshot messages also carry the chosen map and, for snapshots, runtime terrain state; incoming player messages remain bounded to 128 bytes. The binary game protocol is version 4, bumped for Teams after public release v1.1.0; peers must use the same development build.
+- Host authority with client replay: clients recompute ordinary moves from small messages, and a state hash catches any divergence. Lobby and snapshot messages also carry the chosen map and, for snapshots, runtime terrain state; incoming player messages remain bounded to 128 bytes. The binary game protocol is version 5, bumped for Teams and Fog of war after public release v1.1.0; peers must use the same development build.
 - Build tags for platforms: `client/platform` holds the storage, clipboard, keyboard and server-address code for each target, so the rest of the client has no platform branches.
 - Budgets instead of clocks: AI cost is counted, which makes bots reproducible in tests and fair across devices.
 
