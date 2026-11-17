@@ -13,8 +13,8 @@ android {
         minSdk = 24
         targetSdk = 37
         // Phones only update to a higher versionCode: raise it with every release.
-        versionCode = 3
-        versionName = "1.1.0"
+        versionCode = 4
+        versionName = "1.2.0"
     }
 
     // The release key comes from the environment: ORBITRIX_KEYSTORE, a PKCS12 keystore holding the key "orbitrix",
