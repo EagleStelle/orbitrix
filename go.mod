@@ -3,7 +3,7 @@ module orbitrix
 go 1.27.3
 
 require (
-	github.com/andybalholm/brotli v1.2.8
+	github.com/andybalholm/brotli v1.3.0
 	github.com/coder/websocket v1.8.15
 	github.com/hajimehoshi/ebiten/v2 v2.10.6
 	github.com/magefile/mage v1.17.2
